@@ -2,12 +2,12 @@ import asyncio
 import collections
 import datetime
 import logging
+from concurrent.futures import CancelledError
 from typing import Type
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import AsyncInfluxDBClient
-
 from brewblox_service import events
 
 LOGGER = logging.getLogger(__name__)
@@ -23,9 +23,7 @@ RECONNECT_INTERVAL_S = 1
 
 def setup(app):
     writer = InfluxWriter(app)
-    relay = EventRelay(app,
-                       listener=events.get_listener(app),
-                       writer=writer)
+    relay = EventRelay(listener=events.get_listener(app), writer=writer)
 
     app[WRITER_KEY] = writer
     app[RELAY_KEY] = relay
@@ -85,26 +83,23 @@ class InfluxWriter():
     def __str__(self):
         return f'<{type(self).__name__} {self._database}>'
 
-    async def _startup(self, app: Type[web.Application]):
-        await self.start(app.loop)
-
-    async def _cleanup(self, app: Type[web.Application]):
-        await self.close()
-
     def setup(self, app: Type[web.Application]):
-        app.on_startup.append(self._startup)
-        app.on_cleanup.append(self._cleanup)
+        app.on_startup.append(self.start)
+        app.on_cleanup.append(self.close)
 
-    async def close(self):
+    async def close(self, *args):
         try:
             if self._task:
                 self._task.cancel()
                 await self._task
-        except Exception:
-            pass
+        except CancelledError:
+            pass  # We're expecting this one
+        except Exception as ex:
+            LOGGER.warn(f'Task exception {self} {ex}')
 
-    async def start(self, loop: Type[asyncio.BaseEventLoop]):
-        self._task = loop.create_task(self._run(loop))
+    async def start(self, app: Type[web.Application]):
+        await self.close()
+        self._task = app.loop.create_task(self._run(app.loop))
 
     async def _run(self, loop: Type[asyncio.BaseEventLoop]):
         # _reconnect will keep yielding new connections
@@ -164,11 +159,10 @@ class EventRelay():
     """
 
     def __init__(self,
-                 app: Type[web.Application]=None,
-                 listener: Type[events.EventListener]=None,
-                 writer: Type[InfluxWriter]=None):
-        self._writer = writer if writer else InfluxWriter(app)
-        self._listener = listener if listener else events.EventListener(app)
+                 listener: Type[events.EventListener],
+                 writer: Type[InfluxWriter]):
+        self._listener = listener
+        self._writer = writer
 
     def subscribe(self, *args, **kwargs):
         kwargs['on_message'] = self._on_event_message
