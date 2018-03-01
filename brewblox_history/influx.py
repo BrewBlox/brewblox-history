@@ -125,10 +125,10 @@ class InfluxWriter():
                 await client.create_database(db=self._database)
                 while True:
                     await asyncio.sleep(WRITE_INTERVAL_S)
-                    # Do a quick check whether the connection is still alive
-                    await client.ping()
 
                     if not self._pending:
+                        # Do a quick check whether the connection is still alive
+                        await client.ping()
                         continue
 
                     await client.write(self._pending)
@@ -175,6 +175,7 @@ class InfluxWriter():
             fields=fields,
             tags=tags
         )
+        # TODO(Bob): Implement safety valve to prevent memory bloat after database disconnect
         self._pending.append(point)
 
 
@@ -188,20 +189,20 @@ class EventRelay():
     and becomes the InfluxDB measurement name.
 
     All subsequent routing key components are considered to be sub-set indicators of the controller.
-    If the routing key is controller.block.sensor, we consider this as being equal to:
+    If the routing key is controller1.block1.sensor1, we consider this as being equal to:
 
-        'controller': {
-            'block': {
-                'sensor': <event data>
+        'controller1': {
+            'block1': {
+                'sensor1': <event data>
             }
         }
 
     Data in sub-dicts (including those implied by routing key) is flattened.
     The key name will be the path to the sub-dict, separated by /.
 
-    If we'd received an even where:
+    If we'd received an event where:
 
-        routing_key = 'controller.block.sensor'
+        routing_key = 'controller1.block1.sensor1'
         data = {
             settings: {
                 'setting': 'setting'
@@ -215,9 +216,9 @@ class EventRelay():
     it would be flattened to:
 
         {
-            'block/sensor/settings/setting': 'setting',
-            'block/sensor/values/value': 'val',
-            'block/sensor/values/other': 1
+            'block1/sensor1/settings/setting': 'setting',
+            'block1/sensor1/values/value': 'val',
+            'block1/sensor1/values/other': 1
         }
 
     If the event data is not a dict, but a string, it is first converted to:
@@ -225,6 +226,8 @@ class EventRelay():
         {
             'text': <string data>
         }
+
+    This dict is then flattened.
     """
 
     def __init__(self,
