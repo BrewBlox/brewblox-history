@@ -1,15 +1,14 @@
 from setuptools import setup, find_packages
 
-project_name = 'YOUR-PACKAGE'
-package_name = 'YOUR_PACKAGE'
+project_name = 'brewblox-history'
 
 setup(
     name=project_name,
     version='0.1',
     long_description=open('README.md').read(),
-    url='YOUR_REPOSITORY',
-    author='YOUR NAME',
-    author_email='YOU@PROVIDER.com',
+    url='https://github.com/BrewBlox/brewblox-history',
+    author='BrewPi',
+    author_email='development@brewpi.com',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: GNU General Public License (GPL)',
@@ -20,7 +19,8 @@ setup(
     keywords='brewing brewpi brewblox embedded plugin service',
     packages=find_packages(exclude=['test']),
     install_requires=[
-        'brewblox-service'
+        'brewblox-service',
+        'aioinflux',
     ],
     extras_require={'dev': ['tox']}
 )
