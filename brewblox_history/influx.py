@@ -7,7 +7,7 @@ from typing import Iterator, Type
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
-from aioinflux import AsyncInfluxDBClient
+from aioinflux import InfluxDBClient
 from brewblox_service import events
 
 LOGGER = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class QueryClient():
     """
 
     def __init__(self, app: Type[web.Application]=None):
-        self._client: AsyncInfluxDBClient = None
+        self._client: InfluxDBClient = None
 
         if app:
             self.setup(app)
@@ -63,7 +63,7 @@ class QueryClient():
 
     async def connect(self, app: Type[web.Application]):
         await self.close()
-        self._client = AsyncInfluxDBClient(loop=app.loop)
+        self._client = InfluxDBClient(loop=app.loop)
 
     async def close(self, *args):
         if self._client:
@@ -142,7 +142,7 @@ class InfluxWriter():
                 LOGGER.warn(f'Exiting {self} {ex}')
                 raise ex
 
-    async def _generate_connections(self, loop: Type[asyncio.BaseEventLoop]) -> Iterator[Type[AsyncInfluxDBClient]]:
+    async def _generate_connections(self, loop: Type[asyncio.BaseEventLoop]) -> Iterator[Type[InfluxDBClient]]:
         """Iterator that keeps yielding new (connected) clients.
 
         It will only yield an influx client if it could successfully ping the remote.
@@ -150,7 +150,7 @@ class InfluxWriter():
         """
         while True:
             try:
-                async with AsyncInfluxDBClient(db=self._database, loop=loop) as client:
+                async with InfluxDBClient(db=self._database, loop=loop) as client:
                     await client.ping()
                     LOGGER.info(f'Connected {self}')
                     yield client
