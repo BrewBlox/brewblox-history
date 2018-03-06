@@ -4,7 +4,7 @@ project_name = 'brewblox-history'
 
 setup(
     name=project_name,
-    version='0.1',
+    version='0.1.0',
     long_description=open('README.md').read(),
     url='https://github.com/BrewBlox/brewblox-history',
     author='BrewPi',
@@ -22,5 +22,6 @@ setup(
         'brewblox-service',
         'aioinflux',
     ],
+    python_requires='>=3.6',
     extras_require={'dev': ['tox']}
 )
