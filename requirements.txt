@@ -1,2 +1,2 @@
 brewblox-service
-aioinflux
+aioinflux==v0.2.0
