@@ -40,7 +40,7 @@ def mocked_influx(mocker):
         'close'
     ]]
 
-    mocker.patch(TESTED + '.AsyncInfluxDBClient', m)
+    mocker.patch(TESTED + '.InfluxDBClient', m)
     return m
 
 
