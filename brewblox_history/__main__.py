@@ -18,7 +18,7 @@ def main():
     events.setup(app)
     influx.setup(app)
 
-    # Add all default endpoints, add prefix, and announce service to gateway
+    # Add all default endpoints and add prefix
     #
     # Default endpoints are:
     # {prefix}/api/doc (Swagger documentation of endpoints)
