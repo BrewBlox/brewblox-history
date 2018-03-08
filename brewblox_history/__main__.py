@@ -12,13 +12,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 def main():
-    app = service.create()
+    app = service.create_app(default_name='history')
 
     # Setup history functionality
     events.setup(app)
     influx.setup(app)
 
-    # Add all default endpoints, add prefix, and announce service to gateway
+    # Add all default endpoints and add prefix
     #
     # Default endpoints are:
     # {prefix}/api/doc (Swagger documentation of endpoints)
