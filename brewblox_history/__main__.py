@@ -12,7 +12,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def main():
-    app = service.create()
+    app = service.create_app(default_name='history')
 
     # Setup history functionality
     events.setup(app)

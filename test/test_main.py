@@ -14,7 +14,7 @@ def test_main(mocker):
 
     main.main()
 
-    assert service_mock.create.call_count == 1
+    assert service_mock.create_app.call_count == 1
     assert service_mock.furnish.call_count == 1
     assert service_mock.run.call_count == 1
     assert events_mock.setup.call_count == 1

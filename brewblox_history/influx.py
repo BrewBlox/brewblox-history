@@ -16,6 +16,7 @@ routes = web.RouteTableDef()
 WRITER_KEY = 'influx.writer'
 RELAY_KEY = 'influx.relay'
 CLIENT_KEY = 'influx.client'
+INFLUX_HOST = 'influx'
 FLAT_SEPARATOR = '/'
 WRITE_INTERVAL_S = 1
 RECONNECT_INTERVAL_S = 1
@@ -63,7 +64,7 @@ class QueryClient():
 
     async def connect(self, app: Type[web.Application]):
         await self.close()
-        self._client = InfluxDBClient(loop=app.loop)
+        self._client = InfluxDBClient(host=INFLUX_HOST, loop=app.loop)
 
     async def close(self, *args):
         if self._client:
@@ -150,7 +151,7 @@ class InfluxWriter():
         """
         while True:
             try:
-                async with InfluxDBClient(db=self._database, loop=loop) as client:
+                async with InfluxDBClient(host=INFLUX_HOST, db=self._database, loop=loop) as client:
                     await client.ping()
                     LOGGER.info(f'Connected {self}')
                     yield client
