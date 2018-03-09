@@ -4,7 +4,7 @@ project_name = 'brewblox-history'
 
 setup(
     name=project_name,
-    version='0.2.1',
+    version='0.3.0',
     long_description=open('README.md').read(),
     url='https://github.com/BrewBlox/brewblox-history',
     author='BrewPi',
