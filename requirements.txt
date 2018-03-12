@@ -1,2 +1,2 @@
-brewblox-service==0.4.0
+brewblox-service~=0.5
 aioinflux==0.2.0
