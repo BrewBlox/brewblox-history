@@ -71,6 +71,3 @@ target/
 
 # IDE local files
 .vscode/
-
-# Python packages for building docker
-docker/pkg/*
