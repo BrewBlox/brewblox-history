@@ -1,10 +1,8 @@
 from setuptools import setup, find_packages
 
-project_name = 'brewblox-history'
-
 setup(
-    name=project_name,
-    version='0.5.0',
+    name='brewblox-history',
+    use_scm_version={'local_scheme': lambda v: ''},
     long_description=open('README.md').read(),
     url='https://github.com/BrewBlox/brewblox-history',
     author='BrewPi',
@@ -23,5 +21,6 @@ setup(
         'aioinflux',
     ],
     python_requires='>=3.6',
-    extras_require={'dev': ['tox']}
+    extras_require={'dev': ['tox']},
+    setup_requires=['setuptools_scm'],
 )
