@@ -1,2 +1,0 @@
-brewblox-service~=0.5
-git+https://github.com/plugaai/aioinflux@89b106389f20f3ad333498fb6986436c07058bfd
