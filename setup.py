@@ -18,7 +18,7 @@ setup(
     packages=find_packages(exclude=['test']),
     install_requires=[
         'brewblox-service~=0.5',
-        'aioinflux',
+        'aioinflux~=0.3.0',
     ],
     python_requires='>=3.6',
     extras_require={'dev': ['tox']},

@@ -8,7 +8,7 @@ name = "pypi"
 [packages]
 
 brewblox-service = "~=0.5"
-aioinflux = {git = "https://github.com/plugaai/aioinflux", ref = "89b106389f20f3ad333498fb6986436c07058bfd"}
+aioinflux = "~=0.3.0"
 
 
 [dev-packages]

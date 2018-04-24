@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "31d168fdfa3e871dfb94893ee0329f227caa8c445ba88ade8699536351f4402b"
+            "sha256": "c2322099fde03f4fd2a8af359a3255aac7b43531582ddf88ad0a013ff096a089"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -64,8 +64,12 @@
             "version": "==1.0.5"
         },
         "aioinflux": {
-            "git": "https://github.com/plugaai/aioinflux",
-            "ref": "89b106389f20f3ad333498fb6986436c07058bfd"
+            "hashes": [
+                "sha256:3c8d6a028ba22a6f7a391984a7950c7781f37417e12db6ca8916bd19c310f31d",
+                "sha256:412d70159f801b065afe1336559e73f374398661b2d8bdcc0517a317fd762b4b"
+            ],
+            "index": "pypi",
+            "version": "==0.3.0"
         },
         "async-timeout": {
             "hashes": [
@@ -118,6 +122,12 @@
                 "sha256:fc323ffcaeaed0e0a02bf4d117757b98aed530d9ed4531e3e15460124c106691"
             ],
             "version": "==3.0.4"
+        },
+        "ciso8601": {
+            "hashes": [
+                "sha256:417887f3ffd4918d758ee1e49de25c55eeb702b0f5983f84c2916aadc3071ab3"
+            ],
+            "version": "==1.0.7"
         },
         "dpath": {
             "hashes": [
