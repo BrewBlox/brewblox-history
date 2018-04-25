@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "c2322099fde03f4fd2a8af359a3255aac7b43531582ddf88ad0a013ff096a089"
+            "sha256": "bc1fdb0188d9e43e41eaddbd211c51ddf013076f2a73450224cc75ef308b1ad7"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -16,12 +16,12 @@
         ]
     },
     "default": {
-        "aio-pika": {
+        "aioamqp": {
             "hashes": [
-                "sha256:167dad667a3a67330abe9897ed4436b322f4da890843bead717c90a8dea20754",
-                "sha256:a9c2bc95d87a380b6f82b8c188180d6b05a98ca3ddb892e78d131af78fa81721"
+                "sha256:2fa0c7b1199f196f7bc04d3a486fea1a0ed44387bf0d2241a823116a6dfdadff",
+                "sha256:c618af6d005942a2a8711f7548348f9028fac2673f0dc2d192310cef83486204"
             ],
-            "version": "==2.6.0"
+            "version": "==0.10.0"
         },
         "aiodns": {
             "hashes": [
@@ -87,10 +87,10 @@
         },
         "brewblox-service": {
             "hashes": [
-                "sha256:24f280bd014fdc75e98c37775a4a24914d1c2f7a4082accdb25b115f80550cc0"
+                "sha256:ccd55237dfc55923d7b21de29434620504cc3637f8519f2b628b3f96b3138fb2"
             ],
             "index": "pypi",
-            "version": "==0.7.0"
+            "version": "==0.8.1"
         },
         "cchardet": {
             "hashes": [
@@ -188,13 +188,6 @@
             ],
             "version": "==4.2.0"
         },
-        "pika": {
-            "hashes": [
-                "sha256:63131aaeec48a6c8f1db1fe657e1e74cf384c3927eb7d1725e31edae4220dea4",
-                "sha256:7277b4d12a99efa4058782614d84138983f9f89d690bdfcea66290d810806459"
-            ],
-            "version": "==0.10.0"
-        },
         "pprint": {
             "hashes": [
                 "sha256:c0fa22d1462351671ca098e9779bb26a23880011e93eea5f199a150ee7b92a16"
@@ -245,12 +238,6 @@
                 "sha256:e863072cdf4c72eebf179342c94e6989c67185842d9997960b3e69290b2fa269"
             ],
             "version": "==3.12"
-        },
-        "shortuuid": {
-            "hashes": [
-                "sha256:d08fd398f40f8baf87e15eef8355e92fa541bca4eb8465fefab7ee22f92711b9"
-            ],
-            "version": "==0.5.0"
         },
         "yarl": {
             "hashes": [
@@ -465,10 +452,10 @@
         },
         "pytest": {
             "hashes": [
-                "sha256:6266f87ab64692112e5477eba395cfedda53b1933ccd29478e671e73b420c19c",
-                "sha256:fae491d1874f199537fd5872b5e1f0e74a009b979df9d53d1553fd03da1703e1"
+                "sha256:54713b26c97538db6ff0703a12b19aeaeb60b5e599de542e7fca0ec83b9038e8",
+                "sha256:829230122facf05a5f81a6d4dfe6454a04978ea3746853b2b84567ecf8e5c526"
             ],
-            "version": "==3.5.0"
+            "version": "==3.5.1"
         },
         "pytest-aiohttp": {
             "hashes": [
