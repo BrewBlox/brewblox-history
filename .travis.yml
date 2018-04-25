@@ -40,7 +40,7 @@ deploy:
     on:
       tags: false
       repo: $GITHUB_REPO
-      condition: ! $TRAVIS_BRANCH =~ ^master$
+      condition: $TRAVIS_BRANCH != master
 
   # Deploy "latest" and version tag to Docker Hub on tagged commits
   - provider: script
@@ -74,4 +74,4 @@ deploy:
     on:
       tags: false
       repo: $GITHUB_REPO
-      condition: ! $TRAVIS_BRANCH =~ ^master$
+      condition: $TRAVIS_BRANCH != master
