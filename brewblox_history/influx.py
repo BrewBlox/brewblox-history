@@ -171,7 +171,7 @@ class InfluxWriter():
         """
         now = datetime.datetime.today()
         point = dict(
-            time=int(now.strftime('%s')),
+            time=now.strftime('%s'),
             measurement=measurement,
             fields=fields,
             tags=tags
