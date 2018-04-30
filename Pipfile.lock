@@ -65,11 +65,11 @@
         },
         "aioinflux": {
             "hashes": [
-                "sha256:3c8d6a028ba22a6f7a391984a7950c7781f37417e12db6ca8916bd19c310f31d",
-                "sha256:412d70159f801b065afe1336559e73f374398661b2d8bdcc0517a317fd762b4b"
+                "sha256:26cd14f09de51ef5ce25ab4fc364604c1ac37618ce7fe1f95efee15074c67dc0",
+                "sha256:f07e0c1843008e633225b5392e7caa5ef83a94280c3a836e7d7fcd06bfb0b79d"
             ],
             "index": "pypi",
-            "version": "==0.3.0"
+            "version": "==0.3.1"
         },
         "async-timeout": {
             "hashes": [

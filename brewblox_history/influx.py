@@ -171,7 +171,7 @@ class InfluxWriter():
         """
         now = datetime.datetime.today()
         point = dict(
-            time=now.strftime('%s'),
+            time=now,
             measurement=measurement,
             fields=fields,
             tags=tags
@@ -248,7 +248,11 @@ class EventRelay():
     def _flatten(self, d, parent_key='', sep='/'):
         items = []
         for k, v in d.items():
-            new_key = parent_key + sep + k if parent_key else k
+            new_key = f'{parent_key}{sep}{k}' if parent_key else str(k)
+
+            if isinstance(v, list):
+                v = {li: lv for li, lv in enumerate(v)}
+
             if isinstance(v, collections.MutableMapping):
                 items.extend(self._flatten(v, new_key, sep=sep).items())
             else:
