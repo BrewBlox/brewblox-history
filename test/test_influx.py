@@ -173,13 +173,17 @@ async def test_relay_message(mocked_influx, app, client):
     data = {
         'nest': {
             'ed': {
-                'value': 'val'
+                'values': [
+                    'val',
+                    'var'
+                ]
             }
         }
     }
 
     flat_data = {
-        'key/nest/ed/value': 'val'
+        'key/nest/ed/values/0': 'val',
+        'key/nest/ed/values/1': 'var'
     }
 
     flat_value = {
