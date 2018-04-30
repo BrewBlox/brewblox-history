@@ -1,4 +1,4 @@
-FROM brewblox/brewblox-service:bugfix-integration-fixes
+FROM brewblox/brewblox-service:latest
 
 RUN mkdir -p /pkg
 COPY ./pkg/* /pkg/
