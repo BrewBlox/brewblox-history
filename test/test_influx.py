@@ -59,11 +59,6 @@ async def test_setup(app, client):
 
 
 async def test_endpoints_offline(app, client):
-    assert (await client.post('/query', json={
-        'database': 'brewblox',
-        'query': 'select * from controller'
-    })).status == 500
-
     assert (await client.post('/subscribe', json={
         'exchange': 'brewblox',
         'routing': 'controller.#'
