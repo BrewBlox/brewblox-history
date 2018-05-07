@@ -6,7 +6,7 @@ from unittest.mock import call
 
 import pytest
 from asynctest import CoroutineMock
-from brewblox_history import builder, influx
+from brewblox_history import builder
 
 TESTED = builder.__name__
 
@@ -175,8 +175,8 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
     await client.post('/query/objects', json={'database': 'the_internet'})
 
     assert query_mock.mock_calls == [
-        call(database='brewblox', query='show field keys'),
-        call(database='brewblox', query='show field keys from {measurement}', measurement='measy'),
+        call(query='show field keys'),
+        call(query='show field keys from {measurement}', measurement='measy'),
         call(database='the_internet', query='show field keys')
     ]
 
@@ -190,7 +190,6 @@ async def test_single_key(app, client, query_mock, values_result):
 
     query_mock.assert_called_once_with(
         query='select {keys} from {measurement}',
-        database=influx.DEFAULT_DATABASE,
         measurement='m',
         keys='single'
     )
@@ -269,10 +268,8 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
 
     # Mirrors transformation in API:
     # * Query string is created
-    # * Database has a default value
     # * Keys are converted from a list to a comma separated string
     call_args['query'] = query_str
-    call_args['database'] = input_args.get('database', influx.DEFAULT_DATABASE)
     call_args['keys'] = ','.join(input_args.get('keys', ['*']))
 
     res = await client.post('/query/values', json=input_args)
@@ -281,7 +278,7 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
 
 
 async def test_invalid_time_frame(app, client):
-    res = await client.post('/query/values', json={'start': 'x', 'duration': 'y', 'end': 'z'})
+    res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x', 'duration': 'y', 'end': 'z'})
     assert res.status == 500
     assert 'ValueError' in await res.text()
 
@@ -289,14 +286,14 @@ async def test_invalid_time_frame(app, client):
 async def test_no_values_found(app, client, query_mock):
     query_mock.side_effect = {'results': []}
 
-    res = await client.post('/query/values', json={})
+    res = await client.post('/query/values', json={'measurement': 'm'})
     assert res.status == 200
     assert await res.json() == {}
 
 
 async def test_error_response(app, client, query_mock):
     query_mock.side_effect = RuntimeError('Whoops.')
-    resp = await client.post('/query/objects', json={'database': 'the_internet'})
+    resp = await client.post('/query/objects', json={})
 
     assert resp.status == 500
     assert 'Whoops.' in await resp.text()

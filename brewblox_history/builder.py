@@ -85,8 +85,9 @@ def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optiona
 
 
 async def raw_query(client: influx.QueryClient,
-                    database: str=influx.DEFAULT_DATABASE,
-                    query: str='show databases') -> dict:
+                    database: Optional[str]=influx.DEFAULT_DATABASE,
+                    query: Optional[str]='show databases'
+                    ) -> dict:
 
     return await client.query(
         query=query,
@@ -95,9 +96,10 @@ async def raw_query(client: influx.QueryClient,
 
 
 async def show_keys(client: influx.QueryClient,
-                    database: str=influx.DEFAULT_DATABASE,
-                    measurement: str=None,
-                    **ignored) -> dict:
+                    database: Optional[str]=None,
+                    measurement: Optional[str]=None,
+                    **_  # allow, but discard all other kwargs
+                    ) -> dict:
 
     query = 'show field keys'
 
@@ -120,21 +122,18 @@ async def show_keys(client: influx.QueryClient,
 
 
 async def select_values(client: influx.QueryClient,
-                        database: str= influx.DEFAULT_DATABASE,
-                        measurement: Optional[str]=None,
+                        measurement: str,
                         keys: Optional[list]=['*'],
+                        database: Optional[str]=None,
                         start: Optional[str]=None,
                         duration: Optional[str]=None,
                         end: Optional[str]=None,
                         limit: Optional[int]=None,
-                        **ignored
-                        ):
+                        **_  # allow, but discard all other kwargs
+                        ) -> dict:
 
-    query = 'select {keys}'
+    query = 'select {keys} from {measurement}'
     keys = ','.join(keys)
-
-    if measurement:
-        query += ' from {measurement}'
 
     query += _find_time_frame(start, duration, end)
 
