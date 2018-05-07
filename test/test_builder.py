@@ -6,7 +6,7 @@ from unittest.mock import call
 
 import pytest
 from asynctest import CoroutineMock
-from brewblox_history import builder
+from brewblox_history import builder, influx
 
 TESTED = builder.__name__
 
@@ -72,6 +72,79 @@ def field_keys_result():
     }
 
 
+@pytest.fixture
+def values_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'average_temperature',
+                        'columns': [
+                            'time',
+                            'degrees',
+                            'location'
+                        ],
+                        'values': [
+                            [
+                                1439856000000000000,
+                                82,
+                                'coyote_creek'
+                            ],
+                            [
+                                1439856000000000000,
+                                85,
+                                'santa_monica'
+                            ],
+                            [
+                                1439856360000000000,
+                                73,
+                                'coyote_creek'
+                            ],
+                            [
+                                1439856360000000000,
+                                74,
+                                'santa_monica'
+                            ],
+                            [
+                                1439856720000000000,
+                                86,
+                                'coyote_creek'
+                            ],
+                            [
+                                1439856720000000000,
+                                80,
+                                'santa_monica'
+                            ],
+                            [
+                                1439857080000000000,
+                                89,
+                                'coyote_creek'
+                            ],
+                            [
+                                1439857080000000000,
+                                81,
+                                'santa_monica'
+                            ],
+                            [
+                                1439857440000000000,
+                                77,
+                                'coyote_creek'
+                            ],
+                            [
+                                1439857440000000000,
+                                81,
+                                'santa_monica'
+                            ]
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+
 async def test_custom_query(app, client, query_mock):
     content = {
         'database': 'brewblox',
@@ -108,7 +181,122 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
     ]
 
 
-async def test_get_values(app, client, query_mock):
-    pass
-    # measurement, objects, limit, start, end, granularity
-    # measurement is required, others have defaults
+async def test_single_key(app, client, query_mock, values_result):
+    """Asserts that ['single'] is split to 'single', and not 's,i,n,g,l,e'"""
+    query_mock.side_effect = lambda **kwargs: values_result
+
+    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['single']})
+    assert res.status == 200
+
+    query_mock.assert_called_once_with(
+        query='select {keys} from {measurement}',
+        database=influx.DEFAULT_DATABASE,
+        measurement='m',
+        keys='single'
+    )
+
+
+async def test_value_data_format(app, client, query_mock, values_result):
+    query_mock.side_effect = lambda **kwargs: values_result
+
+    res = await client.post('/query/values', json={'measurement': 'm'})
+    assert res.status == 200
+
+    data = await res.json()
+    assert data['name'] == 'average_temperature'
+    assert len(data['values']) == 10
+    assert data['columns'][1] == 'degrees'
+
+
+@pytest.mark.parametrize('input_args, query_str', [
+    (
+        {},
+        'select {keys} from {measurement}'
+    ),
+    (
+        {'keys': ['you']},
+        'select {keys} from {measurement}'
+    ),
+    (
+        {'keys': ['key1', 'key2']},
+        'select {keys} from {measurement}'
+    ),
+    (
+        {'database': 'db'},
+        'select {keys} from {measurement}'
+    ),
+    (
+        {'start': 'a long time ago'},
+        'select {keys} from {measurement} where time >= {start}'
+    ),
+    (
+        {'start': 'once upon a time', 'duration': 'some time'},
+        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration}'
+    ),
+    (
+        {'start': 'then', 'end': 'now'},
+        'select {keys} from {measurement} where time >= {start} and time <= {end}'
+    ),
+    (
+        {'end': 'fire nation attack'},
+        'select {keys} from {measurement} where time <= {end}'
+    ),
+    (
+        {'end': 'life', 'duration': 'bright side'},
+        'select {keys} from {measurement} where time >= {end} - {duration} and time <= {end}'
+    ),
+    (
+        {'duration': 'eternal'},
+        'select {keys} from {measurement} where time >= now() - {duration}'
+    ),
+    (
+        {'duration': 'eternal', 'limit': 1},
+        'select {keys} from {measurement} where time >= now() - {duration} limit {limit}'
+    ),
+    (
+        {'database': 'db', 'keys': ['something', 'else'], 'start': 'good old days', 'duration': '1d', 'limit': 5},
+        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
+    )
+])
+async def test_get_values(input_args, query_str, app, client, query_mock, values_result):
+    query_mock.side_effect = lambda **kwargs: values_result
+
+    # Measurement is a required argument
+    # Always add it to input_args
+    input_args['measurement'] = input_args.get('measurement', 'emmy')
+
+    call_args = input_args.copy()
+
+    # Mirrors transformation in API:
+    # * Query string is created
+    # * Database has a default value
+    # * Keys are converted from a list to a comma separated string
+    call_args['query'] = query_str
+    call_args['database'] = input_args.get('database', influx.DEFAULT_DATABASE)
+    call_args['keys'] = ','.join(input_args.get('keys', ['*']))
+
+    res = await client.post('/query/values', json=input_args)
+    assert res.status == 200
+    query_mock.assert_called_once_with(**call_args)
+
+
+async def test_invalid_time_frame(app, client):
+    res = await client.post('/query/values', json={'start': 'x', 'duration': 'y', 'end': 'z'})
+    assert res.status == 500
+    assert 'ValueError' in await res.text()
+
+
+async def test_no_values_found(app, client, query_mock):
+    query_mock.side_effect = {'results': []}
+
+    res = await client.post('/query/values', json={})
+    assert res.status == 200
+    assert await res.json() == {}
+
+
+async def test_error_response(app, client, query_mock):
+    query_mock.side_effect = RuntimeError('Whoops.')
+    resp = await client.post('/query/objects', json={'database': 'the_internet'})
+
+    assert resp.status == 500
+    assert 'Whoops.' in await resp.text()

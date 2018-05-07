@@ -4,6 +4,7 @@ Converts REST endpoints into Influx queries
 
 
 import logging
+from typing import Optional, Callable
 
 import dpath
 from aiohttp import web
@@ -24,7 +25,136 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
         return await handler(request)
     except Exception as ex:
         LOGGER.warn(f'REST error: {ex}')
-        return web.json_response({'error': str(ex)}, status=500)
+        return web.json_response({'error': f'{type(ex).__name__}={ex}'}, status=500)
+
+
+########################################################################################################
+
+
+async def _handled(func: Callable, request: web.Request) -> web.Response:
+    args = await request.json()
+    response = await func(influx.get_client(request.app), **args)
+    return web.json_response(response)
+
+
+def _prune(vals: dict, relevant: set) -> dict:
+    return {k: vals[k] for k in relevant if vals.get(k) is not None}
+
+
+def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optional[str]) -> str:
+    """
+    Determines required InfluxDB QL where/and clause required to express time frame.
+
+    A time frame can be constructed from a start, a duration, and an end.
+    At most two determinators can be present simultaneously.
+    """
+    clause = ''
+
+    if all([start, duration, end]):
+        raise ValueError('At most two out of three duration arguments can be provided')
+
+    elif not any([start, duration, end]):
+        pass
+
+    elif start and duration:
+        clause = ' where time >= {start} and time <= {start} + {duration}'
+
+    elif start and end:
+        clause = ' where time >= {start} and time <= {end}'
+
+    elif duration and end:
+        clause = ' where time >= {end} - {duration} and time <= {end}'
+
+    elif start:
+        clause = ' where time >= {start}'
+
+    elif duration:
+        clause = ' where time >= now() - {duration}'
+
+    elif end:
+        clause = ' where time <= {end}'
+
+    else:  # pragma: no cover
+        # This path should never be reached
+        raise RuntimeError('Unexpected code path while determining time frame!')
+
+    return clause
+
+
+########################################################################################################
+
+
+async def raw_query(client: influx.QueryClient,
+                    database: str=influx.DEFAULT_DATABASE,
+                    query: str='show databases') -> dict:
+
+    return await client.query(
+        query=query,
+        database=database
+    )
+
+
+async def show_keys(client: influx.QueryClient,
+                    database: str=influx.DEFAULT_DATABASE,
+                    measurement: str=None,
+                    **ignored) -> dict:
+
+    query = 'show field keys'
+
+    if measurement:
+        query += ' from {measurement}'
+
+    params = _prune(locals(), {'query', 'database', 'measurement'})
+    query_response = await client.query(**params)
+
+    response = dict()
+
+    for path, meas_name in dpath.util.search(
+            query_response, 'results/*/series/*/name', yielded=True, dirs=False):
+
+        # results/[index]/series/[index]/values/*/0
+        values_glob = '/'.join(path.split('/')[:-1] + ['values', '*', '0'])
+        response[meas_name] = dpath.util.values(query_response, values_glob)
+
+    return response
+
+
+async def select_values(client: influx.QueryClient,
+                        database: str= influx.DEFAULT_DATABASE,
+                        measurement: Optional[str]=None,
+                        keys: Optional[list]=['*'],
+                        start: Optional[str]=None,
+                        duration: Optional[str]=None,
+                        end: Optional[str]=None,
+                        limit: Optional[int]=None,
+                        **ignored
+                        ):
+
+    query = 'select {keys}'
+    keys = ','.join(keys)
+
+    if measurement:
+        query += ' from {measurement}'
+
+    query += _find_time_frame(start, duration, end)
+
+    if limit:
+        query += ' limit {limit}'
+
+    params = _prune(locals(), {'query', 'database', 'measurement', 'keys', 'start', 'duration', 'end', 'limit'})
+    query_response = await client.query(**params)
+
+    try:
+        # Only support single-measurement queries
+        response = dpath.util.get(query_response, 'results/0/series/0')
+    except KeyError:
+        # Nothing found
+        response = dict()
+
+    return response
+
+
+########################################################################################################
 
 
 @routes.post('/_debug/query')
@@ -52,14 +182,7 @@ async def custom_query(request: web.Request) -> web.Response:
                 query:
                     type: string
     """
-    args = await request.json()
-    query_str = args['query']
-    database = args.get('database', None)
-
-    data = await influx.get_client(request.app).query(
-        query=query_str,
-        database=database)
-    return web.json_response(data)
+    return await _handled(raw_query, request)
 
 
 @routes.post('/query/objects')
@@ -88,33 +211,7 @@ async def objects_query(request: web.Request) -> web.Response:
                     type: string
                     required: false
     """
-    args = await request.json()
-
-    client = influx.get_client(request.app)
-    database = args.get('database', influx.DEFAULT_DATABASE)
-    query = 'show field keys'
-    params = dict()
-
-    if 'measurement' in args:
-        query += ' from {measurement}'
-        params['measurement'] = args['measurement']
-
-    query_response = await client.query(
-        query=query,
-        database=database,
-        **params
-    )
-
-    response = dict()
-
-    for path, meas_name in dpath.util.search(
-            query_response, 'results/*/series/*/name', yielded=True, dirs=False):
-
-        # results/[index]/series/[index]/values/*/0
-        values_glob = '/'.join(path.split('/')[:-1] + ['values', '*', '0'])
-        response[meas_name] = dpath.util.values(query_response, values_glob)
-
-    return web.json_response(response)
+    return await _handled(show_keys, request)
 
 
 @routes.post('/query/values')
@@ -140,47 +237,26 @@ async def values_query(request: web.Request) -> web.Response:
                     required: false
                 measurement:
                     type: string
+                    required: true
                 keys:
                     type: list
+                    required: true
                     example: ["*"]
+                start:
+                    type: string
+                    required: false
+                    example: "1439873640000000000"
                 duration:
                     type: string
                     required: false
                     example: "10m"
                 end:
                     type: string
-                    example: 
+                    required: false
+                    example: "1439873640000000000"
                 limit:
                     type: int
-                    default: 100
+                    required: false
                     example: 100
     """
-    args = await request.json()
-
-    client = influx.get_client(request.app)
-    database = args.get('database', influx.DEFAULT_DATABASE)
-    query = 'select {keys}'
-    params = dict(keys=','.join(args['keys']))
-
-    if 'measurement' in args:
-        query += ' from {measurement}'
-        params['measurement'] = args['measurement']
-
-    if 'duration' in args:
-        query += ' where time > now() - {duration}'
-        params['duration'] = args['duration']
-
-    if 'limit' in args:
-        query += ' limit {limit}'
-        params['limit'] = args['limit']
-
-    LOGGER.info(query)
-    LOGGER.info(params)
-
-    query_response = await client.query(
-        query=query,
-        database=database,
-        **params
-    )
-
-    return web.json_response(query_response)
+    return await _handled(select_values, request)
