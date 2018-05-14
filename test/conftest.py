@@ -7,8 +7,9 @@ Any fixtures declared here are available to all test functions in this directory
 import logging
 
 import pytest
-
 from brewblox_service import service
+
+from brewblox_history.__main__ import create_parser
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -25,6 +26,7 @@ def app_config() -> dict:
         'host': 'localhost',
         'port': 1234,
         'debug': False,
+        'broadcast_exchange': 'brewcast',
     }
 
 
@@ -35,12 +37,14 @@ def sys_args(app_config) -> list:
         '--name', app_config['name'],
         '--host', app_config['host'],
         '--port', str(app_config['port']),
+        '--broadcast-exchange', app_config['broadcast_exchange'],
     ]
 
 
 @pytest.fixture
 def app(sys_args):
-    app = service.create_app('default', raw_args=sys_args[1:])
+    parser = create_parser('default')
+    app = service.create_app(parser=parser, raw_args=sys_args[1:])
     return app
 
 

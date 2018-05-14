@@ -25,12 +25,17 @@ class InfluxClientMock(Mock):
 
 @pytest.fixture
 async def reduced_sleep(mocker):
-    influx.WRITE_INTERVAL_S = 0.0001
-    influx.RECONNECT_INTERVAL_S = 0.0001
+    mocker.patch.object(influx, 'WRITE_INTERVAL_S', 0.001)
+    mocker.patch.object(influx, 'RECONNECT_INTERVAL_S', 0.001)
+
+
+@pytest.fixture
+async def fewer_max_points(mocker):
+    mocker.patch.object(influx, 'MAX_PENDING_POINTS', 10)
 
 
 @pytest.fixture()
-def mocked_influx(mocker):
+def influx_mock(mocker):
     m = InfluxClientMock()
     [setattr(m.return_value, f, CoroutineMock()) for f in [
         'ping',
@@ -41,11 +46,11 @@ def mocked_influx(mocker):
     ]]
 
     mocker.patch(TESTED + '.InfluxDBClient', m)
-    return m
+    return m.return_value
 
 
 @pytest.fixture
-async def app(app, mocker, mocked_influx, reduced_sleep):
+async def app(app, mocker, influx_mock, reduced_sleep):
     mocker.patch(TESTED + '.events.get_listener')
 
     influx.setup(app)
@@ -68,25 +73,33 @@ async def test_endpoints_offline(app, client):
 async def test_runtime_construction(app, client):
     # App is running, objects should still be createable
     query_client = influx.QueryClient()
-    await query_client.connect(app)
+    await query_client.start(app)
+    await query_client.close()
+    await query_client.close()
 
     writer = influx.InfluxWriter()
     await writer.start(app)
+    assert writer.is_running
+    await writer.close()
+    await writer.close()
 
-    influx.EventRelay(listener=Mock(), writer=writer)
+    relay = influx.EventRelay(app)
+    await relay.start(app)
+    await relay.close()
+    await relay.close()
 
 
-async def test_query_client(app, client, mocked_influx):
+async def test_query_client(app, client, influx_mock):
     query_client = influx.get_client(app)
     retval = dict(key='val')
-    mocked_influx.return_value.query.return_value = retval
+    influx_mock.query.return_value = retval
 
     data = await query_client.query(database='db', query='gimme')
 
     assert data == retval
 
 
-async def test_running_writer(mocked_influx, app, client, mocker):
+async def test_running_writer(influx_mock, app, client, mocker):
     writer = influx.get_writer(app)
 
     await writer.write_soon(
@@ -95,30 +108,47 @@ async def test_running_writer(mocked_influx, app, client, mocker):
         tags=dict(tag1=1, tag2=2)
     )
 
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.1)
     assert writer.is_running
     assert not writer._pending
-    assert mocked_influx.return_value.write.call_count == 1
+    assert influx_mock.write.call_count == 1
 
 
-async def test_run_error(mocked_influx, app, client, mocker):
+async def test_run_error(influx_mock, app, client, mocker):
     writer = influx.get_writer(app)
-    mocked_influx.return_value.ping.side_effect = RuntimeError
+    influx_mock.ping.side_effect = RuntimeError
     warn_mock = mocker.spy(influx.LOGGER, 'warn')
 
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.1)
 
     assert not writer.is_running
     assert warn_mock.call_count == 1
+
+
+async def test_retry_generate_connection(influx_mock, app, client):
+    writer = influx.get_writer(app)
     await writer.close()
-    assert warn_mock.call_count == 2
+
+    influx_mock.ping.reset_mock()
+    influx_mock.create_database.reset_mock()
+
+    influx_mock.ping.side_effect = ClientConnectionError
+
+    await writer.start(app)
+    await asyncio.sleep(0.1)
+
+    # generate_connections() keeps trying, but no success so far
+    assert writer.is_running
+    assert influx_mock.ping.call_count > 0
+    assert influx_mock.create_database.call_count == 0
 
 
-async def test_reconnect(mocked_influx, app, client):
-    db_client = mocked_influx.return_value
-    db_client.write.side_effect = [ClientConnectionError, RuntimeError]
+async def test_reconnect(influx_mock, app, client):
+    writer = influx.get_writer(app)
 
-    writer = influx.InfluxWriter()
+    influx_mock.create_database.side_effect = ClientConnectionError
+
+    await writer.close()
     await writer.start(app)
 
     await writer.write_soon(
@@ -127,32 +157,39 @@ async def test_reconnect(mocked_influx, app, client):
         tags=dict(tag1=1, tag2=2)
     )
 
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.1)
+    assert influx_mock.write.call_count == 0
+    assert writer.is_running
 
-    # the default writer connected just fine, and is idling
-    # writing in first connection caused connection error
-    # writing in second connection caused runtime error -> exit runner
-    assert influx.get_writer(app).is_running
-    assert not writer.is_running
-    assert db_client.create_database.call_count == 3
+    influx_mock.create_database.side_effect = [True]
+
+    await asyncio.sleep(0.1)
+    assert writer.is_running
+    assert influx_mock.write.call_count == 1
 
 
-async def test_reconnect_fail(mocked_influx, app, client):
-    db_client = mocked_influx.return_value
-    db_client.ping.side_effect = ClientConnectionError
+async def test_downsample(influx_mock, app, client, fewer_max_points):
+    influx_mock.create_database.side_effect = ClientConnectionError
 
-    writer = influx.InfluxWriter()
+    writer = influx.get_writer(app)
+    await writer.close()
     await writer.start(app)
 
-    await asyncio.sleep(0.01)
+    for i in range(2 * influx.MAX_PENDING_POINTS + 1):
+        await writer.write_soon(
+            measurement='measurement',
+            fields=dict(field1=1, field2=2),
+            tags=dict(tag1=1, tag2=2)
+        )
 
-    assert influx.get_writer(app).is_running
-    assert writer.is_running
-    # Only the background writer managed to connect before we introduced errors
-    assert db_client.create_database.call_count == 1
+    # It's been downsampled to half every time it hit max points
+    assert len(writer._pending) == 0.5 * influx.MAX_PENDING_POINTS + 1
+    assert influx_mock.write.call_count == 0
+    influx_mock.create_database.side_effect = None
+    await asyncio.sleep(0.1)
 
 
-async def test_relay_subscribe(mocked_influx, app, client):
+async def test_relay_subscribe(influx_mock, app, client):
     listener = influx.events.get_listener.return_value
     relay = influx.get_relay(app)
     relay.subscribe('arg', kw='kwarg')
@@ -161,8 +198,7 @@ async def test_relay_subscribe(mocked_influx, app, client):
         'arg', kw='kwarg', on_message=relay._on_event_message)
 
 
-async def test_relay_message(mocked_influx, app, client):
-    db_client = mocked_influx.return_value
+async def test_relay_message(influx_mock, app, client):
     relay = influx.get_relay(app)
 
     data = {
@@ -194,4 +230,4 @@ async def test_relay_message(mocked_influx, app, client):
     ]
 
     await asyncio.sleep(0.1)
-    db_client.write.assert_called_once_with(expected)
+    influx_mock.write.assert_called_once_with(expected)
