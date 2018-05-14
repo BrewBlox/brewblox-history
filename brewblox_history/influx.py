@@ -13,6 +13,7 @@ from brewblox_service import events
 LOGGER = logging.getLogger(__name__)
 routes = web.RouteTableDef()
 
+DEFAULT_DATABASE = 'brewblox'
 WRITER_KEY = 'influx.writer'
 RELAY_KEY = 'influx.relay'
 CLIENT_KEY = 'influx.client'
@@ -71,8 +72,8 @@ class QueryClient():
             await self._client.close()
             self._client = None
 
-    async def query(self, database: str, query: str):
-        return await self._client.query(query, db=database)
+    async def query(self, query: str, database: str=DEFAULT_DATABASE, **kwargs):
+        return await self._client.query(query, db=database, **kwargs)
 
 
 class InfluxWriter():
@@ -85,7 +86,7 @@ class InfluxWriter():
     the data points are kept until the database is available again.
     """
 
-    def __init__(self, app: Type[web.Application]=None, database: str='brewblox'):
+    def __init__(self, app: Type[web.Application]=None, database: str=DEFAULT_DATABASE):
         self._pending = []
         self._database = database
         self._task: Type[asyncio.Task] = None
@@ -313,38 +314,3 @@ async def add_subscription(request: Type[web.Request]) -> Type[web.Response]:
         routing=routing)
 
     return web.Response()
-
-
-@routes.post('/query')
-async def custom_query(request: Type[web.Request]) -> Type[web.Response]:
-    """
-    ---
-    tags:
-    - History
-    summary: Query InfluxDB
-    description: Send a string query to the database.
-    operationId: history.query
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        description: Query
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                query:
-                    type: string
-    """
-    args = await request.json()
-    query_str = args['query']
-    database = args.get('database', None)
-
-    data = await get_client(request.app).query(
-        query=query_str,
-        database=database)
-    return web.json_response(data)

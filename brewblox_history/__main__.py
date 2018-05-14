@@ -6,7 +6,7 @@ import logging
 
 from brewblox_service import events, service
 
-from brewblox_history import influx
+from brewblox_history import influx, builder
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ def main():
     # Setup history functionality
     events.setup(app)
     influx.setup(app)
+    builder.setup(app)
 
     # Add all default endpoints and add prefix
     #
