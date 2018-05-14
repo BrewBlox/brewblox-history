@@ -31,13 +31,20 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
 ########################################################################################################
 
 
-async def _handled(func: Callable, request: web.Request) -> web.Response:
+async def _do_with_handler(func: Callable, request: web.Request) -> web.Response:
     args = await request.json()
     response = await func(influx.get_client(request.app), **args)
     return web.json_response(response)
 
 
 def _prune(vals: dict, relevant: set) -> dict:
+    """Creates a dict only containing meaningful and relevant key/value pairs.
+
+    All pairs in the returned dict met three conditions:
+    * Their key was in `relevant`
+    * Their key was in `vals`
+    * The value associated with the key in `vals` was not None
+    """
     return {k: vals[k] for k in relevant if vals.get(k) is not None}
 
 
@@ -181,7 +188,7 @@ async def custom_query(request: web.Request) -> web.Response:
                 query:
                     type: string
     """
-    return await _handled(raw_query, request)
+    return await _do_with_handler(raw_query, request)
 
 
 @routes.post('/query/objects')
@@ -210,7 +217,7 @@ async def objects_query(request: web.Request) -> web.Response:
                     type: string
                     required: false
     """
-    return await _handled(show_keys, request)
+    return await _do_with_handler(show_keys, request)
 
 
 @routes.post('/query/values')
@@ -258,4 +265,4 @@ async def values_query(request: web.Request) -> web.Response:
                     required: false
                     example: 100
     """
-    return await _handled(select_values, request)
+    return await _do_with_handler(select_values, request)
