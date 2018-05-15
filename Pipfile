@@ -7,8 +7,9 @@ name = "pypi"
 
 [packages]
 
-brewblox-service = "~=0.8"
+brewblox-service = "~=0.9"
 aioinflux = "~=0.3.0"
+dpath = "*"
 
 
 [dev-packages]
@@ -20,6 +21,8 @@ pytest-mock = "*"
 pytest-aiohttp = "*"
 asynctest = "*"
 aioresponses = "*"
+"flake8" = "*"
+"autopep8" = "*"
 
 
 [requires]

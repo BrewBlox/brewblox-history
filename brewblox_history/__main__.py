@@ -2,39 +2,35 @@
 Example of how to import and use the brewblox service
 """
 
-import logging
+from brewblox_service import brewblox_logger, events, service
 
-from brewblox_service import events, service
+from brewblox_history import builder, influx
 
-from brewblox_history import influx, builder
+LOGGER = brewblox_logger(__name__)
 
-LOGGER = logging.getLogger(__name__)
+
+def create_parser(default_name='history'):
+    parser = service.create_parser(default_name=default_name)
+    parser.add_argument('--broadcast-exchange',
+                        help='Eventbus exchange to which device services broadcast their state. [%(default)s]',
+                        default='brewcast')
+    return parser
 
 
 def main():
-    app = service.create_app(default_name='history')
+    app = service.create_app(parser=create_parser())
 
     # Setup history functionality
     events.setup(app)
     influx.setup(app)
     builder.setup(app)
 
-    # Add all default endpoints and add prefix
-    #
-    # Default endpoints are:
-    # {prefix}/api/doc (Swagger documentation of endpoints)
-    # {prefix}/_service/status (Health check: this endpoint is called to check service status)
-    #
-    # The prefix is automatically added for all endpoints. You don't have to do anything for this.
-    # To change the prefix, you can use the --name command line argument.
-    #
-    # See brewblox_service.service for more details on how arguments are parsed.
-    #
-    # The default value is "brewblox".
-    # This means you can now access the example/endpoint as "/brewblox/example/endpoint"
-    service.furnish(app)
+    influx.get_relay(app).subscribe(
+        exchange_name=app['config']['broadcast_exchange'],
+        routing='#'
+    )
 
-    # service.run() will start serving clients async
+    service.furnish(app)
     service.run(app)
 
 
