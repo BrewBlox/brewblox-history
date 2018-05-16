@@ -191,7 +191,21 @@ async def test_single_key(app, client, query_mock, values_result):
     query_mock.assert_called_once_with(
         query='select {keys} from {measurement}',
         measurement='m',
-        keys='single'
+        keys='"single"'
+    )
+
+
+async def test_quote_keys(app, client, query_mock, values_result):
+    """Keys must be quoted with double quotes. '*' is an exception."""
+    query_mock.side_effect = lambda **kwargs: values_result
+
+    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['first', 'second']})
+    assert res.status == 200
+
+    query_mock.assert_called_once_with(
+        query='select {keys} from {measurement}',
+        measurement='m',
+        keys='"first","second"'
     )
 
 
@@ -270,7 +284,8 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
     # * Query string is created
     # * Keys are converted from a list to a comma separated string
     call_args['query'] = query_str
-    call_args['keys'] = ','.join(input_args.get('keys', ['*']))
+    quoted_keys = [f'"{k}"' for k in input_args.get('keys', [])] or ['*']
+    call_args['keys'] = ','.join(quoted_keys)
 
     res = await client.post('/query/values', json=input_args)
     assert res.status == 200

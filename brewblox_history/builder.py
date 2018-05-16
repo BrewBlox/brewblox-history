@@ -139,7 +139,7 @@ async def select_values(client: influx.QueryClient,
                         ) -> dict:
 
     query = 'select {keys} from {measurement}'
-    keys = ','.join(keys)
+    keys = ','.join([f'"{key}"' if key is not '*' else key for key in keys])
 
     query += _find_time_frame(start, duration, end)
 
