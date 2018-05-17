@@ -263,6 +263,10 @@ async def test_value_data_format(app, client, query_mock, values_result):
         'select {keys} from {measurement} where time >= now() - {duration}'
     ),
     (
+        {'keys': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
+        'select {keys} from {measurement} order by {order_by} limit {limit}'
+    ),
+    (
         {'duration': 'eternal', 'limit': 1},
         'select {keys} from {measurement} where time >= now() - {duration} limit {limit}'
     ),

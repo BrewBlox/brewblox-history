@@ -134,6 +134,7 @@ async def select_values(client: influx.QueryClient,
                         start: Optional[str]=None,
                         duration: Optional[str]=None,
                         end: Optional[str]=None,
+                        order_by: Optional[str]=None,
                         limit: Optional[int]=None,
                         **_  # allow, but discard all other kwargs
                         ) -> dict:
@@ -143,10 +144,14 @@ async def select_values(client: influx.QueryClient,
 
     query += _find_time_frame(start, duration, end)
 
+    if order_by:
+        query += ' order by {order_by}'
+
     if limit:
         query += ' limit {limit}'
 
-    params = _prune(locals(), {'query', 'database', 'measurement', 'keys', 'start', 'duration', 'end', 'limit'})
+    params = _prune(locals(), {'query', 'database', 'measurement', 'keys',
+                               'start', 'duration', 'end', 'order_by', 'limit'})
     query_response = await client.query(**params)
 
     try:
