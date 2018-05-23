@@ -73,20 +73,20 @@ async def test_endpoints_offline(app, client):
 async def test_runtime_construction(app, client):
     # App is running, objects should still be createable
     query_client = influx.QueryClient()
-    await query_client.start(app)
-    await query_client.close()
-    await query_client.close()
+    await query_client.startup(app)
+    await query_client.shutdown()
+    await query_client.shutdown()
 
     writer = influx.InfluxWriter()
-    await writer.start(app)
+    await writer.startup(app)
     assert writer.is_running
-    await writer.close()
-    await writer.close()
+    await writer.shutdown()
+    await writer.shutdown()
 
     relay = influx.EventRelay(app)
-    await relay.start(app)
-    await relay.close()
-    await relay.close()
+    await relay.startup(app)
+    await relay.shutdown()
+    await relay.shutdown()
 
 
 async def test_query_client(app, client, influx_mock):
@@ -127,14 +127,14 @@ async def test_run_error(influx_mock, app, client, mocker):
 
 async def test_retry_generate_connection(influx_mock, app, client):
     writer = influx.get_writer(app)
-    await writer.close()
+    await writer.shutdown()
 
     influx_mock.ping.reset_mock()
     influx_mock.create_database.reset_mock()
 
     influx_mock.ping.side_effect = ClientConnectionError
 
-    await writer.start(app)
+    await writer.startup(app)
     await asyncio.sleep(0.1)
 
     # generate_connections() keeps trying, but no success so far
@@ -148,8 +148,8 @@ async def test_reconnect(influx_mock, app, client):
 
     influx_mock.create_database.side_effect = ClientConnectionError
 
-    await writer.close()
-    await writer.start(app)
+    await writer.shutdown()
+    await writer.startup(app)
 
     await writer.write_soon(
         measurement='measurement',
@@ -172,8 +172,8 @@ async def test_downsample(influx_mock, app, client, fewer_max_points):
     influx_mock.create_database.side_effect = ClientConnectionError
 
     writer = influx.get_writer(app)
-    await writer.close()
-    await writer.start(app)
+    await writer.shutdown()
+    await writer.startup(app)
 
     for i in range(2 * influx.MAX_PENDING_POINTS + 1):
         await writer.write_soon(
