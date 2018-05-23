@@ -50,11 +50,11 @@ class QueryClient(features.ServiceFeature):
         super().__init__(app)
         self._client: InfluxDBClient = None
 
-    async def start(self, app: web.Application):
-        await self.close()
+    async def startup(self, app: web.Application):
+        await self.shutdown()
         self._client = InfluxDBClient(host=INFLUX_HOST, loop=app.loop)
 
-    async def close(self, *_):
+    async def shutdown(self, *_):
         if self._client:
             await self._client.close()
             self._client = None
@@ -87,11 +87,11 @@ class InfluxWriter(features.ServiceFeature):
     def is_running(self) -> bool:
         return self._task and not self._task.done()
 
-    async def start(self, app: web.Application):
-        await self.close()
+    async def startup(self, app: web.Application):
+        await self.shutdown()
         self._task = app.loop.create_task(self._run(app.loop))
 
-    async def close(self, *_):
+    async def shutdown(self, *_):
         try:
             self._task.cancel()
             await self._task
@@ -224,14 +224,14 @@ class EventRelay(features.ServiceFeature):
     """
 
     def __init__(self, app: web.Application):
-        super().__init__(None)  # we don't use start/close functions
+        super().__init__(None)  # we don't use startup/shutdown functions
         self._listener = events.get_listener(app)
         self._writer = get_writer(app)
 
-    async def start(self, *_):
+    async def startup(self, *_):
         pass
 
-    async def close(self, *_):
+    async def shutdown(self, *_):
         pass
 
     def subscribe(self, *args, **kwargs):

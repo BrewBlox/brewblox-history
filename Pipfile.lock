@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "90eda1b8114765812a9620d1d6917b97e9d4065d767960c658a315c58f781ccf"
+            "sha256": "5f089ddbf9a33dfd493dc9698d165cb7e04aba4916925728e6783b4c27f5eb19"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -80,10 +80,10 @@
         },
         "brewblox-service": {
             "hashes": [
-                "sha256:900ce973fcb1736526014a8f862381663447e6677e9374746ce0eb4fcfa01c7b"
+                "sha256:0d21b6ed50a021c3cbd4ceaa3ebd36c99bbfee7a2658c511d9b914664e03bfe8"
             ],
             "index": "pypi",
-            "version": "==0.9.0"
+            "version": "==0.10.0"
         },
         "cchardet": {
             "hashes": [
@@ -257,6 +257,13 @@
             "index": "pypi",
             "version": "==0.12.0"
         },
+        "atomicwrites": {
+            "hashes": [
+                "sha256:240831ea22da9ab882b551b31d4225591e5e447a68c5e188db5b89ca1d487585",
+                "sha256:a24da68318b08ac9c9c45029f4a10371ab5b20e4226738e150e6e7c571630ae6"
+            ],
+            "version": "==1.1.5"
+        },
         "attrs": {
             "hashes": [
                 "sha256:4b90b09eeeb9b88c35bc642cbac057e45a5fd85367b985bd2809c62b7b939265",
@@ -404,10 +411,10 @@
         },
         "pytest": {
             "hashes": [
-                "sha256:54713b26c97538db6ff0703a12b19aeaeb60b5e599de542e7fca0ec83b9038e8",
-                "sha256:829230122facf05a5f81a6d4dfe6454a04978ea3746853b2b84567ecf8e5c526"
+                "sha256:39555d023af3200d004d09e51b4dd9fdd828baa863cded3fd6ba2f29f757ae2d",
+                "sha256:c76e93f3145a44812955e8d46cdd302d8a45fbfc7bf22be24fe231f9d8d8853a"
             ],
-            "version": "==3.5.1"
+            "version": "==3.6.0"
         },
         "pytest-aiohttp": {
             "hashes": [
