@@ -17,7 +17,7 @@ setup(
     keywords='brewing brewpi brewblox embedded plugin service',
     packages=find_packages(exclude=['test']),
     install_requires=[
-        'brewblox-service~=0.9',
+        'brewblox-service~=0.10',
         'aioinflux~=0.3.0',
         'dpath~=1.4',
     ],
