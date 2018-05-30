@@ -268,5 +268,9 @@ async def values_query(request: web.Request) -> web.Response:
                     type: int
                     required: false
                     example: 100
+                order_by:
+                    type: string
+                    required: false
+                    example: "time asc"
     """
     return await _do_with_handler(select_values, request)

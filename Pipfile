@@ -10,6 +10,7 @@ name = "pypi"
 brewblox-service = "~=0.10"
 aioinflux = "~=0.3.0"
 dpath = "*"
+aiohttp-sse = "*"
 
 
 [dev-packages]
