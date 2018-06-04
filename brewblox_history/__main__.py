@@ -4,7 +4,7 @@ Example of how to import and use the brewblox service
 
 from brewblox_service import brewblox_logger, events, service
 
-from brewblox_history import builder, influx
+from brewblox_history import builder, influx, sse
 
 LOGGER = brewblox_logger(__name__)
 
@@ -24,6 +24,7 @@ def main():
     events.setup(app)
     influx.setup(app)
     builder.setup(app)
+    sse.setup(app)
 
     influx.get_relay(app).subscribe(
         exchange_name=app['config']['broadcast_exchange'],

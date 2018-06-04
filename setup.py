@@ -20,6 +20,7 @@ setup(
         'brewblox-service~=0.10',
         'aioinflux~=0.3.0',
         'dpath~=1.4',
+        'aiohttp-sse~=2.0',
     ],
     python_requires='>=3.6',
     extras_require={'dev': ['tox']},
