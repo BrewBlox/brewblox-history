@@ -195,6 +195,34 @@ async def custom_query(request: web.Request) -> web.Response:
     return await _do_with_handler(raw_query, request)
 
 
+@routes.post('/_debug/downsample')
+async def downsample(request: web.Request) -> web.Response:
+    """
+    ---
+    tags:
+    - History
+    summary: Create downsample queries
+    operationId: history.debug.downsample
+    produces:
+    - application/json
+    """
+    client = influx.get_client(request.app)
+    await client.create_database(db=influx.DEFAULT_DATABASE)
+
+    for duration in ['10s', '1m', '1h']:
+        db_name = f'{influx.DEFAULT_DATABASE}_{duration}'
+        cquery = f'''
+        CREATE CONTINUOUS QUERY "cq_downsample_{duration}" ON "{influx.DEFAULT_DATABASE}"
+        BEGIN
+            SELECT mean(*) INTO "{db_name}"."autogen".:MEASUREMENT FROM /.*/ GROUP BY time({duration}),*
+        END
+        '''
+        await client.create_database(db=db_name)
+        await client.query(db=db_name, query=cquery)
+
+    return web.json_response({})
+
+
 @routes.post('/query/objects')
 async def objects_query(request: web.Request) -> web.Response:
     """
