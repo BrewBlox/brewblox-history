@@ -145,6 +145,59 @@ def values_result():
     }
 
 
+@pytest.fixture
+def count_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'brewblox.autogen.pressure',
+                        'columns': ['time'],
+                        'values': [[1000]],
+                    }],
+            },
+            {
+                'statement_id': 1,
+                'series': [
+                    {
+                        'name': 'brewblox_10s.autogen.pressure',
+                        'columns': ['time'],
+                        'values': [[600]],
+                    }],
+            },
+            {
+                'statement_id': 2,
+                'series': [
+                    {
+                        'name': 'brewblox_1m.autogen.pressure',
+                        'columns': ['time'],
+                        'values': [[200]],
+                    }],
+            },
+            {
+                'statement_id': 3,
+                'series': [
+                    {
+                        'name': 'brewblox_10m.autogen.pressure',
+                        'columns': ['time'],
+                        'values': [[100]],
+                    }],
+            },
+            {
+                'statement_id': 4,
+                'series': [
+                    {
+                        'name': 'brewblox_1h.autogen.pressure',
+                        'columns': ['time'],
+                        'values': [[20]],
+                    }],
+            }
+        ]
+    }
+
+
 async def test_custom_query(app, client, query_mock):
     content = {
         'database': 'brewblox',
@@ -316,3 +369,42 @@ async def test_error_response(app, client, query_mock):
 
     assert resp.status == 500
     assert 'Whoops.' in await resp.text()
+
+
+@pytest.mark.parametrize('approx_points, used_database', [
+    # exact values
+    (600, 'brewblox_10s'),
+    (200, 'brewblox_1m'),
+    (100, 'brewblox_10m'),
+    (20, 'brewblox_1h'),
+    (1000, 'brewblox'),
+    # approximate
+    (10000, 'brewblox'),
+    (500, 'brewblox_10s'),
+    (40, 'brewblox_1h'),
+])
+async def test_select_downsampling_database(approx_points, used_database, app, client, query_mock, count_result):
+    query_mock.side_effect = lambda **kwargs: count_result
+    resp = await client.post('/query/values', json={'measurement': 'm', 'approx_points': approx_points})
+    assert resp.status == 200
+    print(query_mock.call_args_list)
+
+    assert query_mock.call_args_list == [
+        call(
+            query=';'.join([
+                'select count(time) from {database}.autogen.{measurement}',
+                'select count(time) from {database}_10s.autogen.{measurement}',
+                'select count(time) from {database}_1m.autogen.{measurement}',
+                'select count(time) from {database}_10m.autogen.{measurement}',
+                'select count(time) from {database}_1h.autogen.{measurement}',
+            ]),
+            database='brewblox',
+            measurement='m'
+        ),
+        call(
+            query='select {keys} from {measurement}',
+            keys='*',
+            measurement='m',
+            database=used_database
+        )
+    ]
