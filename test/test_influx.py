@@ -57,6 +57,12 @@ async def app(app, mocker, influx_mock, reduced_sleep):
     return app
 
 
+@pytest.fixture
+async def app_skip_config(app):
+    app['config']['skip_influx_config'] = True
+    return app
+
+
 async def test_setup(app, client):
     assert influx.get_writer(app)
     assert influx.get_relay(app)
@@ -231,3 +237,8 @@ async def test_relay_message(influx_mock, app, client):
 
     await asyncio.sleep(0.1)
     influx_mock.write.assert_called_once_with(expected)
+
+
+async def test_skip_config(influx_mock, app_skip_config, client):
+    await asyncio.sleep(0.1)
+    assert influx_mock.create_database.call_count == 0
