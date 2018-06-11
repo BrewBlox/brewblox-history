@@ -123,7 +123,7 @@ class InfluxWriter(features.ServiceFeature):
 
         # Creates default database, and limits retention
         await client.create_database(db=self._database)
-        await client.query(f'ALTER RETENTION POLICY autogen duration {self._retention}')
+        await client.query(f'ALTER RETENTION POLICY autogen ON {self._database} duration {self._retention}')
 
         # Data is downsampled multiple times, and stored in separate databases
         # Database naming scheme is <database_name>_<downsample_interval>
