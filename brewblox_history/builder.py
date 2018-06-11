@@ -13,6 +13,9 @@ LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
 
+DEFAULT_APPROX_POINTS = 100
+
+
 def setup(app: web.Application):
     app.router.add_routes(routes)
     app.middlewares.append(controller_error_middleware)
@@ -136,6 +139,7 @@ async def select_values(client: influx.QueryClient,
                         end: Optional[str]=None,
                         order_by: Optional[str]=None,
                         limit: Optional[int]=None,
+                        approx_points: Optional[int]=None,
                         **_  # allow, but discard all other kwargs
                         ) -> dict:
 
@@ -150,6 +154,10 @@ async def select_values(client: influx.QueryClient,
     if limit:
         query += ' limit {limit}'
 
+    if approx_points:
+        select_params = _prune(locals(), {'measurement', 'database', 'approx_points', 'start', 'duration', 'end'})
+        database = await select_downsampling_database(client, **select_params)
+
     params = _prune(locals(), {'query', 'database', 'measurement', 'keys',
                                'start', 'duration', 'end', 'order_by', 'limit'})
     query_response = await client.query(**params)
@@ -162,6 +170,55 @@ async def select_values(client: influx.QueryClient,
         response = dict()
 
     return response
+
+
+async def select_downsampling_database(client: influx.QueryClient,
+                                       measurement: str,
+                                       database: str=influx.DEFAULT_DATABASE,
+                                       approx_points: int=DEFAULT_APPROX_POINTS,
+                                       start: Optional[str]=None,
+                                       duration: Optional[str]=None,
+                                       end: Optional[str]=None,
+                                       ):
+    """
+    Chooses the downsampling database that will yield the optimum number of results when queried.
+    This is calculated by taking the request number of points (approx_points), and measurement count,
+    and dividing the highest value by the lowest.
+
+    The database where this calculation yields the lowest value is chosen.
+
+    Examples, for approx_points = 100:
+        [20, 200] => 200
+        [90, 200] => 90
+        [100, 200] => 100
+        [500, 200] => 200
+        [20, 600] => 20
+    """
+    time_frame = _find_time_frame(start, duration, end)
+
+    queries = [f'select count(time) from {{database}}.autogen.{{measurement}}{time_frame}']
+    queries += [
+        f'select count(time) from {{database}}_{interval}.autogen.{{measurement}}{time_frame}'
+        for interval in influx.DOWNSAMPLE_INTERVALS
+    ]
+    query = ';'.join(queries)
+
+    params = _prune(locals(), {'query', 'database', 'measurement', 'start', 'duration', 'end'})
+    query_response = await client.query(**params)
+
+    values = dpath.util.values(query_response, 'results/*/series/0/values/0/0')
+    databases = [database] + [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
+
+    # Create a dict where key=approximation score, and values=database name
+    # Calculate approximation score by comparing it to 'approx_points' target
+    # Values are compared by dividing the highest by the lowest
+    proximity = {
+        (max(approx_points, v) / min(approx_points, v)): db
+        for v, db in zip(values, databases)
+    }
+
+    # Lowest score indicates closest to target value
+    return proximity[min(*proximity.keys())]
 
 
 ########################################################################################################
@@ -272,5 +329,9 @@ async def values_query(request: web.Request) -> web.Response:
                     type: string
                     required: false
                     example: "time asc"
+                approx_points:
+                    type: int
+                    required: false
+                    example: 100
     """
     return await _do_with_handler(select_values, request)
