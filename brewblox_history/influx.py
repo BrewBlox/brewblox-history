@@ -12,12 +12,18 @@ from brewblox_service import brewblox_logger, events, features
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
-DEFAULT_DATABASE = 'brewblox'
+
 INFLUX_HOST = 'influx'
 FLAT_SEPARATOR = '/'
 WRITE_INTERVAL_S = 1
 RECONNECT_INTERVAL_S = 1
 MAX_PENDING_POINTS = 5000
+
+DEFAULT_DATABASE = 'brewblox'
+DEFAULT_RETENTION = '1w'
+
+DOWNSAMPLE_INTERVALS = ['10s', '1m', '1h']
+DOWNSAMPLE_RETENTION = ['1w', '6w', 'INF']
 
 
 def setup(app):
@@ -73,12 +79,17 @@ class InfluxWriter(features.ServiceFeature):
     the data points are kept until the database is available again.
     """
 
-    def __init__(self, app: web.Application=None, database: str=DEFAULT_DATABASE):
+    def __init__(self,
+                 app: web.Application=None,
+                 database: str=DEFAULT_DATABASE,
+                 retention: str=DEFAULT_RETENTION):
         super().__init__(app)
 
         self._pending = []
         self._database = database
+        self._retention = retention
         self._task: asyncio.Task = None
+        self._skip_config = False
 
     def __str__(self):
         return f'<{type(self).__name__} {self._database}>'
@@ -89,6 +100,7 @@ class InfluxWriter(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown()
+        self._skip_config = app['config']['skip_influx_config']
         self._task = app.loop.create_task(self._run(app.loop))
 
     async def shutdown(self, *_):
@@ -100,11 +112,41 @@ class InfluxWriter(features.ServiceFeature):
         finally:
             self._task = None
 
+    async def _on_connected(self, client: InfluxDBClient):
+        """
+        Sets database configuration.
+        This is done every time a new connection is made.
+        """
+
+        if self._skip_config:
+            return
+
+        # Creates default database, and limits retention
+        await client.create_database(db=self._database)
+        await client.query(f'ALTER RETENTION POLICY autogen ON {self._database} duration {self._retention}')
+
+        # Data is downsampled multiple times, and stored in separate databases
+        # Database naming scheme is <database_name>_<downsample_interval>
+        for interval, retention in zip(DOWNSAMPLE_INTERVALS, DOWNSAMPLE_RETENTION):
+            downsampled_db = f'{self._database}_{interval}'
+            db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
+            cquery = f'''
+            CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{self._database}"
+            BEGIN
+                SELECT mean(*) INTO "{downsampled_db}"."autogen".:MEASUREMENT
+                FROM /.*/
+                GROUP BY time({interval}),*
+            END
+            '''
+            await client.query(db_query)
+            await client.query(cquery)
+
     async def _run(self, loop: asyncio.BaseEventLoop):
         # _generate_connections will keep yielding new connections
         async for client in self._generate_connections(loop):
             try:
-                await client.create_database(db=self._database)
+                await self._on_connected(client)
+
                 while True:
                     await asyncio.sleep(WRITE_INTERVAL_S)
 
