@@ -3,13 +3,13 @@ Tests brewblox_history.influx
 """
 
 import asyncio
-from unittest.mock import Mock, ANY
+from unittest.mock import ANY, Mock
 
 import pytest
 from aiohttp.client_exceptions import ClientConnectionError
 from asynctest import CoroutineMock
-
 from brewblox_history import influx
+from brewblox_service import scheduler
 
 TESTED = influx.__name__
 
@@ -53,6 +53,7 @@ def influx_mock(mocker):
 async def app(app, mocker, influx_mock, reduced_sleep):
     mocker.patch(TESTED + '.events.get_listener')
 
+    scheduler.setup(app)
     influx.setup(app)
     return app
 
@@ -78,12 +79,12 @@ async def test_endpoints_offline(app, client):
 
 async def test_runtime_construction(app, client):
     # App is running, objects should still be createable
-    query_client = influx.QueryClient()
+    query_client = influx.QueryClient(app)
     await query_client.startup(app)
     await query_client.shutdown()
     await query_client.shutdown()
 
-    writer = influx.InfluxWriter()
+    writer = influx.InfluxWriter(app)
     await writer.startup(app)
     assert writer.is_running
     await writer.shutdown()

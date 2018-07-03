@@ -1,0 +1,13 @@
+FROM brewblox/brewblox-service:latest
+
+WORKDIR /app
+
+COPY ./dist /app/dist
+COPY ./config /app/config
+
+EXPOSE 5000
+
+RUN pip3 install /app/dist/* \
+    && pip3 show brewblox-history
+
+ENTRYPOINT ["python3", "-m", "brewblox_history"]
