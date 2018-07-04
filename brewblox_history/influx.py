@@ -7,7 +7,7 @@ from typing import Iterator
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
-from brewblox_service import brewblox_logger, events, features
+from brewblox_service import brewblox_logger, events, features, scheduler
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -101,16 +101,11 @@ class InfluxWriter(features.ServiceFeature):
     async def startup(self, app: web.Application):
         await self.shutdown()
         self._skip_config = app['config']['skip_influx_config']
-        self._task = app.loop.create_task(self._run(app.loop))
+        self._task = await scheduler.create_task(app, self._run())
 
     async def shutdown(self, *_):
-        try:
-            self._task.cancel()
-            await self._task
-        except Exception:
-            pass
-        finally:
-            self._task = None
+        await scheduler.cancel_task(self.app, self._task)
+        self._task = None
 
     async def _on_connected(self, client: InfluxDBClient):
         """
@@ -141,9 +136,9 @@ class InfluxWriter(features.ServiceFeature):
             await client.query(db_query)
             await client.query(cquery)
 
-    async def _run(self, loop: asyncio.BaseEventLoop):
+    async def _run(self):
         # _generate_connections will keep yielding new connections
-        async for client in self._generate_connections(loop):
+        async for client in self._generate_connections():
             try:
                 await self._on_connected(client)
 
@@ -171,7 +166,7 @@ class InfluxWriter(features.ServiceFeature):
                 LOGGER.warn(f'Exiting {self} {ex}')
                 raise ex
 
-    async def _generate_connections(self, loop: asyncio.BaseEventLoop) -> Iterator[InfluxDBClient]:
+    async def _generate_connections(self) -> Iterator[InfluxDBClient]:
         """Iterator that keeps yielding new (connected) clients.
 
         It will only yield an influx client if it could successfully ping the remote.
@@ -179,7 +174,7 @@ class InfluxWriter(features.ServiceFeature):
         """
         while True:
             try:
-                async with InfluxDBClient(host=INFLUX_HOST, db=self._database, loop=loop) as client:
+                async with InfluxDBClient(host=INFLUX_HOST, db=self._database, loop=self.app.loop) as client:
                     await client.ping()
                     LOGGER.info(f'Connected {self}')
                     yield client
@@ -266,7 +261,7 @@ class EventRelay(features.ServiceFeature):
     """
 
     def __init__(self, app: web.Application):
-        super().__init__(None)  # we don't use startup/shutdown functions
+        super().__init__(app, startup=features.Startup.MANUAL)
         self._listener = events.get_listener(app)
         self._writer = get_writer(app)
 

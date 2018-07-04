@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name='brewblox-history',
@@ -17,8 +17,8 @@ setup(
     keywords='brewing brewpi brewblox embedded plugin service',
     packages=find_packages(exclude=['test']),
     install_requires=[
-        'brewblox-service~=0.10',
-        'aioinflux~=0.3.0',
+        'brewblox-service~=0.11',
+        'aioinflux~=0.3',
         'dpath~=1.4',
         'aiohttp-sse~=2.0',
     ],
