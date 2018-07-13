@@ -82,12 +82,14 @@ class InfluxWriter(features.ServiceFeature):
     def __init__(self,
                  app: web.Application=None,
                  database: str=DEFAULT_DATABASE,
-                 retention: str=DEFAULT_RETENTION):
+                 retention: str=DEFAULT_RETENTION,
+                 downsampling: bool=True):
         super().__init__(app)
 
         self._pending = []
         self._database = database
         self._retention = retention
+        self._downsampling = downsampling
         self._task: asyncio.Task = None
         self._skip_config = False
 
@@ -120,21 +122,22 @@ class InfluxWriter(features.ServiceFeature):
         await client.create_database(db=self._database)
         await client.query(f'ALTER RETENTION POLICY autogen ON {self._database} duration {self._retention}')
 
-        # Data is downsampled multiple times, and stored in separate databases
-        # Database naming scheme is <database_name>_<downsample_interval>
-        for interval, retention in zip(DOWNSAMPLE_INTERVALS, DOWNSAMPLE_RETENTION):
-            downsampled_db = f'{self._database}_{interval}'
-            db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
-            cquery = f'''
-            CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{self._database}"
-            BEGIN
-                SELECT mean(*) INTO "{downsampled_db}"."autogen".:MEASUREMENT
-                FROM /.*/
-                GROUP BY time({interval}),*
-            END
-            '''
-            await client.query(db_query)
-            await client.query(cquery)
+        if self._downsampling:
+            # Data is downsampled multiple times, and stored in separate databases
+            # Database naming scheme is <database_name>_<downsample_interval>
+            for interval, retention in zip(DOWNSAMPLE_INTERVALS, DOWNSAMPLE_RETENTION):
+                downsampled_db = f'{self._database}_{interval}'
+                db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
+                cquery = f'''
+                CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{self._database}"
+                BEGIN
+                    SELECT mean(*) INTO "{downsampled_db}"."autogen".:MEASUREMENT
+                    FROM /.*/
+                    GROUP BY time({interval}),*
+                END
+                '''
+                await client.query(db_query)
+                await client.query(cquery)
 
     async def _run(self):
         # _generate_connections will keep yielding new connections
