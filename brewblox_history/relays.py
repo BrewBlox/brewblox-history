@@ -30,22 +30,16 @@ def get_log_relay(app) -> 'LogRelay':
 
 
 class LogRelay(features.ServiceFeature):
-    """
-    Writes collected log messages to the database.
+    """Writes log messages from subscribed events to the database.
     """
 
     def __init__(self, app: web.Application):
         super().__init__(app)
         self._listener = events.get_listener(app)
-        self._writer = influx.InfluxWriter(
-            app,
-            database=influx.LOG_DATABASE,
-            downsampling=False
-        )
-        features.add(app, self._writer, f'{self}::writer')
+        self._writer = influx.get_log_writer(app)
 
     def __str__(self):
-        return f'<{type(self).__name__} {influx.LOG_DATABASE}>'
+        return f'<{type(self).__name__} {self._writer}>'
 
     async def startup(self, app: web.Application):
         pass
@@ -69,7 +63,7 @@ class LogRelay(features.ServiceFeature):
 
 
 class DataRelay(features.ServiceFeature):
-    """Writes all data from specified event queues to the database.
+    """Writes data from subscribed events to the database.
 
     After a subscription is set, it will relay all incoming messages.
 
@@ -122,11 +116,10 @@ class DataRelay(features.ServiceFeature):
     def __init__(self, app: web.Application):
         super().__init__(app, startup=features.Startup.MANUAL)
         self._listener = events.get_listener(app)
-        self._writer = influx.InfluxWriter(app, database=influx.DEFAULT_DATABASE)
-        features.add(app, self._writer, f'{self}::writer')
+        self._writer = influx.get_data_writer(app)
 
     def __str__(self):
-        return f'<{type(self).__name__} {influx.DEFAULT_DATABASE}>'
+        return f'<{type(self).__name__} {self._writer}>'
 
     async def startup(self, *_):
         pass

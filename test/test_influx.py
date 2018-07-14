@@ -8,8 +8,9 @@ from unittest.mock import ANY, Mock
 import pytest
 from aiohttp.client_exceptions import ClientConnectionError
 from asynctest import CoroutineMock
-from brewblox_history import influx
 from brewblox_service import scheduler
+
+from brewblox_history import influx
 
 TESTED = influx.__name__
 
@@ -51,7 +52,7 @@ def influx_mock(mocker):
 
 @pytest.fixture
 async def app(app, mocker, influx_mock, reduced_sleep):
-    mocker.patch(TESTED + '.events.get_listener')
+    # mocker.patch(TESTED + '.events.get_listener')
 
     scheduler.setup(app)
     influx.setup(app)
@@ -65,16 +66,9 @@ async def app_skip_config(app):
 
 
 async def test_setup(app, client):
-    assert influx.get_writer(app)
-    assert influx.get_relay(app)
+    assert influx.get_log_writer(app)
+    assert influx.get_data_writer(app)
     assert influx.get_client(app)
-
-
-async def test_endpoints_offline(app, client):
-    assert (await client.post('/subscribe', json={
-        'exchange': 'brewblox',
-        'routing': 'controller.#'
-    })).status == 200
 
 
 async def test_runtime_construction(app, client):

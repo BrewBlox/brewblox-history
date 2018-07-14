@@ -27,9 +27,29 @@ DOWNSAMPLE_RETENTION = ['INF', 'INF', 'INF', 'INF']
 def setup(app):
     features.add(app, QueryClient(app))
 
+    features.add(app,
+                 InfluxWriter(app, database=DEFAULT_DATABASE),
+                 'data_writer'
+                 )
+
+    features.add(app,
+                 InfluxWriter(app,
+                              database=LOG_DATABASE,
+                              downsampling=False),
+                 'log_writer'
+                 )
+
 
 def get_client(app) -> 'QueryClient':
     return features.get(app, QueryClient)
+
+
+def get_data_writer(app) -> 'InfluxWriter':
+    return features.get(app, InfluxWriter, 'data_writer')
+
+
+def get_log_writer(app) -> 'InfluxWriter':
+    return features.get(app, InfluxWriter, 'log_writer')
 
 
 class QueryClient(features.ServiceFeature):

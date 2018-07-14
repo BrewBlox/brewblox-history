@@ -27,7 +27,7 @@ def app_config() -> dict:
         'port': 1234,
         'debug': False,
         'broadcast_exchange': 'brewcast',
-        'logcast_exchange': 'logcast',
+        'logging_exchange': 'logcast',
     }
 
 
