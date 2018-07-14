@@ -16,17 +16,17 @@ routes = web.RouteTableDef()
 
 
 def setup(app):
-    features.add(app, DataRelay(app))
     features.add(app, LogRelay(app))
+    features.add(app, DataRelay(app))
     app.router.add_routes(routes)
-
-
-def get_data_relay(app) -> 'DataRelay':
-    return features.get(app, DataRelay)
 
 
 def get_log_relay(app) -> 'LogRelay':
     return features.get(app, LogRelay)
+
+
+def get_data_relay(app) -> 'DataRelay':
+    return features.get(app, DataRelay)
 
 
 class LogRelay(features.ServiceFeature):
@@ -41,10 +41,10 @@ class LogRelay(features.ServiceFeature):
     def __str__(self):
         return f'<{type(self).__name__} {self._writer}>'
 
-    async def startup(self, app: web.Application):
+    async def startup(self, _):
         pass
 
-    async def shutdown(self, app: web.Application):
+    async def shutdown(self, _):
         pass
 
     def subscribe(self, *args, **kwargs):
@@ -114,17 +114,17 @@ class DataRelay(features.ServiceFeature):
     """
 
     def __init__(self, app: web.Application):
-        super().__init__(app, startup=features.Startup.MANUAL)
+        super().__init__(app)
         self._listener = events.get_listener(app)
         self._writer = influx.get_data_writer(app)
 
     def __str__(self):
         return f'<{type(self).__name__} {self._writer}>'
 
-    async def startup(self, *_):
+    async def startup(self, _):
         pass
 
-    async def shutdown(self, *_):
+    async def shutdown(self, _):
         pass
 
     def subscribe(self, *args, **kwargs):
@@ -187,6 +187,13 @@ async def add_subscription(request: web.Request) -> web.Response:
         schema:
             type: object
             properties:
+                relay:
+                    type: string
+                    default: data
+                    example: data
+                    enum:
+                        - log
+                        - data
                 exchange:
                     type: string
                     example: brewblox
@@ -195,11 +202,14 @@ async def add_subscription(request: web.Request) -> web.Response:
                     example: controller.#
     """
     args = await request.json()
+    relay_type = args.get('relay', 'data').lower()
     exchange = args['exchange']
     routing = args['routing']
 
-    get_data_relay(request.app).subscribe(
-        exchange_name=exchange,
-        routing=routing)
+    relay = {
+        'data': get_data_relay,
+        'log': get_log_relay
+    }[relay_type](request.app)
 
+    relay.subscribe(exchange_name=exchange, routing=routing)
     return web.Response()
