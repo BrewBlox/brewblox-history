@@ -2,12 +2,13 @@
 Converts REST endpoints into Influx queries
 """
 
-from typing import Optional, Callable
+from typing import Callable, Optional
 
 import dpath
 from aiohttp import web
-from brewblox_history import influx
 from brewblox_service import brewblox_logger
+
+from brewblox_history import influx
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
