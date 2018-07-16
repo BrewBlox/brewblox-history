@@ -33,6 +33,21 @@ def get_data_relay(app) -> 'DataRelay':
 
 class LogRelay(features.ServiceFeature):
     """Writes log messages from subscribed events to the database.
+
+    Log messages consist of four parts:
+    - Time
+    - Origin
+    - Category
+    - Message
+
+    All values except Time are client-defined string values.
+    The only restriction is that they must be valid InfluxDB input.
+
+    When inserting messages as RabbitMQ events, data is split over the routing key, and the message content.
+    The routing key should be "<CATEGORY>.<ORIGIN>".
+    The message body should be a JSON dict, with the following keys:
+    - time (optional): Numeric representation of seconds since UNIX UTC epoch. This can be a float.
+    - msg (required): The string message to be logged.
     """
 
     def __init__(self, app: web.Application):
@@ -86,14 +101,14 @@ class LogRelay(features.ServiceFeature):
             routing (str):
                 Event routing. Should consist of logging category and origin.
                 Category and origin are expected to be separated by a ".".
-                The origin can contain more "." characters - they will be ignored.
+                The origin can't contain any more "." characters.
 
             message (dict):
                 Message body. Expected keys:
                     `time` (float, optional): Logging timestamp, expressed as seconds since Unix epoch.
                     `msg`: Log message content.
         """
-        category, origin = routing.split('.', 1)
+        category, origin = routing.split('.')
         time = message.get('time')
         time = time and datetime.fromtimestamp(time)
 
