@@ -3,6 +3,8 @@ Functionality for persisting eventbus messages to the database
 """
 
 import collections
+from datetime import datetime
+from typing import Union
 
 from aiohttp import web
 from brewblox_service import brewblox_logger, events, features
@@ -55,11 +57,52 @@ class LogRelay(features.ServiceFeature):
         kwargs['on_message'] = self._on_event_message
         self._listener.subscribe(*args, **kwargs)
 
+    async def add_log_message(self,
+                              timestamp: Union[datetime, str],
+                              origin: str,
+                              category: str,
+                              message: str):
+        await self._writer.write_soon(
+            measurement=origin,
+            time=timestamp,
+            fields={
+                'msg': message
+            },
+            tags={
+                'category': category
+            }
+        )
+
     async def _on_event_message(self,
                                 subscription: events.EventSubscription,
                                 routing: str,
                                 message: dict):
-        print('LOG <<', routing, message)
+        """Parses log message from event.
+
+        Args:
+            subscription (events.EventSubscription):
+                Active subscription
+
+            routing (str):
+                Event routing. Should consist of logging category and origin.
+                Category and origin are expected to be separated by a ".".
+                The origin can contain more "." characters - they will be ignored.
+
+            message (dict):
+                Message body. Expected keys:
+                    `time` (float, optional): Logging timestamp, expressed as seconds since Unix epoch.
+                    `msg`: Log message content.
+        """
+        category, origin = routing.split('.', 1)
+        time = message.get('time')
+        time = time and datetime.fromtimestamp(time)
+
+        await self.add_log_message(
+            time,
+            origin,
+            category,
+            message['msg']
+        )
 
 
 class DataRelay(features.ServiceFeature):

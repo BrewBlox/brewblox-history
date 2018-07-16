@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 from concurrent.futures import CancelledError
-from typing import Iterator
+from typing import Iterator, Union
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
@@ -197,19 +197,19 @@ class InfluxWriter(features.ServiceFeature):
 
     async def write_soon(self,
                          measurement: str,
-                         fields: dict = dict(),
-                         tags: dict = dict()):
+                         fields: dict=None,
+                         tags: dict=None,
+                         time: Union[datetime.datetime, str]=None):
         """Schedules a data point for writing.
 
         Actual writing is done in a timed interval, to batch database writing.
         If the remote is not connected, the data point is kept locally until reconnect.
         """
-        now = datetime.datetime.today()
         point = dict(
-            time=now,
+            time=time or datetime.datetime.today(),
             measurement=measurement,
-            fields=fields,
-            tags=tags
+            fields=fields or dict(),
+            tags=tags or dict()
         )
         self._pending.append(point)
 

@@ -2,6 +2,7 @@
 Tests brewblox_history.relays
 """
 
+import time
 from unittest.mock import call
 
 import pytest
@@ -122,4 +123,5 @@ async def test_data_relay(app, client, data_writer_mock):
 async def test_log_relay(app, client, log_writer_mock):
     relay = relays.get_log_relay(app)
 
-    await relay._on_event_message(None, 'route', 'message')
+    await relay._on_event_message(None, 'INFO.source', {'msg': 'hello'})
+    await relay._on_event_message(None, 'INFO.source', {'time': time.time(), 'msg': 'hello'})
