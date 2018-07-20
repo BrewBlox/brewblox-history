@@ -3,13 +3,14 @@ Tests brewblox_history.influx
 """
 
 import asyncio
-from unittest.mock import ANY, Mock
+from unittest.mock import Mock
 
 import pytest
 from aiohttp.client_exceptions import ClientConnectionError
 from asynctest import CoroutineMock
-from brewblox_history import influx
 from brewblox_service import scheduler
+
+from brewblox_history import influx
 
 TESTED = influx.__name__
 
@@ -51,8 +52,6 @@ def influx_mock(mocker):
 
 @pytest.fixture
 async def app(app, mocker, influx_mock, reduced_sleep):
-    mocker.patch(TESTED + '.events.get_listener')
-
     scheduler.setup(app)
     influx.setup(app)
     return app
@@ -65,16 +64,9 @@ async def app_skip_config(app):
 
 
 async def test_setup(app, client):
-    assert influx.get_writer(app)
-    assert influx.get_relay(app)
+    assert influx.get_log_writer(app)
+    assert influx.get_data_writer(app)
     assert influx.get_client(app)
-
-
-async def test_endpoints_offline(app, client):
-    assert (await client.post('/subscribe', json={
-        'exchange': 'brewblox',
-        'routing': 'controller.#'
-    })).status == 200
 
 
 async def test_runtime_construction(app, client):
@@ -90,11 +82,6 @@ async def test_runtime_construction(app, client):
     await writer.shutdown()
     await writer.shutdown()
 
-    relay = influx.EventRelay(app)
-    await relay.startup(app)
-    await relay.shutdown()
-    await relay.shutdown()
-
 
 async def test_query_client(app, client, influx_mock):
     query_client = influx.get_client(app)
@@ -107,7 +94,7 @@ async def test_query_client(app, client, influx_mock):
 
 
 async def test_running_writer(influx_mock, app, client, mocker):
-    writer = influx.get_writer(app)
+    writer = influx.get_data_writer(app)
 
     await writer.write_soon(
         measurement='measurement',
@@ -122,18 +109,20 @@ async def test_running_writer(influx_mock, app, client, mocker):
 
 
 async def test_run_error(influx_mock, app, client, mocker):
-    writer = influx.get_writer(app)
+    data_writer = influx.get_data_writer(app)
+    log_writer = influx.get_log_writer(app)
     influx_mock.ping.side_effect = RuntimeError
     warn_mock = mocker.spy(influx.LOGGER, 'warn')
 
     await asyncio.sleep(0.1)
 
-    assert not writer.is_running
-    assert warn_mock.call_count == 1
+    assert not data_writer.is_running
+    assert not log_writer.is_running
+    assert warn_mock.call_count == 2
 
 
 async def test_retry_generate_connection(influx_mock, app, client):
-    writer = influx.get_writer(app)
+    writer = influx.get_data_writer(app)
     await writer.shutdown()
 
     influx_mock.ping.reset_mock()
@@ -151,7 +140,7 @@ async def test_retry_generate_connection(influx_mock, app, client):
 
 
 async def test_reconnect(influx_mock, app, client):
-    writer = influx.get_writer(app)
+    writer = influx.get_data_writer(app)
 
     influx_mock.create_database.side_effect = ClientConnectionError
 
@@ -178,7 +167,7 @@ async def test_reconnect(influx_mock, app, client):
 async def test_downsample(influx_mock, app, client, fewer_max_points):
     influx_mock.create_database.side_effect = ClientConnectionError
 
-    writer = influx.get_writer(app)
+    writer = influx.get_data_writer(app)
     await writer.shutdown()
     await writer.startup(app)
 
@@ -194,50 +183,6 @@ async def test_downsample(influx_mock, app, client, fewer_max_points):
     assert influx_mock.write.call_count == 0
     influx_mock.create_database.side_effect = None
     await asyncio.sleep(0.1)
-
-
-async def test_relay_subscribe(influx_mock, app, client):
-    listener = influx.events.get_listener.return_value
-    relay = influx.get_relay(app)
-    relay.subscribe('arg', kw='kwarg')
-
-    listener.subscribe.assert_called_once_with(
-        'arg', kw='kwarg', on_message=relay._on_event_message)
-
-
-async def test_relay_message(influx_mock, app, client):
-    relay = influx.get_relay(app)
-
-    data = {
-        'nest': {
-            'ed': {
-                'values': [
-                    'val',
-                    'var'
-                ]
-            }
-        }
-    }
-
-    flat_data = {
-        'key/nest/ed/values/0': 'val',
-        'key/nest/ed/values/1': 'var'
-    }
-
-    flat_value = {
-        'single/text': 'value'
-    }
-
-    await relay._on_event_message(None, 'route.key', data)
-    await relay._on_event_message(None, 'route.single', 'value')
-
-    expected = [
-        {'time': ANY, 'measurement': 'route', 'fields': flat_data, 'tags': {}},
-        {'time': ANY, 'measurement': 'route', 'fields': flat_value, 'tags': {}}
-    ]
-
-    await asyncio.sleep(0.1)
-    influx_mock.write.assert_called_once_with(expected)
 
 
 async def test_skip_config(influx_mock, app_skip_config, client):

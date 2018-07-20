@@ -27,6 +27,7 @@ def app_config() -> dict:
         'port': 1234,
         'debug': False,
         'broadcast_exchange': 'brewcast',
+        'logging_exchange': 'logcast',
     }
 
 
@@ -38,6 +39,7 @@ def sys_args(app_config) -> list:
         '--host', app_config['host'],
         '--port', str(app_config['port']),
         '--broadcast-exchange', app_config['broadcast_exchange'],
+        '--logging-exchange', app_config['logging_exchange'],
     ]
 
 
