@@ -103,6 +103,15 @@ async def test_data_relay(app, client, data_writer_mock):
         }
     }
 
+    nested_empty_data = {
+        'nest': {
+            'ed': {
+                'empty': {},
+                'data': []
+            }
+        }
+    }
+
     flat_data = {
         'key/nest/ed/values/0': 'val',
         'key/nest/ed/values/1': 'var'
@@ -114,6 +123,7 @@ async def test_data_relay(app, client, data_writer_mock):
 
     await relay._on_event_message(None, 'route.key', data)
     await relay._on_event_message(None, 'route.single', 'value')
+    await relay._on_event_message(None, 'route', nested_empty_data)
 
     assert data_writer_mock.write_soon.call_args_list == [
         call(measurement='route', fields=flat_data),
