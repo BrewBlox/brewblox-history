@@ -222,7 +222,8 @@ class DataRelay(features.ServiceFeature):
         parent = FLAT_SEPARATOR.join(routing_list[1:])
         data = self._flatten(message, parent_key=parent, sep=FLAT_SEPARATOR)
 
-        await self._writer.write_soon(measurement=routing_list[0], fields=data)
+        if data:
+            await self._writer.write_soon(measurement=routing_list[0], fields=data)
 
 
 @routes.post('/subscribe')
