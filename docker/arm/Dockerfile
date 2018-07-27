@@ -3,6 +3,7 @@ FROM brewblox/brewblox-service:rpi-latest
 WORKDIR /app
 
 COPY ./dist /app/dist
+COPY ./config /app/config
 
 EXPOSE 5000
 
