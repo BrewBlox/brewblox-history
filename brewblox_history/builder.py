@@ -156,7 +156,8 @@ async def select_values(client: influx.QueryClient,
         query += ' limit {limit}'
 
     if approx_points:
-        select_params = _prune(locals(), {'measurement', 'database', 'approx_points', 'start', 'duration', 'end'})
+        select_params = _prune(locals(), {'measurement', 'keys', 'database',
+                                          'approx_points', 'start', 'duration', 'end'})
         database = await select_downsampling_database(client, **select_params)
 
     params = _prune(locals(), {'query', 'database', 'measurement', 'keys',
@@ -175,6 +176,7 @@ async def select_values(client: influx.QueryClient,
 
 async def select_downsampling_database(client: influx.QueryClient,
                                        measurement: str,
+                                       keys: str,
                                        database: str=influx.DEFAULT_DATABASE,
                                        approx_points: int=DEFAULT_APPROX_POINTS,
                                        start: Optional[str]=None,
@@ -197,9 +199,9 @@ async def select_downsampling_database(client: influx.QueryClient,
     """
     time_frame = _find_time_frame(start, duration, end)
 
-    queries = [f'select count(time) from {{database}}.autogen.{{measurement}}{time_frame}']
+    queries = [f'select count({keys}) from {{database}}.autogen.{{measurement}}{time_frame}']
     queries += [
-        f'select count(time) from {{database}}_{interval}.autogen.{{measurement}}{time_frame}'
+        f'select count({keys}) from {{database}}_{interval}.autogen.{{measurement}}{time_frame}'
         for interval in influx.DOWNSAMPLE_INTERVALS
     ]
     query = ';'.join(queries)
@@ -207,7 +209,8 @@ async def select_downsampling_database(client: influx.QueryClient,
     params = _prune(locals(), {'query', 'database', 'measurement', 'start', 'duration', 'end'})
     query_response = await client.query(**params)
 
-    values = dpath.util.values(query_response, 'results/*/series/0/values/0/0')
+    values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each query
+    values = [max(v) for v in values]
     databases = [database] + [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     # Create a dict where key=approximation score, and values=database name

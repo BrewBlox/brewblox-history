@@ -71,9 +71,9 @@ class QueryClient(features.ServiceFeature):
             await self._client.close()
             self._client = None
 
-    async def query(self, query: str, database: str=None, **kwargs):
-        database = database or DEFAULT_DATABASE
-        return await self._client.query(query, db=database, **kwargs)
+    async def query(self, query: str, **kwargs):
+        kwargs.setdefault('database', DEFAULT_DATABASE)
+        return await self._client.query(query, db=kwargs['database'], **kwargs)
 
 
 class InfluxWriter(features.ServiceFeature):

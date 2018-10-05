@@ -6,6 +6,7 @@ from unittest.mock import call
 
 import pytest
 from asynctest import CoroutineMock
+
 from brewblox_history import builder
 
 TESTED = builder.__name__
@@ -385,25 +386,29 @@ async def test_error_response(app, client, query_mock):
 ])
 async def test_select_downsampling_database(approx_points, used_database, app, client, query_mock, count_result):
     query_mock.side_effect = lambda **kwargs: count_result
-    resp = await client.post('/query/values', json={'measurement': 'm', 'approx_points': approx_points})
+    resp = await client.post('/query/values', json={
+        'measurement': 'm',
+        'keys': ['k1', 'k2'],
+        'approx_points': approx_points
+    })
     assert resp.status == 200
     print(query_mock.call_args_list)
 
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                'select count(time) from {database}.autogen.{measurement}',
-                'select count(time) from {database}_10s.autogen.{measurement}',
-                'select count(time) from {database}_1m.autogen.{measurement}',
-                'select count(time) from {database}_10m.autogen.{measurement}',
-                'select count(time) from {database}_1h.autogen.{measurement}',
+                'select count("k1","k2") from {database}.autogen.{measurement}',
+                'select count("k1","k2") from {database}_10s.autogen.{measurement}',
+                'select count("k1","k2") from {database}_1m.autogen.{measurement}',
+                'select count("k1","k2") from {database}_10m.autogen.{measurement}',
+                'select count("k1","k2") from {database}_1h.autogen.{measurement}',
             ]),
             database='brewblox',
             measurement='m'
         ),
         call(
             query='select {keys} from {measurement}',
-            keys='*',
+            keys='"k1","k2"',
             measurement='m',
             database=used_database
         )
