@@ -399,7 +399,8 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
             query='select {keys} from {measurement}',
             keys='"mean_k1","mean_k2"',
             measurement='m',
-            database=used_database
+            database=used_database,
+            downsampled=True,
         )
     ]
 
@@ -431,6 +432,7 @@ async def test_empty_downsampling(app, client, query_mock):
             query='select {keys} from {measurement}',
             keys='"mean_k1","mean_k2"',
             measurement='m',
-            database='brewblox_10s'
+            database='brewblox_10s',
+            downsampled=True,
         )
     ]

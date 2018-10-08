@@ -2,6 +2,7 @@
 Converts REST endpoints into Influx queries
 """
 
+import re
 from typing import Callable, List, Optional
 
 import dpath
@@ -15,6 +16,8 @@ routes = web.RouteTableDef()
 
 
 DEFAULT_APPROX_POINTS = 100
+DOWNSAMPLING_PREFIX = 'mean_'
+PREFIX_PATTERN = re.compile('^mean_')
 
 
 def setup(app: web.Application):
@@ -148,16 +151,19 @@ async def configure_params(client: influx.QueryClient,
                            **_  # allow, but discard all other kwargs
                            ):
     if approx_points:
+        # Workaround for https://github.com/influxdata/influxdb/issues/7332
+        # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
+        keys = join_keys(keys, DOWNSAMPLING_PREFIX)
+        downsampled = True
         approx_points = int(approx_points)
         select_params = _prune(locals(), {'measurement', 'database',
                                           'approx_points', 'start', 'duration', 'end'})
         database = await select_downsampling_database(client, **select_params)
-        keys = join_keys(keys, 'mean_')
     else:
         keys = join_keys(keys)
 
     return _prune(locals(), {'query', 'database', 'measurement', 'keys',
-                             'start', 'duration', 'end', 'order_by', 'limit'})
+                             'start', 'duration', 'end', 'order_by', 'limit', 'downsampled'})
 
 
 def build_query(params: dict):
@@ -184,6 +190,10 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
     try:
         # Only support single-measurement queries
         response = dpath.util.get(query_response, 'results/0/series/0')
+        # Workaround for https://github.com/influxdata/influxdb/issues/7332
+        # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
+        if params.get('downsampled'):
+            response['columns'] = [re.sub(PREFIX_PATTERN, '', v) for v in response.get('columns', [])]
     except KeyError:
         # Nothing found
         response = dict()
