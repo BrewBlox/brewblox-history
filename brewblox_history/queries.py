@@ -2,7 +2,7 @@
 Converts REST endpoints into Influx queries
 """
 
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 import dpath
 from aiohttp import web
@@ -131,38 +131,55 @@ async def show_keys(client: influx.QueryClient,
     return response
 
 
-async def select_values(client: influx.QueryClient,
-                        measurement: str,
-                        keys: Optional[list]=['*'],
-                        database: Optional[str]=None,
-                        start: Optional[str]=None,
-                        duration: Optional[str]=None,
-                        end: Optional[str]=None,
-                        order_by: Optional[str]=None,
-                        limit: Optional[int]=None,
-                        approx_points: Optional[int]=None,
-                        **_  # allow, but discard all other kwargs
-                        ) -> dict:
+def join_keys(keys: List[str], prefix: str=''):
+    return ','.join([f'"{prefix}{key}"' if key is not '*' else key for key in keys])
 
-    query = 'select {keys} from {measurement}'
-    keys = ','.join([f'"{key}"' if key is not '*' else key for key in keys])
 
-    query += _find_time_frame(start, duration, end)
-
-    if order_by:
-        query += ' order by {order_by}'
-
-    if limit:
-        query += ' limit {limit}'
-
+async def configure_params(client: influx.QueryClient,
+                           measurement: str,
+                           keys: Optional[List[str]]=['*'],
+                           database: Optional[str]=None,
+                           start: Optional[str]=None,
+                           duration: Optional[str]=None,
+                           end: Optional[str]=None,
+                           order_by: Optional[str]=None,
+                           limit: Optional[int]=None,
+                           approx_points: Optional[int]=None,
+                           **_  # allow, but discard all other kwargs
+                           ):
     if approx_points:
-        select_params = _prune(locals(), {'measurement', 'keys', 'database',
+        approx_points = int(approx_points)
+        select_params = _prune(locals(), {'measurement', 'database',
                                           'approx_points', 'start', 'duration', 'end'})
         database = await select_downsampling_database(client, **select_params)
+        keys = join_keys(keys, 'mean_')
+    else:
+        keys = join_keys(keys)
 
-    params = _prune(locals(), {'query', 'database', 'measurement', 'keys',
-                               'start', 'duration', 'end', 'order_by', 'limit'})
-    query_response = await client.query(**params)
+    return _prune(locals(), {'query', 'database', 'measurement', 'keys',
+                             'start', 'duration', 'end', 'order_by', 'limit'})
+
+
+def build_query(params: dict):
+    query = 'select {keys} from {measurement}'
+
+    query += _find_time_frame(
+        params.get('start'),
+        params.get('duration'),
+        params.get('end'),
+    )
+
+    if 'order_by' in params:
+        query += ' order by {order_by}'
+
+    if 'limit' in params:
+        query += ' limit {limit}'
+
+    return query
+
+
+async def run_query(client: influx.QueryClient, query: str, params: dict):
+    query_response = await client.query(query=query, **params)
 
     try:
         # Only support single-measurement queries
@@ -171,12 +188,18 @@ async def select_values(client: influx.QueryClient,
         # Nothing found
         response = dict()
 
+    response['database'] = params.get('database')
     return response
+
+
+async def select_values(client: influx.QueryClient, **kwargs) -> dict:
+    params = await configure_params(client, **kwargs)
+    query = build_query(params)
+    return await run_query(client, query, params)
 
 
 async def select_downsampling_database(client: influx.QueryClient,
                                        measurement: str,
-                                       keys: str,
                                        database: str=influx.DEFAULT_DATABASE,
                                        approx_points: int=DEFAULT_APPROX_POINTS,
                                        start: Optional[str]=None,
@@ -198,31 +221,34 @@ async def select_downsampling_database(client: influx.QueryClient,
         [20, 600] => 20
     """
     time_frame = _find_time_frame(start, duration, end)
+    downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
-    queries = [f'select count({keys}) from {{database}}.autogen.{{measurement}}{time_frame}']
-    queries += [
-        f'select count({keys}) from {{database}}_{interval}.autogen.{{measurement}}{time_frame}'
-        for interval in influx.DOWNSAMPLE_INTERVALS
+    queries = [
+        f'select count(*) from {db}.autogen.{{measurement}}{time_frame}'
+        for db in downsampled_databases
     ]
     query = ';'.join(queries)
 
     params = _prune(locals(), {'query', 'database', 'measurement', 'start', 'duration', 'end'})
     query_response = await client.query(**params)
 
-    values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each query
+    values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
     values = [max(v) for v in values]
-    databases = [database] + [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     # Create a dict where key=approximation score, and values=database name
     # Calculate approximation score by comparing it to 'approx_points' target
     # Values are compared by dividing the highest by the lowest
     proximity = {
         (max(approx_points, v) / min(approx_points, v)): db
-        for v, db in zip(values, databases)
+        for v, db in zip(values, downsampled_databases)
     }
 
     # Lowest score indicates closest to target value
-    return proximity[min(*proximity.keys())]
+    try:
+        return proximity[min(*proximity.keys())]
+    except TypeError:
+        # Return highest resolution if databases have no content yet
+        return downsampled_databases[0]
 
 
 ########################################################################################################

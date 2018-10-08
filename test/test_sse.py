@@ -3,9 +3,11 @@ Tests brewblox_history.sse
 """
 
 import json
+from urllib.parse import urlencode
 
 import pytest
 from asynctest import CoroutineMock
+
 from brewblox_history import sse
 
 TESTED = sse.__name__
@@ -62,9 +64,35 @@ async def app(app, influx_mock, interval_mock):
 
 
 async def test_subscribe(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(side_effect=[{}, values_result, {}])
-    res = await client.get('/sse/values', params={'measurement': 'm'})
+    influx_mock.query = CoroutineMock(side_effect=[{}, values_result, values_result])
+    res = await client.get('/sse/values', params=urlencode({
+        'measurement': 'm',
+        'keys': ['k1', 'k2'],
+        'approx_points': 100
+    },
+        doseq=True
+    ))
+    assert res.status == 200
+    # SSE prefixes output with 'data: '
+    fragments = [json.loads(v) for v in (await res.text()).split('data:') if v]
+    assert len(fragments) == 2
+    # get downsample db, 3 * query, 1 * query error
+    assert influx_mock.query.call_count == 4
+
+
+async def test_subscribe_single(app, client, influx_mock, values_result):
+    influx_mock.query = CoroutineMock(side_effect=[values_result, {}])
+    res = await client.get('/sse/values', params=urlencode({'measurement': 'm', 'end': 'yesterday'}, doseq=True))
     assert res.status == 200
     pushed = await res.text()
     assert json.loads(pushed[len('data:'):])  # SSE prefixes output with 'data: '
-    assert influx_mock.query.call_count == 4
+    assert influx_mock.query.call_count == 1  # Don't keep querying dataset with an end
+
+
+async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
+    influx_mock.query = CoroutineMock(side_effect=[{}])
+    res = await client.get('/sse/values', params=urlencode({'measurement': 'm', 'end': 'yesterday'}, doseq=True))
+    assert res.status == 200
+    pushed = await res.text()
+    assert not pushed  # no data available
+    assert influx_mock.query.call_count == 1

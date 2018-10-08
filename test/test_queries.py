@@ -1,5 +1,5 @@
 """
-Tests history.builder
+Tests history.queries
 """
 
 from unittest.mock import call
@@ -7,9 +7,9 @@ from unittest.mock import call
 import pytest
 from asynctest import CoroutineMock
 
-from brewblox_history import builder
+from brewblox_history import queries
 
-TESTED = builder.__name__
+TESTED = queries.__name__
 
 
 @pytest.fixture
@@ -26,7 +26,7 @@ def query_mock(influx_mock):
 
 @pytest.fixture
 async def app(app, mocker, query_mock):
-    builder.setup(app)
+    queries.setup(app)
     return app
 
 
@@ -154,22 +154,13 @@ def count_result():
                 'statement_id': 0,
                 'series': [
                     {
-                        'name': 'brewblox.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[1000]],
-                    }],
-            },
-            {
-                'statement_id': 1,
-                'series': [
-                    {
                         'name': 'brewblox_10s.autogen.pressure',
                         'columns': ['time'],
                         'values': [[600]],
                     }],
             },
             {
-                'statement_id': 2,
+                'statement_id': 1,
                 'series': [
                     {
                         'name': 'brewblox_1m.autogen.pressure',
@@ -178,7 +169,7 @@ def count_result():
                     }],
             },
             {
-                'statement_id': 3,
+                'statement_id': 2,
                 'series': [
                     {
                         'name': 'brewblox_10m.autogen.pressure',
@@ -187,7 +178,7 @@ def count_result():
                     }],
             },
             {
-                'statement_id': 4,
+                'statement_id': 3,
                 'series': [
                     {
                         'name': 'brewblox_1h.autogen.pressure',
@@ -361,7 +352,7 @@ async def test_no_values_found(app, client, query_mock):
 
     res = await client.post('/query/values', json={'measurement': 'm'})
     assert res.status == 200
-    assert await res.json() == {}
+    assert 'values' not in await res.json()
 
 
 async def test_error_response(app, client, query_mock):
@@ -378,9 +369,8 @@ async def test_error_response(app, client, query_mock):
     (200, 'brewblox_1m'),
     (100, 'brewblox_10m'),
     (20, 'brewblox_1h'),
-    (1000, 'brewblox'),
     # approximate
-    (10000, 'brewblox'),
+    (10000, 'brewblox_10s'),
     (500, 'brewblox_10s'),
     (40, 'brewblox_1h'),
 ])
@@ -397,19 +387,50 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                'select count("k1","k2") from {database}.autogen.{measurement}',
-                'select count("k1","k2") from {database}_10s.autogen.{measurement}',
-                'select count("k1","k2") from {database}_1m.autogen.{measurement}',
-                'select count("k1","k2") from {database}_10m.autogen.{measurement}',
-                'select count("k1","k2") from {database}_1h.autogen.{measurement}',
+                'select count(*) from brewblox_10s.autogen.{measurement}',
+                'select count(*) from brewblox_1m.autogen.{measurement}',
+                'select count(*) from brewblox_10m.autogen.{measurement}',
+                'select count(*) from brewblox_1h.autogen.{measurement}',
             ]),
             database='brewblox',
             measurement='m'
         ),
         call(
             query='select {keys} from {measurement}',
-            keys='"k1","k2"',
+            keys='"mean_k1","mean_k2"',
             measurement='m',
             database=used_database
+        )
+    ]
+
+
+async def test_empty_downsampling(app, client, query_mock):
+    """
+    Default to highest resolution (10s) when no rows are found in database
+    """
+    query_mock.side_effect = lambda **kwargs: {'results': [{'series': []}]}
+    resp = await client.post('/query/values', json={
+        'measurement': 'm',
+        'keys': ['k1', 'k2'],
+        'approx_points': 100
+    })
+    assert resp.status == 200
+
+    assert query_mock.call_args_list == [
+        call(
+            query=';'.join([
+                'select count(*) from brewblox_10s.autogen.{measurement}',
+                'select count(*) from brewblox_1m.autogen.{measurement}',
+                'select count(*) from brewblox_10m.autogen.{measurement}',
+                'select count(*) from brewblox_1h.autogen.{measurement}',
+            ]),
+            database='brewblox',
+            measurement='m'
+        ),
+        call(
+            query='select {keys} from {measurement}',
+            keys='"mean_k1","mean_k2"',
+            measurement='m',
+            database='brewblox_10s'
         )
     ]

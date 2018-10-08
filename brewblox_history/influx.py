@@ -134,13 +134,17 @@ class InfluxWriter(features.ServiceFeature):
         if self._downsampling:
             # Data is downsampled multiple times, and stored in separate databases
             # Database naming scheme is <database_name>_<downsample_interval>
+            #
+            # Influx does not support selecting mean(*) while retaining original field names
+            # (See: https://github.com/influxdata/influxdb/issues/7332)
+            # 'SELECT mean(*) AS "mean"' will result in every field being prefixed with "mean_"
             for interval, retention in zip(DOWNSAMPLE_INTERVALS, DOWNSAMPLE_RETENTION):
                 downsampled_db = f'{self._database}_{interval}'
                 db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
                 cquery = f'''
                 CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{self._database}"
                 BEGIN
-                    SELECT mean(*) INTO "{downsampled_db}"."autogen".:MEASUREMENT
+                    SELECT mean(*) AS "mean" INTO "{downsampled_db}"."autogen".:MEASUREMENT
                     FROM /.*/
                     GROUP BY time({interval}),*
                 END
