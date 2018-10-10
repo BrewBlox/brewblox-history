@@ -3,11 +3,13 @@ Converts REST endpoints into Influx queries
 """
 
 import re
+import time
 from typing import Callable, List, Optional
 
 import dpath
 from aiohttp import web
 from brewblox_service import brewblox_logger
+from dateutil import parser as date_parser
 
 from brewblox_history import influx
 
@@ -140,7 +142,7 @@ def join_keys(keys: List[str], prefix: str=''):
 
 async def configure_params(client: influx.QueryClient,
                            measurement: str,
-                           keys: Optional[List[str]]=['*'],
+                           fields: Optional[List[str]]=['*'],
                            database: Optional[str]=None,
                            start: Optional[str]=None,
                            duration: Optional[str]=None,
@@ -150,24 +152,33 @@ async def configure_params(client: influx.QueryClient,
                            approx_points: Optional[int]=None,
                            **_  # allow, but discard all other kwargs
                            ):
+    def nanosecond_date(dt):
+        if isinstance(dt, str):
+            dt = date_parser.parse(dt)
+            return int(dt.timestamp() - time.timezone) * 10 ** 9 + dt.microsecond * 1000
+        return dt
+
+    start = nanosecond_date(start)
+    end = nanosecond_date(end)
+
     if approx_points:
         # Workaround for https://github.com/influxdata/influxdb/issues/7332
         # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
-        keys = join_keys(keys, DOWNSAMPLING_PREFIX)
+        fields = join_keys(fields, DOWNSAMPLING_PREFIX)
         downsampled = True
         approx_points = int(approx_points)
         select_params = _prune(locals(), {'measurement', 'database',
                                           'approx_points', 'start', 'duration', 'end'})
         database = await select_downsampling_database(client, **select_params)
     else:
-        keys = join_keys(keys)
+        fields = join_keys(fields)
 
-    return _prune(locals(), {'query', 'database', 'measurement', 'keys',
+    return _prune(locals(), {'query', 'database', 'measurement', 'fields',
                              'start', 'duration', 'end', 'order_by', 'limit', 'downsampled'})
 
 
 def build_query(params: dict):
-    query = 'select {keys} from {measurement}'
+    query = 'select {fields} from {measurement}'
 
     query += _find_time_frame(
         params.get('start'),
@@ -198,7 +209,7 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
         # Nothing found
         response = dict()
 
-    response['database'] = params.get('database')
+    response['database'] = params.get('database') or influx.DEFAULT_DATABASE
     return response
 
 
@@ -234,7 +245,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     queries = [
-        f'select count(*) from {db}.autogen.{{measurement}}{time_frame}'
+        f'select count(*) from {db}.autogen.{{measurement}}{time_frame} fill(0)'
         for db in downsampled_databases
     ]
     query = ';'.join(queries)
@@ -243,7 +254,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     query_response = await client.query(**params)
 
     values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
-    values = [max(v) for v in values]
+    values = [max(v[1:], default=0) for v in values]  # skip the time in each result
 
     # Create a dict where key=approximation score, and values=database name
     # Calculate approximation score by comparing it to 'approx_points' target
@@ -254,10 +265,10 @@ async def select_downsampling_database(client: influx.QueryClient,
     }
 
     # Lowest score indicates closest to target value
+    # Fall back to first database if no databases reported values
     try:
-        return proximity[min(*proximity.keys())]
-    except TypeError:
-        # Return highest resolution if databases have no content yet
+        return proximity[min(proximity.keys(), default=0)]
+    except KeyError:
         return downsampled_databases[0]
 
 
@@ -345,7 +356,7 @@ async def values_query(request: web.Request) -> web.Response:
                 measurement:
                     type: string
                     required: true
-                keys:
+                fields:
                     type: list
                     required: true
                     example: ["*"]

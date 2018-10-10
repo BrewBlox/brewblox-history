@@ -21,6 +21,15 @@ def setup(app: web.Application):
     app.router.add_routes(routes)
 
 
+def _check_open_ended(params: dict) -> bool:
+    time_args = [bool(params.get(k)) for k in ('start', 'duration', 'end')]
+    return time_args in [
+        [False, False, False],
+        [True, False, False],
+        [False, True, False],
+    ]
+
+
 @routes.get('/sse/values')
 async def subscribe(request: web.Request) -> web.Response:
     """
@@ -48,7 +57,7 @@ async def subscribe(request: web.Request) -> web.Response:
             example: "spark"
     -
         in: query
-        name: keys
+        name: fields
         schema:
             type: list
             required: false
@@ -88,11 +97,11 @@ async def subscribe(request: web.Request) -> web.Response:
         'duration',
         'end',
     ] if k in request.query}
-    if 'keys' in request.query:
-        params['keys'] = request.query.getall('keys')
+    if 'fields' in request.query:
+        params['fields'] = request.query.getall('fields')
 
     params = await queries.configure_params(client, **params)
-    open_ended = 'duration' not in params and 'end' not in params
+    open_ended = _check_open_ended(params)
 
     async with sse_response(request) as resp:
         while True:
@@ -102,7 +111,9 @@ async def subscribe(request: web.Request) -> web.Response:
 
                 if data.get('values'):
                     await resp.send(json.dumps(data))
+                    # Reset time frame for subsequent updates
                     params['start'] = data['values'][-1][0] + 1
+                    params.pop('duration', None)
 
                 if not open_ended:
                     break
@@ -110,10 +121,12 @@ async def subscribe(request: web.Request) -> web.Response:
                 await asyncio.sleep(POLL_INTERVAL_S)
 
             except ConnectionResetError:  # pragma: no cover
-                break
+                return web.json_response({})
 
             except Exception as ex:
-                LOGGER.warn(f'Exiting SSE with error: {type(ex).__name__}({ex})')
+                msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
+                LOGGER.warn(msg)
+                resp.send({'error': msg})
                 break
 
     return resp

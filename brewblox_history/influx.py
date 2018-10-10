@@ -167,7 +167,7 @@ class InfluxWriter(features.ServiceFeature):
                         continue
 
                     await client.write(self._pending)
-                    LOGGER.info(f'Pushed {len(self._pending)} points to database')
+                    LOGGER.debug(f'Pushed {len(self._pending)} points to database')
                     self._pending = []
 
             except CancelledError:

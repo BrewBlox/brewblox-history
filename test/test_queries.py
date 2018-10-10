@@ -230,27 +230,27 @@ async def test_single_key(app, client, query_mock, values_result):
     """Asserts that ['single'] is split to 'single', and not 's,i,n,g,l,e'"""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['single']})
+    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['single']})
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {keys} from {measurement}',
+        query='select {fields} from {measurement}',
         measurement='m',
-        keys='"single"'
+        fields='"single"'
     )
 
 
-async def test_quote_keys(app, client, query_mock, values_result):
-    """Keys must be quoted with double quotes. '*' is an exception."""
+async def test_quote_fields(app, client, query_mock, values_result):
+    """field keys must be quoted with double quotes. '*' is an exception."""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['first', 'second']})
+    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['first', 'second']})
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {keys} from {measurement}',
+        query='select {fields} from {measurement}',
         measurement='m',
-        keys='"first","second"'
+        fields='"first","second"'
     )
 
 
@@ -269,55 +269,55 @@ async def test_value_data_format(app, client, query_mock, values_result):
 @pytest.mark.parametrize('input_args, query_str', [
     (
         {},
-        'select {keys} from {measurement}'
+        'select {fields} from {measurement}'
     ),
     (
-        {'keys': ['you']},
-        'select {keys} from {measurement}'
+        {'fields': ['you']},
+        'select {fields} from {measurement}'
     ),
     (
-        {'keys': ['key1', 'key2']},
-        'select {keys} from {measurement}'
+        {'fields': ['key1', 'key2']},
+        'select {fields} from {measurement}'
     ),
     (
         {'database': 'db'},
-        'select {keys} from {measurement}'
+        'select {fields} from {measurement}'
     ),
     (
         {'start': 'a long time ago'},
-        'select {keys} from {measurement} where time >= {start}'
+        'select {fields} from {measurement} where time >= {start}'
     ),
     (
         {'start': 'once upon a time', 'duration': 'some time'},
-        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration}'
+        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration}'
     ),
     (
         {'start': 'then', 'end': 'now'},
-        'select {keys} from {measurement} where time >= {start} and time <= {end}'
+        'select {fields} from {measurement} where time >= {start} and time <= {end}'
     ),
     (
         {'end': 'fire nation attack'},
-        'select {keys} from {measurement} where time <= {end}'
+        'select {fields} from {measurement} where time <= {end}'
     ),
     (
         {'end': 'life', 'duration': 'bright side'},
-        'select {keys} from {measurement} where time >= {end} - {duration} and time <= {end}'
+        'select {fields} from {measurement} where time >= {end} - {duration} and time <= {end}'
     ),
     (
         {'duration': 'eternal'},
-        'select {keys} from {measurement} where time >= now() - {duration}'
+        'select {fields} from {measurement} where time >= now() - {duration}'
     ),
     (
-        {'keys': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
-        'select {keys} from {measurement} order by {order_by} limit {limit}'
+        {'fields': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
+        'select {fields} from {measurement} order by {order_by} limit {limit}'
     ),
     (
         {'duration': 'eternal', 'limit': 1},
-        'select {keys} from {measurement} where time >= now() - {duration} limit {limit}'
+        'select {fields} from {measurement} where time >= now() - {duration} limit {limit}'
     ),
     (
-        {'database': 'db', 'keys': ['something', 'else'], 'start': 'good old days', 'duration': '1d', 'limit': 5},
-        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
+        {'database': 'db', 'fields': ['something', 'else'], 'start': 'good old days', 'duration': '1d', 'limit': 5},
+        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
     )
 ])
 async def test_get_values(input_args, query_str, app, client, query_mock, values_result):
@@ -333,8 +333,8 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
     # * Query string is created
     # * Keys are converted from a list to a comma separated string
     call_args['query'] = query_str
-    quoted_keys = [f'"{k}"' for k in input_args.get('keys', [])] or ['*']
-    call_args['keys'] = ','.join(quoted_keys)
+    quoted_keys = [f'"{k}"' for k in input_args.get('fields', [])] or ['*']
+    call_args['fields'] = ','.join(quoted_keys)
 
     res = await client.post('/query/values', json=input_args)
     assert res.status == 200
@@ -378,7 +378,7 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
     query_mock.side_effect = lambda **kwargs: count_result
     resp = await client.post('/query/values', json={
         'measurement': 'm',
-        'keys': ['k1', 'k2'],
+        'fields': ['k1', 'k2'],
         'approx_points': approx_points
     })
     assert resp.status == 200
@@ -396,8 +396,8 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
             measurement='m'
         ),
         call(
-            query='select {keys} from {measurement}',
-            keys='"mean_k1","mean_k2"',
+            query='select {fields} from {measurement}',
+            fields='"mean_k1","mean_k2"',
             measurement='m',
             database=used_database,
             downsampled=True,
@@ -412,7 +412,7 @@ async def test_empty_downsampling(app, client, query_mock):
     query_mock.side_effect = lambda **kwargs: {'results': [{'series': []}]}
     resp = await client.post('/query/values', json={
         'measurement': 'm',
-        'keys': ['k1', 'k2'],
+        'fields': ['k1', 'k2'],
         'approx_points': 100
     })
     assert resp.status == 200
@@ -429,8 +429,8 @@ async def test_empty_downsampling(app, client, query_mock):
             measurement='m'
         ),
         call(
-            query='select {keys} from {measurement}',
-            keys='"mean_k1","mean_k2"',
+            query='select {fields} from {measurement}',
+            fields='"mean_k1","mean_k2"',
             measurement='m',
             database='brewblox_10s',
             downsampled=True,

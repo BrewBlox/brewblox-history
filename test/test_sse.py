@@ -67,7 +67,7 @@ async def test_subscribe(app, client, influx_mock, values_result):
     influx_mock.query = CoroutineMock(side_effect=[{}, values_result, values_result])
     res = await client.get('/sse/values', params=urlencode({
         'measurement': 'm',
-        'keys': ['k1', 'k2'],
+        'fields': ['k1', 'k2'],
         'approx_points': 100
     },
         doseq=True

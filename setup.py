@@ -21,6 +21,7 @@ setup(
         'aioinflux~=0.3',
         'dpath~=1.4',
         'aiohttp-sse~=2.0',
+        'python-dateutil~=2.7.3',
     ],
     python_requires='>=3.6',
     extras_require={'dev': ['tox']},
