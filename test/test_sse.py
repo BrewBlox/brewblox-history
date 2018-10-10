@@ -82,7 +82,10 @@ async def test_subscribe(app, client, influx_mock, values_result):
 
 async def test_subscribe_single(app, client, influx_mock, values_result):
     influx_mock.query = CoroutineMock(side_effect=[values_result, {}])
-    res = await client.get('/sse/values', params=urlencode({'measurement': 'm', 'end': 'yesterday'}, doseq=True))
+    res = await client.get('/sse/values', params=urlencode(
+        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00'},
+        doseq=True
+    ))
     assert res.status == 200
     pushed = await res.text()
     assert json.loads(pushed[len('data:'):])  # SSE prefixes output with 'data: '
@@ -91,7 +94,10 @@ async def test_subscribe_single(app, client, influx_mock, values_result):
 
 async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
     influx_mock.query = CoroutineMock(side_effect=[{}])
-    res = await client.get('/sse/values', params=urlencode({'measurement': 'm', 'end': 'yesterday'}, doseq=True))
+    res = await client.get('/sse/values', params=urlencode(
+        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00'},
+        doseq=True
+    ))
     assert res.status == 200
     pushed = await res.text()
     assert not pushed  # no data available

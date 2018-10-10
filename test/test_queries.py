@@ -155,8 +155,8 @@ def count_result():
                 'series': [
                     {
                         'name': 'brewblox_10s.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[600]],
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 600]],
                     }],
             },
             {
@@ -164,8 +164,8 @@ def count_result():
                 'series': [
                     {
                         'name': 'brewblox_1m.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[200]],
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 200]],
                     }],
             },
             {
@@ -173,8 +173,8 @@ def count_result():
                 'series': [
                     {
                         'name': 'brewblox_10m.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[100]],
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 100]],
                     }],
             },
             {
@@ -182,8 +182,8 @@ def count_result():
                 'series': [
                     {
                         'name': 'brewblox_1h.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[20]],
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 20]],
                     }],
             }
         ]
@@ -284,23 +284,23 @@ async def test_value_data_format(app, client, query_mock, values_result):
         'select {fields} from {measurement}'
     ),
     (
-        {'start': 'a long time ago'},
+        {'start': '2018-10-10T12:00:00.000+02:00'},
         'select {fields} from {measurement} where time >= {start}'
     ),
     (
-        {'start': 'once upon a time', 'duration': 'some time'},
+        {'start': '2018-10-10T12:00:00.000+02:00', 'duration': 'some time'},
         'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration}'
     ),
     (
-        {'start': 'then', 'end': 'now'},
+        {'start': '2018-10-10T12:00:00.000+02:00', 'end': '2018-10-10T12:00:00.000+02:00'},
         'select {fields} from {measurement} where time >= {start} and time <= {end}'
     ),
     (
-        {'end': 'fire nation attack'},
+        {'end': '2018-10-10T12:00:00.000+02:00'},
         'select {fields} from {measurement} where time <= {end}'
     ),
     (
-        {'end': 'life', 'duration': 'bright side'},
+        {'end': '2018-10-10T12:00:00.000+02:00', 'duration': 'bright side'},
         'select {fields} from {measurement} where time >= {end} - {duration} and time <= {end}'
     ),
     (
@@ -316,18 +316,19 @@ async def test_value_data_format(app, client, query_mock, values_result):
         'select {fields} from {measurement} where time >= now() - {duration} limit {limit}'
     ),
     (
-        {'database': 'db', 'fields': ['something', 'else'], 'start': 'good old days', 'duration': '1d', 'limit': 5},
+        {'database': 'db', 'fields': ['something', 'else'],
+            'start': '2018-10-10T12:00:00.000+02:00', 'duration': '1d', 'limit': 5},
         'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
     )
 ])
-async def test_get_values(input_args, query_str, app, client, query_mock, values_result):
+async def test_get_values(input_args, query_str, app, client, influx_mock, query_mock, values_result):
     query_mock.side_effect = lambda **kwargs: values_result
 
     # Measurement is a required argument
     # Always add it to input_args
-    input_args['measurement'] = input_args.get('measurement', 'emmy')
-
-    call_args = input_args.copy()
+    input_args.setdefault('measurement', 'emmy')
+    call_args = await queries.configure_params(influx_mock, **input_args)
+    query_mock.reset_mock()
 
     # Mirrors transformation in API:
     # * Query string is created
@@ -342,7 +343,18 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
 
 
 async def test_invalid_time_frame(app, client):
-    res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x', 'duration': 'y', 'end': 'z'})
+    res = await client.post('/query/values', json={
+        'measurement': 'm',
+        'start': '2018-10-10T12:00:00.000+02:00',
+        'duration': '1m',
+        'end': '2018-10-10T12:00:00.000+02:00'
+    })
+    assert res.status == 500
+    assert 'ValueError' in await res.text()
+
+
+async def test_unparsable_timeframe(app, client):
+    res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x'})
     assert res.status == 500
     assert 'ValueError' in await res.text()
 

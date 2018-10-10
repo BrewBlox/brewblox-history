@@ -245,7 +245,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     queries = [
-        f'select count(*) from {db}.autogen.{{measurement}}{time_frame} fill(0)'
+        f'select count(*) from {db}.autogen.{{measurement}}{time_frame}'
         for db in downsampled_databases
     ]
     query = ';'.join(queries)
@@ -260,7 +260,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     # Calculate approximation score by comparing it to 'approx_points' target
     # Values are compared by dividing the highest by the lowest
     proximity = {
-        (max(approx_points, v) / min(approx_points, v)): db
+        (max(approx_points, v) / (min(approx_points, v) or 1)): db
         for v, db in zip(values, downsampled_databases)
     }
 
