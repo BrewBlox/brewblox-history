@@ -120,9 +120,6 @@ async def subscribe(request: web.Request) -> web.Response:
 
                 await asyncio.sleep(POLL_INTERVAL_S)
 
-            except ConnectionResetError:  # pragma: no cover
-                break
-
             except Exception as ex:
                 msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
                 LOGGER.warn(msg)

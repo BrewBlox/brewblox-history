@@ -32,8 +32,8 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
     try:
         return await handler(request)
     except Exception as ex:
-        LOGGER.warn(f'REST error: {ex}')
-        return web.json_response({'error': f'{type(ex).__name__}={ex}'}, status=500)
+        LOGGER.warn(f'REST error: {type(ex).__name__}({ex})')
+        return web.json_response({'error': f'{type(ex).__name__}({ex})'}, status=500)
 
 
 ########################################################################################################
