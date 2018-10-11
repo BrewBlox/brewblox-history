@@ -1,14 +1,15 @@
 """
-Tests history.builder
+Tests history.queries
 """
 
 from unittest.mock import call
 
 import pytest
 from asynctest import CoroutineMock
-from brewblox_history import builder
 
-TESTED = builder.__name__
+from brewblox_history import queries
+
+TESTED = queries.__name__
 
 
 @pytest.fixture
@@ -25,7 +26,7 @@ def query_mock(influx_mock):
 
 @pytest.fixture
 async def app(app, mocker, query_mock):
-    builder.setup(app)
+    queries.setup(app)
     return app
 
 
@@ -153,45 +154,36 @@ def count_result():
                 'statement_id': 0,
                 'series': [
                     {
-                        'name': 'brewblox.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[1000]],
+                        'name': 'brewblox_10s.autogen.pressure',
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 600]],
                     }],
             },
             {
                 'statement_id': 1,
                 'series': [
                     {
-                        'name': 'brewblox_10s.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[600]],
+                        'name': 'brewblox_1m.autogen.pressure',
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 200]],
                     }],
             },
             {
                 'statement_id': 2,
                 'series': [
                     {
-                        'name': 'brewblox_1m.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[200]],
+                        'name': 'brewblox_10m.autogen.pressure',
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 100]],
                     }],
             },
             {
                 'statement_id': 3,
                 'series': [
                     {
-                        'name': 'brewblox_10m.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[100]],
-                    }],
-            },
-            {
-                'statement_id': 4,
-                'series': [
-                    {
                         'name': 'brewblox_1h.autogen.pressure',
-                        'columns': ['time'],
-                        'values': [[20]],
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 20]],
                     }],
             }
         ]
@@ -238,27 +230,27 @@ async def test_single_key(app, client, query_mock, values_result):
     """Asserts that ['single'] is split to 'single', and not 's,i,n,g,l,e'"""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['single']})
+    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['single']})
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {keys} from {measurement}',
+        query='select {fields} from {measurement}',
         measurement='m',
-        keys='"single"'
+        fields='"single"'
     )
 
 
-async def test_quote_keys(app, client, query_mock, values_result):
-    """Keys must be quoted with double quotes. '*' is an exception."""
+async def test_quote_fields(app, client, query_mock, values_result):
+    """field keys must be quoted with double quotes. '*' is an exception."""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'keys': ['first', 'second']})
+    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['first', 'second']})
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {keys} from {measurement}',
+        query='select {fields} from {measurement}',
         measurement='m',
-        keys='"first","second"'
+        fields='"first","second"'
     )
 
 
@@ -277,72 +269,73 @@ async def test_value_data_format(app, client, query_mock, values_result):
 @pytest.mark.parametrize('input_args, query_str', [
     (
         {},
-        'select {keys} from {measurement}'
+        'select {fields} from {measurement}'
     ),
     (
-        {'keys': ['you']},
-        'select {keys} from {measurement}'
+        {'fields': ['you']},
+        'select {fields} from {measurement}'
     ),
     (
-        {'keys': ['key1', 'key2']},
-        'select {keys} from {measurement}'
+        {'fields': ['key1', 'key2']},
+        'select {fields} from {measurement}'
     ),
     (
         {'database': 'db'},
-        'select {keys} from {measurement}'
+        'select {fields} from {measurement}'
     ),
     (
-        {'start': 'a long time ago'},
-        'select {keys} from {measurement} where time >= {start}'
+        {'start': '2018-10-10T12:00:00.000+02:00'},
+        'select {fields} from {measurement} where time >= {start}'
     ),
     (
-        {'start': 'once upon a time', 'duration': 'some time'},
-        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration}'
+        {'start': '2018-10-10T12:00:00.000+02:00', 'duration': 'some time'},
+        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration}'
     ),
     (
-        {'start': 'then', 'end': 'now'},
-        'select {keys} from {measurement} where time >= {start} and time <= {end}'
+        {'start': '2018-10-10T12:00:00.000+02:00', 'end': '2018-10-10T12:00:00.000+02:00'},
+        'select {fields} from {measurement} where time >= {start} and time <= {end}'
     ),
     (
-        {'end': 'fire nation attack'},
-        'select {keys} from {measurement} where time <= {end}'
+        {'end': '2018-10-10T12:00:00.000+02:00'},
+        'select {fields} from {measurement} where time <= {end}'
     ),
     (
-        {'end': 'life', 'duration': 'bright side'},
-        'select {keys} from {measurement} where time >= {end} - {duration} and time <= {end}'
+        {'end': '2018-10-10T12:00:00.000+02:00', 'duration': 'bright side'},
+        'select {fields} from {measurement} where time >= {end} - {duration} and time <= {end}'
     ),
     (
         {'duration': 'eternal'},
-        'select {keys} from {measurement} where time >= now() - {duration}'
+        'select {fields} from {measurement} where time >= now() - {duration}'
     ),
     (
-        {'keys': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
-        'select {keys} from {measurement} order by {order_by} limit {limit}'
+        {'fields': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
+        'select {fields} from {measurement} order by {order_by} limit {limit}'
     ),
     (
         {'duration': 'eternal', 'limit': 1},
-        'select {keys} from {measurement} where time >= now() - {duration} limit {limit}'
+        'select {fields} from {measurement} where time >= now() - {duration} limit {limit}'
     ),
     (
-        {'database': 'db', 'keys': ['something', 'else'], 'start': 'good old days', 'duration': '1d', 'limit': 5},
-        'select {keys} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
+        {'database': 'db', 'fields': ['something', 'else'],
+            'start': '2018-10-10T12:00:00.000+02:00', 'duration': '1d', 'limit': 5},
+        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
     )
 ])
-async def test_get_values(input_args, query_str, app, client, query_mock, values_result):
+async def test_get_values(input_args, query_str, app, client, influx_mock, query_mock, values_result):
     query_mock.side_effect = lambda **kwargs: values_result
 
     # Measurement is a required argument
     # Always add it to input_args
-    input_args['measurement'] = input_args.get('measurement', 'emmy')
-
-    call_args = input_args.copy()
+    input_args.setdefault('measurement', 'emmy')
+    call_args = await queries.configure_params(influx_mock, **input_args)
+    query_mock.reset_mock()
 
     # Mirrors transformation in API:
     # * Query string is created
     # * Keys are converted from a list to a comma separated string
     call_args['query'] = query_str
-    quoted_keys = [f'"{k}"' for k in input_args.get('keys', [])] or ['*']
-    call_args['keys'] = ','.join(quoted_keys)
+    quoted_keys = [f'"{k}"' for k in input_args.get('fields', [])] or ['*']
+    call_args['fields'] = ','.join(quoted_keys)
 
     res = await client.post('/query/values', json=input_args)
     assert res.status == 200
@@ -350,7 +343,18 @@ async def test_get_values(input_args, query_str, app, client, query_mock, values
 
 
 async def test_invalid_time_frame(app, client):
-    res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x', 'duration': 'y', 'end': 'z'})
+    res = await client.post('/query/values', json={
+        'measurement': 'm',
+        'start': '2018-10-10T12:00:00.000+02:00',
+        'duration': '1m',
+        'end': '2018-10-10T12:00:00.000+02:00'
+    })
+    assert res.status == 500
+    assert 'ValueError' in await res.text()
+
+
+async def test_unparsable_timeframe(app, client):
+    res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x'})
     assert res.status == 500
     assert 'ValueError' in await res.text()
 
@@ -360,7 +364,7 @@ async def test_no_values_found(app, client, query_mock):
 
     res = await client.post('/query/values', json={'measurement': 'm'})
     assert res.status == 200
-    assert await res.json() == {}
+    assert 'values' not in await res.json()
 
 
 async def test_error_response(app, client, query_mock):
@@ -377,34 +381,70 @@ async def test_error_response(app, client, query_mock):
     (200, 'brewblox_1m'),
     (100, 'brewblox_10m'),
     (20, 'brewblox_1h'),
-    (1000, 'brewblox'),
     # approximate
-    (10000, 'brewblox'),
+    (10000, 'brewblox_10s'),
     (500, 'brewblox_10s'),
     (40, 'brewblox_1h'),
 ])
 async def test_select_downsampling_database(approx_points, used_database, app, client, query_mock, count_result):
     query_mock.side_effect = lambda **kwargs: count_result
-    resp = await client.post('/query/values', json={'measurement': 'm', 'approx_points': approx_points})
+    resp = await client.post('/query/values', json={
+        'measurement': 'm',
+        'fields': ['k1', 'k2'],
+        'approx_points': approx_points
+    })
     assert resp.status == 200
     print(query_mock.call_args_list)
 
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                'select count(time) from {database}.autogen.{measurement}',
-                'select count(time) from {database}_10s.autogen.{measurement}',
-                'select count(time) from {database}_1m.autogen.{measurement}',
-                'select count(time) from {database}_10m.autogen.{measurement}',
-                'select count(time) from {database}_1h.autogen.{measurement}',
+                'select count(*) from brewblox_10s.autogen.{measurement}',
+                'select count(*) from brewblox_1m.autogen.{measurement}',
+                'select count(*) from brewblox_10m.autogen.{measurement}',
+                'select count(*) from brewblox_1h.autogen.{measurement}',
             ]),
             database='brewblox',
             measurement='m'
         ),
         call(
-            query='select {keys} from {measurement}',
-            keys='*',
+            query='select {fields} from {measurement}',
+            fields='"mean_k1","mean_k2"',
             measurement='m',
-            database=used_database
+            database=used_database,
+            downsampled=True,
+        )
+    ]
+
+
+async def test_empty_downsampling(app, client, query_mock):
+    """
+    Default to highest resolution (10s) when no rows are found in database
+    """
+    query_mock.side_effect = lambda **kwargs: {'results': [{'series': []}]}
+    resp = await client.post('/query/values', json={
+        'measurement': 'm',
+        'fields': ['k1', 'k2'],
+        'approx_points': 100
+    })
+    assert resp.status == 200
+
+    assert query_mock.call_args_list == [
+        call(
+            query=';'.join([
+                'select count(*) from brewblox_10s.autogen.{measurement}',
+                'select count(*) from brewblox_1m.autogen.{measurement}',
+                'select count(*) from brewblox_10m.autogen.{measurement}',
+                'select count(*) from brewblox_1h.autogen.{measurement}',
+            ]),
+            database='brewblox',
+            measurement='m'
+        ),
+        call(
+            query='select {fields} from {measurement}',
+            fields='"mean_k1","mean_k2"',
+            measurement='m',
+            database='brewblox_10s',
+            downsampled=True,
         )
     ]

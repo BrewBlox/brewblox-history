@@ -97,7 +97,8 @@ async def test_data_relay(app, client, data_writer_mock):
             'ed': {
                 'values': [
                     'val',
-                    'var'
+                    'var',
+                    True,
                 ]
             }
         }
@@ -107,18 +108,19 @@ async def test_data_relay(app, client, data_writer_mock):
         'nest': {
             'ed': {
                 'empty': {},
-                'data': []
+                'data': [],
             }
         }
     }
 
     flat_data = {
         'key/nest/ed/values/0': 'val',
-        'key/nest/ed/values/1': 'var'
+        'key/nest/ed/values/1': 'var',
+        'key/nest/ed/values/2': 1,
     }
 
     flat_value = {
-        'single/text': 'value'
+        'single/text': 'value',
     }
 
     await relay._on_event_message(None, 'route.key', data)

@@ -193,7 +193,12 @@ class DataRelay(features.ServiceFeature):
         kwargs['on_message'] = self._on_event_message
         self._listener.subscribe(*args, **kwargs)
 
-    def _flatten(self, d, parent_key='', sep='/'):
+    def _influx_formatted(self, d, parent_key='', sep='/'):
+        """Converts a (nested) JSON dict to a flat, influx-ready dict
+
+        - Nested values are flattened, using `sep` as path separator
+        - Boolean values are converted to a number (0 / 1)
+        """
         items = []
         for k, v in d.items():
             new_key = f'{parent_key}{sep}{k}' if parent_key else str(k)
@@ -202,7 +207,9 @@ class DataRelay(features.ServiceFeature):
                 v = {li: lv for li, lv in enumerate(v)}
 
             if isinstance(v, collections.MutableMapping):
-                items.extend(self._flatten(v, new_key, sep=sep).items())
+                items.extend(self._influx_formatted(v, new_key, sep=sep).items())
+            elif isinstance(v, bool):
+                items.append((new_key, int(v)))
             else:
                 items.append((new_key, v))
         return dict(items)
@@ -220,7 +227,7 @@ class DataRelay(features.ServiceFeature):
             message = dict(text=message)
 
         parent = FLAT_SEPARATOR.join(routing_list[1:])
-        data = self._flatten(message, parent_key=parent, sep=FLAT_SEPARATOR)
+        data = self._influx_formatted(message, parent_key=parent, sep=FLAT_SEPARATOR)
 
         if data:
             await self._writer.write_soon(measurement=routing_list[0], fields=data)

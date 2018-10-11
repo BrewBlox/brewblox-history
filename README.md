@@ -34,10 +34,10 @@ It is different in that it uses a different data protocol, and the log database 
 
 Adds another broadcast subscription. All data received with this subscription is written to InfluxDB.
 
-### builder ([sse.py](./brewblox_history/sse.py))
+### queries ([sse.py](./brewblox_history/sse.py))
 
 Public query API for external clients. Input is sanitized before being passed on to InfluxDB.
 
 ### sse ([sse.py](./brewblox_history/sse.py))
 
-Subscribe to regular updates of database values. The endpoint arguments are comparable to the ones used to get values from `builder`. It will periodically yield newly received data as SSE data.
+Subscribe to regular updates of database values. The endpoint arguments are comparable to the ones used to get values from `queries`. It will periodically yield newly received data as SSE data.
