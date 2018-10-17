@@ -32,7 +32,7 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
     try:
         return await handler(request)
     except Exception as ex:
-        LOGGER.warn(f'REST error: {type(ex).__name__}({ex})')
+        LOGGER.warn(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
         return web.json_response({'error': f'{type(ex).__name__}({ex})'}, status=500)
 
 
@@ -245,7 +245,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     queries = [
-        f'select count(*) from {db}.autogen.{{measurement}}{time_frame}'
+        f'select count(*) from {db}.autogen.{{measurement}}{time_frame} fill(0)'
         for db in downsampled_databases
     ]
     query = ';'.join(queries)
@@ -254,7 +254,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     query_response = await client.query(**params)
 
     values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
-    values = [max(v[1:], default=0) for v in values]  # skip the time in each result
+    values = [max(val[1:], default=0) for val in values]  # skip the time in each result
 
     # Create a dict where key=approximation score, and values=database name
     # Calculate approximation score by comparing it to 'approx_points' target
