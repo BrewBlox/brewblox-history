@@ -399,10 +399,8 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                'select count(*) from brewblox_10s.autogen.{measurement}',
-                'select count(*) from brewblox_1m.autogen.{measurement}',
-                'select count(*) from brewblox_10m.autogen.{measurement}',
-                'select count(*) from brewblox_1h.autogen.{measurement}',
+                f'select count(*) from brewblox_{duration}.autogen.{{measurement}} fill(0)'
+                for duration in ['10s', '1m', '10m', '1h']
             ]),
             database='brewblox',
             measurement='m'
@@ -432,10 +430,8 @@ async def test_empty_downsampling(app, client, query_mock):
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                'select count(*) from brewblox_10s.autogen.{measurement}',
-                'select count(*) from brewblox_1m.autogen.{measurement}',
-                'select count(*) from brewblox_10m.autogen.{measurement}',
-                'select count(*) from brewblox_1h.autogen.{measurement}',
+                f'select count(*) from brewblox_{duration}.autogen.{{measurement}} fill(0)'
+                for duration in ['10s', '1m', '10m', '1h']
             ]),
             database='brewblox',
             measurement='m'
