@@ -100,8 +100,8 @@ def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optiona
 
 
 async def raw_query(client: influx.QueryClient,
-                    database: Optional[str]=influx.DEFAULT_DATABASE,
-                    query: Optional[str]='show databases'
+                    database: Optional[str] = influx.DEFAULT_DATABASE,
+                    query: Optional[str] = 'show databases'
                     ) -> dict:
 
     return await client.query(
@@ -111,8 +111,8 @@ async def raw_query(client: influx.QueryClient,
 
 
 async def show_keys(client: influx.QueryClient,
-                    database: Optional[str]=None,
-                    measurement: Optional[str]=None,
+                    database: Optional[str] = None,
+                    measurement: Optional[str] = None,
                     **_  # allow, but discard all other kwargs
                     ) -> dict:
 
@@ -136,20 +136,20 @@ async def show_keys(client: influx.QueryClient,
     return response
 
 
-def join_keys(keys: List[str], prefix: str=''):
+def join_keys(keys: List[str], prefix: str = ''):
     return ','.join([f'"{prefix}{key}"' if key is not '*' else key for key in keys])
 
 
 async def configure_params(client: influx.QueryClient,
                            measurement: str,
-                           fields: Optional[List[str]]=['*'],
-                           database: Optional[str]=None,
-                           start: Optional[str]=None,
-                           duration: Optional[str]=None,
-                           end: Optional[str]=None,
-                           order_by: Optional[str]=None,
-                           limit: Optional[int]=None,
-                           approx_points: Optional[int]=None,
+                           fields: Optional[List[str]] = ['*'],
+                           database: Optional[str] = None,
+                           start: Optional[str] = None,
+                           duration: Optional[str] = None,
+                           end: Optional[str] = None,
+                           order_by: Optional[str] = None,
+                           limit: Optional[int] = None,
+                           approx_points: Optional[int] = None,
                            **_  # allow, but discard all other kwargs
                            ):
     def nanosecond_date(dt):
@@ -221,11 +221,11 @@ async def select_values(client: influx.QueryClient, **kwargs) -> dict:
 
 async def select_downsampling_database(client: influx.QueryClient,
                                        measurement: str,
-                                       database: str=influx.DEFAULT_DATABASE,
-                                       approx_points: int=DEFAULT_APPROX_POINTS,
-                                       start: Optional[str]=None,
-                                       duration: Optional[str]=None,
-                                       end: Optional[str]=None,
+                                       database: str = influx.DEFAULT_DATABASE,
+                                       approx_points: int = DEFAULT_APPROX_POINTS,
+                                       start: Optional[str] = None,
+                                       duration: Optional[str] = None,
+                                       end: Optional[str] = None,
                                        ):
     """
     Chooses the downsampling database that will yield the optimum number of results when queried.
