@@ -90,9 +90,9 @@ class InfluxWriter(features.ServiceFeature):
 
     def __init__(self,
                  app: web.Application,
-                 database: str=None,
-                 retention: str=None,
-                 downsampling: bool=True):
+                 database: str = None,
+                 retention: str = None,
+                 downsampling: bool = True):
         super().__init__(app)
 
         self._pending = []
@@ -195,15 +195,15 @@ class InfluxWriter(features.ServiceFeature):
                     LOGGER.info(f'Connected {self}')
                     yield client
 
-            except ClientConnectionError as ex:
+            except ClientConnectionError:
                 # Sleep and try reconnect
                 await asyncio.sleep(RECONNECT_INTERVAL_S)
 
     async def write_soon(self,
                          measurement: str,
-                         fields: dict=None,
-                         tags: dict=None,
-                         time: Union[datetime.datetime, str]=None):
+                         fields: dict = None,
+                         tags: dict = None,
+                         time: Union[datetime.datetime, str] = None):
         """Schedules a data point for writing.
 
         Actual writing is done in a timed interval, to batch database writing.
