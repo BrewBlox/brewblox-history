@@ -5,7 +5,7 @@ Server-sent events implementation for relaying eventbus messages to front end
 import asyncio
 import json
 
-from aiohttp import web
+from aiohttp import hdrs, web
 from aiohttp_sse import sse_response
 from brewblox_service import brewblox_logger
 
@@ -28,6 +28,17 @@ def _check_open_ended(params: dict) -> bool:
         [True, False, False],
         [False, True, False],
     ]
+
+
+def _cors_headers(request):
+    return {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods':
+        request.headers.get('Access-Control-Request-Method', ','.join(hdrs.METH_ALL)),
+        'Access-Control-Allow-Headers':
+        request.headers.get('Access-Control-Request-Headers', '*'),
+        'Access-Control-Allow-Credentials': 'true',
+    }
 
 
 @routes.get('/sse/values')
@@ -103,7 +114,7 @@ async def subscribe(request: web.Request) -> web.Response:
     params = await queries.configure_params(client, **params)
     open_ended = _check_open_ended(params)
 
-    async with sse_response(request) as resp:
+    async with sse_response(request, headers=_cors_headers(request)) as resp:
         while True:
             try:
                 query = queries.build_query(params)
@@ -125,4 +136,4 @@ async def subscribe(request: web.Request) -> web.Response:
                 LOGGER.warn(msg)
                 break
 
-    return resp
+        return resp
