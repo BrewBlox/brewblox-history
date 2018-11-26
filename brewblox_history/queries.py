@@ -159,6 +159,7 @@ async def configure_params(client: influx.QueryClient,
         return dt
 
     start = nanosecond_date(start)
+    duration = duration if not duration else duration.replace(' ', '')
     end = nanosecond_date(end)
 
     if approx_points:
