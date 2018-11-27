@@ -131,9 +131,12 @@ async def subscribe(request: web.Request) -> web.Response:
 
                 await asyncio.sleep(POLL_INTERVAL_S)
 
+            except asyncio.CancelledError:  # pragma: no cover
+                raise  # Client closed the connection
+
             except Exception as ex:
                 msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
                 LOGGER.warn(msg)
                 break
 
-        return resp
+    return resp

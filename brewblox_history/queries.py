@@ -2,6 +2,7 @@
 Converts REST endpoints into Influx queries
 """
 
+import asyncio
 import re
 import time
 from typing import Callable, List, Optional
@@ -31,8 +32,10 @@ def setup(app: web.Application):
 async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
     try:
         return await handler(request)
+    except asyncio.CancelledError:  # pragma: no cover
+        raise
     except Exception as ex:
-        LOGGER.warn(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
+        LOGGER.info(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
         return web.json_response({'error': f'{type(ex).__name__}({ex})'}, status=500)
 
 
