@@ -2,11 +2,13 @@
 Tests brewblox_history.sse
 """
 
+import asyncio
 import json
 from urllib.parse import urlencode
 
 import pytest
 from asynctest import CoroutineMock
+from brewblox_service import features
 
 from brewblox_history import sse
 
@@ -81,15 +83,17 @@ async def test_subscribe(app, client, influx_mock, values_result):
 
 
 async def test_subscribe_single(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(side_effect=[values_result, {}])
-    res = await client.get('/sse/values', params=urlencode(
+    influx_mock.query = CoroutineMock(return_value=values_result)
+    async with client.get('/sse/values', params=urlencode(
         {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00'},
         doseq=True
-    ))
-    assert res.status == 200
-    pushed = await res.text()
-    assert json.loads(pushed[len('data:'):])  # SSE prefixes output with 'data: '
-    assert influx_mock.query.call_count == 1  # Don't keep querying dataset with an end
+    )) as resp:
+        assert await resp.content.read(6) == b'data: '
+        expected = values_result['results'][0]['series'][0]
+        expected_json = json.dumps(expected)
+        resp_values = await resp.content.read(len(expected_json))
+        actual = json.loads(resp_values.decode())
+        assert actual == expected
 
 
 async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
@@ -102,3 +106,17 @@ async def test_subscribe_single_no_data(app, client, influx_mock, values_result)
     pushed = await res.text()
     assert not pushed  # no data available
     assert influx_mock.query.call_count == 1
+
+
+async def test_cancel_subscriptions(app, client, influx_mock, values_result):
+    influx_mock.query = CoroutineMock(return_value=values_result)
+    signal = features.get(app, sse.ShutdownAlert).shutdown_signal
+
+    async def close_after(delay):
+        asyncio.sleep(delay)
+        signal.set()
+
+    await asyncio.gather(
+        client.get('/sse/values', params=urlencode({'measurement': 'm'}, doseq=True)),
+        close_after(0.1)
+    )
