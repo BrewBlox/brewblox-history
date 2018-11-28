@@ -7,7 +7,7 @@ import json
 
 from aiohttp import hdrs, web
 from aiohttp_sse import sse_response
-from brewblox_service import brewblox_logger
+from brewblox_service import brewblox_logger, features
 
 from brewblox_history import influx, queries
 
@@ -18,7 +18,27 @@ POLL_INTERVAL_S = 1
 
 
 def setup(app: web.Application):
+    features.add(app, ShutdownAlert(app))
     app.router.add_routes(routes)
+
+
+class ShutdownAlert(features.ServiceFeature):
+    def __init__(self, app: web.Application):
+        super().__init__(app)
+        self._signal: asyncio.Event = None
+
+    @property
+    def shutdown_signal(self) -> asyncio.Event:
+        return self._signal
+
+    async def startup(self, _):
+        self._signal = asyncio.Event()
+
+    async def before_shutdown(self, _):
+        self._signal.set()
+
+    async def shutdown(self, _):
+        pass
 
 
 def _check_open_ended(params: dict) -> bool:
@@ -113,10 +133,16 @@ async def subscribe(request: web.Request) -> web.Response:
 
     params = await queries.configure_params(client, **params)
     open_ended = _check_open_ended(params)
+    alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
+
+    def check_shutdown():
+        if alert.shutdown_signal.is_set():
+            raise asyncio.CancelledError()
 
     async with sse_response(request, headers=_cors_headers(request)) as resp:
         while True:
             try:
+                check_shutdown()
                 query = queries.build_query(params)
                 data = await queries.run_query(client, query, params)
 
@@ -129,10 +155,11 @@ async def subscribe(request: web.Request) -> web.Response:
                 if not open_ended:
                     break
 
+                check_shutdown()
                 await asyncio.sleep(POLL_INTERVAL_S)
 
-            except asyncio.CancelledError:  # pragma: no cover
-                raise  # Client closed the connection
+            except asyncio.CancelledError:
+                raise  # Client closed the connection, or server is shutting down
 
             except Exception as ex:
                 msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
