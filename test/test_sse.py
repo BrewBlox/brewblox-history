@@ -113,7 +113,7 @@ async def test_cancel_subscriptions(app, client, influx_mock, values_result):
     signal = features.get(app, sse.ShutdownAlert).shutdown_signal
 
     async def close_after(delay):
-        asyncio.sleep(delay)
+        await asyncio.sleep(delay)
         signal.set()
 
     await asyncio.gather(
