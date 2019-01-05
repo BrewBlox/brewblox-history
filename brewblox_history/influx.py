@@ -64,7 +64,7 @@ class QueryClient(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown()
-        self._client = InfluxDBClient(host=INFLUX_HOST, loop=app.loop, db=DEFAULT_DATABASE)
+        self._client = InfluxDBClient(host=INFLUX_HOST, db=DEFAULT_DATABASE)
 
     async def shutdown(self, *_):
         if self._client:
@@ -190,7 +190,7 @@ class InfluxWriter(features.ServiceFeature):
         """
         while True:
             try:
-                async with InfluxDBClient(host=INFLUX_HOST, db=self._database, loop=self.app.loop) as client:
+                async with InfluxDBClient(host=INFLUX_HOST, db=self._database) as client:
                     await client.ping()
                     LOGGER.info(f'Connected {self}')
                     yield client

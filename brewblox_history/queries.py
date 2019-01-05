@@ -162,7 +162,7 @@ def build_query(params: dict):
 
 
 async def run_query(client: influx.QueryClient, query: str, params: dict):
-    query_response = await client.query(query, **params)
+    query_response = await client.query(query=query, **params)
 
     try:
         # Only support single-measurement queries
@@ -210,8 +210,8 @@ async def select_downsampling_database(client: influx.QueryClient,
     ]
     query = ';'.join(queries)
 
-    params = _prune(locals(), {'database', 'start', 'duration', 'end'})
-    query_response = await client.query(query, **params)
+    params = _prune(locals(), {'query', 'database', 'start', 'duration', 'end'})
+    query_response = await client.query(**params)
 
     values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
     values = [max(val[1:], default=0) for val in values]  # skip the time in each result
@@ -244,7 +244,7 @@ async def raw_query(client: influx.QueryClient,
     Note: this is supported only for debugging reasons.
     Production code should never assume this function/endpoint is available.
     """
-    return await client.query(query, database=database)
+    return await client.query(query=query, database=database)
 
 
 async def show_keys(client: influx.QueryClient,
@@ -258,8 +258,8 @@ async def show_keys(client: influx.QueryClient,
     if measurement:
         query += ' from "{measurement}"'
 
-    params = _prune(locals(), {'database', 'measurement'})
-    query_response = await client.query(query, **params)
+    params = _prune(locals(), {'query', 'database', 'measurement'})
+    query_response = await client.query(**params)
 
     response = dict()
 

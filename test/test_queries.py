@@ -20,7 +20,7 @@ def influx_mock(mocker):
 
 @pytest.fixture
 def query_mock(influx_mock):
-    influx_mock.query = CoroutineMock(side_effect=lambda **kwargs: kwargs)
+    influx_mock.query = CoroutineMock(side_effect=lambda *args, **kwargs: {})
     return influx_mock.query
 
 
@@ -221,7 +221,7 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
 
     assert query_mock.mock_calls == [
         call(query='show field keys'),
-        call(query='show field keys from {measurement}', measurement='measy'),
+        call(query='show field keys from "{measurement}"', measurement='measy'),
         call(database='the_internet', query='show field keys')
     ]
 
@@ -234,7 +234,7 @@ async def test_single_key(app, client, query_mock, values_result):
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {fields} from {measurement}',
+        query='select {fields} from "{measurement}"',
         measurement='m',
         fields='"single"'
     )
@@ -248,7 +248,7 @@ async def test_quote_fields(app, client, query_mock, values_result):
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {fields} from {measurement}',
+        query='select {fields} from "{measurement}"',
         measurement='m',
         fields='"first","second"'
     )
@@ -269,56 +269,56 @@ async def test_value_data_format(app, client, query_mock, values_result):
 @pytest.mark.parametrize('input_args, query_str', [
     (
         {},
-        'select {fields} from {measurement}'
+        'select {fields} from "{measurement}"'
     ),
     (
         {'fields': ['you']},
-        'select {fields} from {measurement}'
+        'select {fields} from "{measurement}"'
     ),
     (
         {'fields': ['key1', 'key2']},
-        'select {fields} from {measurement}'
+        'select {fields} from "{measurement}"'
     ),
     (
         {'database': 'db'},
-        'select {fields} from {measurement}'
+        'select {fields} from "{measurement}"'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from {measurement} where time >= {start}'
+        'select {fields} from "{measurement}" where time >= {start}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'duration': 'some time'},
-        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration}'
+        'select {fields} from "{measurement}" where time >= {start} and time <= {start} + {duration}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'end': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from {measurement} where time >= {start} and time <= {end}'
+        'select {fields} from "{measurement}" where time >= {start} and time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from {measurement} where time <= {end}'
+        'select {fields} from "{measurement}" where time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00', 'duration': 'bright side'},
-        'select {fields} from {measurement} where time >= {end} - {duration} and time <= {end}'
+        'select {fields} from "{measurement}" where time >= {end} - {duration} and time <= {end}'
     ),
     (
         {'duration': 'eternal'},
-        'select {fields} from {measurement} where time >= now() - {duration}'
+        'select {fields} from "{measurement}" where time >= now() - {duration}'
     ),
     (
         {'fields': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
-        'select {fields} from {measurement} order by {order_by} limit {limit}'
+        'select {fields} from "{measurement}" order by {order_by} limit {limit}'
     ),
     (
         {'duration': 'eternal', 'limit': 1},
-        'select {fields} from {measurement} where time >= now() - {duration} limit {limit}'
+        'select {fields} from "{measurement}" where time >= now() - {duration} limit {limit}'
     ),
     (
         {'database': 'db', 'fields': ['something', 'else'],
             'start': '2018-10-10T12:00:00.000+02:00', 'duration': '1d', 'limit': 5},
-        'select {fields} from {measurement} where time >= {start} and time <= {start} + {duration} limit {limit}'
+        'select {fields} from "{measurement}" where time >= {start} and time <= {start} + {duration} limit {limit}'
     )
 ])
 async def test_get_values(input_args, query_str, app, client, influx_mock, query_mock, values_result):
@@ -399,14 +399,13 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                f'select count(*) from brewblox_{duration}.autogen.{{measurement}} fill(0)'
+                f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
                 for duration in ['10s', '1m', '10m', '1h']
             ]),
             database='brewblox',
-            measurement='m'
         ),
         call(
-            query='select {fields} from {measurement}',
+            query='select {fields} from "{measurement}"',
             fields='"mean_k1","mean_k2"',
             measurement='m',
             database=used_database,
@@ -430,14 +429,13 @@ async def test_empty_downsampling(app, client, query_mock):
     assert query_mock.call_args_list == [
         call(
             query=';'.join([
-                f'select count(*) from brewblox_{duration}.autogen.{{measurement}} fill(0)'
+                f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
                 for duration in ['10s', '1m', '10m', '1h']
             ]),
             database='brewblox',
-            measurement='m'
         ),
         call(
-            query='select {fields} from {measurement}',
+            query='select {fields} from "{measurement}"',
             fields='"mean_k1","mean_k2"',
             measurement='m',
             database='brewblox_10s',
