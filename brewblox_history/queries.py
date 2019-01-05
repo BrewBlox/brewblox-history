@@ -60,8 +60,7 @@ def _prune(vals: dict, relevant: set) -> dict:
 
 
 def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optional[str]) -> str:
-    """
-    Determines required InfluxDB QL where/and clause required to express time frame.
+    """Determines required InfluxDB QL where/and clause required to express time frame.
 
     A time frame can be constructed from a start, a duration, and an end.
     At most two determinators can be present simultaneously.
@@ -102,44 +101,7 @@ def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optiona
 ########################################################################################################
 
 
-async def raw_query(client: influx.QueryClient,
-                    database: Optional[str] = influx.DEFAULT_DATABASE,
-                    query: Optional[str] = 'show databases'
-                    ) -> dict:
-
-    return await client.query(
-        query=query,
-        database=database
-    )
-
-
-async def show_keys(client: influx.QueryClient,
-                    database: Optional[str] = None,
-                    measurement: Optional[str] = None,
-                    **_  # allow, but discard all other kwargs
-                    ) -> dict:
-
-    query = 'show field keys'
-
-    if measurement:
-        query += ' from {measurement}'
-
-    params = _prune(locals(), {'query', 'database', 'measurement'})
-    query_response = await client.query(**params)
-
-    response = dict()
-
-    for path, meas_name in dpath.util.search(
-            query_response, 'results/*/series/*/name', yielded=True, dirs=False):
-
-        # results/[index]/series/[index]/values/*/0
-        values_glob = '/'.join(path.split('/')[:-1] + ['values', '*', '0'])
-        response[meas_name] = dpath.util.values(query_response, values_glob)
-
-    return response
-
-
-def join_keys(keys: List[str], prefix: str = ''):
+def format_fields(keys: List[str], prefix: str = ''):
     return ','.join([f'"{prefix}{key}"' if key is not '*' else key for key in keys])
 
 
@@ -168,21 +130,21 @@ async def configure_params(client: influx.QueryClient,
     if approx_points:
         # Workaround for https://github.com/influxdata/influxdb/issues/7332
         # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
-        fields = join_keys(fields, DOWNSAMPLING_PREFIX)
+        fields = format_fields(fields, DOWNSAMPLING_PREFIX)
         downsampled = True
         approx_points = int(approx_points)
         select_params = _prune(locals(), {'measurement', 'database',
                                           'approx_points', 'start', 'duration', 'end'})
         database = await select_downsampling_database(client, **select_params)
     else:
-        fields = join_keys(fields)
+        fields = format_fields(fields)
 
     return _prune(locals(), {'query', 'database', 'measurement', 'fields',
                              'start', 'duration', 'end', 'order_by', 'limit', 'downsampled'})
 
 
 def build_query(params: dict):
-    query = 'select {fields} from {measurement}'
+    query = 'select {fields} from "{measurement}"'
 
     query += _find_time_frame(
         params.get('start'),
@@ -217,12 +179,6 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
     return response
 
 
-async def select_values(client: influx.QueryClient, **kwargs) -> dict:
-    params = await configure_params(client, **kwargs)
-    query = build_query(params)
-    return await run_query(client, query, params)
-
-
 async def select_downsampling_database(client: influx.QueryClient,
                                        measurement: str,
                                        database: str = influx.DEFAULT_DATABASE,
@@ -249,12 +205,12 @@ async def select_downsampling_database(client: influx.QueryClient,
     downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
 
     queries = [
-        f'select count(*) from {db}.autogen.{{measurement}}{time_frame} fill(0)'
+        f'select count(*) from "{db}".autogen."{measurement}"{time_frame} fill(0)'
         for db in downsampled_databases
     ]
     query = ';'.join(queries)
 
-    params = _prune(locals(), {'query', 'database', 'measurement', 'start', 'duration', 'end'})
+    params = _prune(locals(), {'query', 'database', 'start', 'duration', 'end'})
     query_response = await client.query(**params)
 
     values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
@@ -274,6 +230,54 @@ async def select_downsampling_database(client: influx.QueryClient,
         return proximity[min(proximity.keys(), default=0)]
     except KeyError:
         return downsampled_databases[0]
+
+
+########################################################################################################
+
+
+async def raw_query(client: influx.QueryClient,
+                    database: Optional[str] = influx.DEFAULT_DATABASE,
+                    query: Optional[str] = 'show databases'
+                    ) -> dict:
+    """Runs an arbitrary user-defined query
+
+    Note: this is supported only for debugging reasons.
+    Production code should never assume this function/endpoint is available.
+    """
+    return await client.query(query=query, database=database)
+
+
+async def show_keys(client: influx.QueryClient,
+                    database: Optional[str] = None,
+                    measurement: Optional[str] = None,
+                    **_  # allow, but discard all other kwargs
+                    ) -> dict:
+    """Selects available keys (without data) from Influx."""
+    query = 'show field keys'
+
+    if measurement:
+        query += ' from "{measurement}"'
+
+    params = _prune(locals(), {'query', 'database', 'measurement'})
+    query_response = await client.query(**params)
+
+    response = dict()
+
+    for path, meas_name in dpath.util.search(
+            query_response, 'results/*/series/*/name', yielded=True, dirs=False):
+
+        # results/[index]/series/[index]/values/*/0
+        values_glob = '/'.join(path.split('/')[:-1] + ['values', '*', '0'])
+        response[meas_name] = dpath.util.values(query_response, values_glob)
+
+    return response
+
+
+async def select_values(client: influx.QueryClient, **kwargs) -> dict:
+    """Selects data from Influx."""
+    params = await configure_params(client, **kwargs)
+    query = build_query(params)
+    return await run_query(client, query, params)
 
 
 ########################################################################################################
