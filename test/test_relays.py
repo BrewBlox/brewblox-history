@@ -128,8 +128,8 @@ async def test_data_relay(app, client, data_writer_mock):
     await relay._on_event_message(None, 'route', nested_empty_data)
 
     assert data_writer_mock.write_soon.call_args_list == [
-        call(measurement='route', fields=flat_data),
-        call(measurement='route', fields=flat_value)
+        call(measurement='"route"', fields=flat_data),
+        call(measurement='"route"', fields=flat_value)
     ]
 
 
