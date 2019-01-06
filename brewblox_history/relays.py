@@ -230,8 +230,7 @@ class DataRelay(features.ServiceFeature):
         data = self._influx_formatted(message, parent_key=parent, sep=FLAT_SEPARATOR)
 
         if data:
-            measurement = f'"{routing_list[0]}"'
-            await self._writer.write_soon(measurement=measurement, fields=data)
+            await self._writer.write_soon(measurement=routing_list[0], fields=data)
 
 
 @routes.post('/subscribe')
