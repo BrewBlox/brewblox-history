@@ -20,8 +20,8 @@ DEFAULT_DATABASE = 'brewblox'
 LOG_DATABASE = 'brewblox_logs'
 
 DEFAULT_RETENTION = '1w'
-DOWNSAMPLE_INTERVALS = ['10s', '1m', '10m', '1h']
-DOWNSAMPLE_RETENTION = ['INF', 'INF', 'INF', 'INF']
+DOWNSAMPLE_INTERVALS = ['10s', '1m', '10m', '1h', '6h']
+DOWNSAMPLE_RETENTION = ['INF', 'INF', 'INF', 'INF', 'INF']
 
 
 def setup(app):
@@ -138,11 +138,16 @@ class InfluxWriter(features.ServiceFeature):
             # Influx does not support selecting mean(*) while retaining original field names
             # (See: https://github.com/influxdata/influxdb/issues/7332)
             # 'SELECT mean(*) AS "mean"' will result in every field being prefixed with "mean_"
-            for interval, retention in zip(DOWNSAMPLE_INTERVALS, DOWNSAMPLE_RETENTION):
+            for interval, retention, prev_interval in zip(
+                DOWNSAMPLE_INTERVALS,
+                DOWNSAMPLE_RETENTION,
+                [''] + DOWNSAMPLE_INTERVALS,
+            ):
                 downsampled_db = f'{self._database}_{interval}'
+                source_db = f'{self._database}_{prev_interval}' if prev_interval else self._database
                 db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
                 cquery = f'''
-                CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{self._database}"
+                CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{source_db}"
                 BEGIN
                     SELECT mean(*) AS "mean" INTO "{downsampled_db}"."autogen".:MEASUREMENT
                     FROM /.*/
