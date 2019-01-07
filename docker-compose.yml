@@ -1,0 +1,66 @@
+version: '3'
+
+services:
+
+  eventbus:
+    image: rabbitmq:alpine
+
+  influx:
+    image: influxdb
+    environment:
+      - INFLUXDB_LOGGING_LEVEL=warn
+      - INFLUXDB_HTTP_LOG_ENABLED=false
+    volumes:
+      - "./app/influxdb/:/var/lib/influxdb/"
+
+  datastore:
+    image: treehouses/couchdb
+    labels:
+      - "traefik.port=5984"
+      - "traefik.frontend.rule=PathPrefixStrip: /datastore"
+    volumes:
+      - "./app/couchdb:/opt/couchdb/data"
+
+  sparksimulator:
+    image: brewblox/firmware-simulator:develop
+
+  spark:
+    image: brewblox/brewblox-devcon-spark:develop
+    privileged: true
+    depends_on:
+      - eventbus
+      - datastore
+      - sparksimulator
+    labels:
+      - "traefik.port=5000"
+      - "traefik.frontend.rule=PathPrefix: /spark"
+    command: >
+      --device-host=sparksimulator
+
+  history:
+    image: brewblox/brewblox-history:develop
+    depends_on:
+      - influx
+      - eventbus
+    labels:
+      - "traefik.port=5000"
+      - "traefik.frontend.rule=PathPrefix: /history"
+    volumes:
+      - "./:/app/"
+
+  ui:
+    image: brewblox/brewblox-ui:develop
+    depends_on:
+      - datastore
+    labels:
+      - "traefik.port=80"
+      - "traefik.frontend.rule=PathPrefix: /"
+
+  traefik:
+    image: traefik
+    command: -c /dev/null --api --docker --docker.domain=docker.localhost
+    ports:
+      - "80:80"
+      - "9001:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

@@ -185,7 +185,16 @@ def count_result():
                         'columns': ['time', 'k1'],
                         'values': [[0, 20]],
                     }],
-            }
+            },
+            {
+                'statement_id': 4,
+                'series': [
+                    {
+                        'name': 'brewblox_6h.autogen.pressure',
+                        'columns': ['time', 'k1'],
+                        'values': [[0, 5]],
+                    }],
+            },
         ]
     }
 
@@ -381,10 +390,12 @@ async def test_error_response(app, client, query_mock):
     (200, 'brewblox_1m'),
     (100, 'brewblox_10m'),
     (20, 'brewblox_1h'),
+    (5, 'brewblox_6h'),
     # approximate
     (10000, 'brewblox_10s'),
     (500, 'brewblox_10s'),
     (40, 'brewblox_1h'),
+    (1, 'brewblox_6h'),
 ])
 async def test_select_downsampling_database(approx_points, used_database, app, client, query_mock, count_result):
     query_mock.side_effect = lambda **kwargs: count_result
@@ -400,7 +411,7 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
         call(
             query=';'.join([
                 f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
-                for duration in ['10s', '1m', '10m', '1h']
+                for duration in ['10s', '1m', '10m', '1h', '6h']
             ]),
             database='brewblox',
         ),
@@ -430,7 +441,7 @@ async def test_empty_downsampling(app, client, query_mock):
         call(
             query=';'.join([
                 f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
-                for duration in ['10s', '1m', '10m', '1h']
+                for duration in ['10s', '1m', '10m', '1h', '6h']
             ]),
             database='brewblox',
         ),
