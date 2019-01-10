@@ -26,7 +26,6 @@ class InfluxClientMock(Mock):
 
 @pytest.fixture
 async def reduced_sleep(mocker):
-    mocker.patch.object(influx, 'WRITE_INTERVAL_S', 0.001)
     mocker.patch.object(influx, 'RECONNECT_INTERVAL_S', 0.001)
 
 
@@ -52,6 +51,7 @@ def influx_mock(mocker):
 
 @pytest.fixture
 async def app(app, mocker, influx_mock, reduced_sleep):
+    app['config']['write_interval'] = 0.001
     scheduler.setup(app)
     influx.setup(app)
     return app

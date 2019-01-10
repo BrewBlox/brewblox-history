@@ -28,19 +28,23 @@ def app_config() -> dict:
         'debug': False,
         'broadcast_exchange': 'brewcast',
         'logging_exchange': 'logcast',
+        'write_interval': 5,
+        'poll_interval': 5,
     }
 
 
 @pytest.fixture
 def sys_args(app_config) -> list:
-    return [
+    return [str(v) for v in [
         'app_name',
         '--name', app_config['name'],
         '--host', app_config['host'],
-        '--port', str(app_config['port']),
+        '--port', app_config['port'],
         '--broadcast-exchange', app_config['broadcast_exchange'],
         '--logging-exchange', app_config['logging_exchange'],
-    ]
+        '--write-interval', app_config['write_interval'],
+        '--poll-interval', app_config['poll_interval'],
+    ]]
 
 
 @pytest.fixture

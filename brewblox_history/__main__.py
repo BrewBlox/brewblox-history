@@ -21,6 +21,12 @@ def create_parser(default_name='history'):
                         help='Skip configuring Influx database after each connection. '
                         'This is useful when using custom configuration.',
                         action='store_true')
+    parser.add_argument('--write-interval',
+                        help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
+                        default=5)
+    parser.add_argument('--poll-interval',
+                        help='Interval (sec) between queries in live SSE requests. [%(default)s]',
+                        default=5)
     return parser
 
 
