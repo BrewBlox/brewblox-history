@@ -12,7 +12,6 @@ LOGGER = brewblox_logger(__name__)
 
 
 INFLUX_HOST = 'influx'
-WRITE_INTERVAL_S = 1
 RECONNECT_INTERVAL_S = 1
 MAX_PENDING_POINTS = 5000
 
@@ -100,7 +99,6 @@ class InfluxWriter(features.ServiceFeature):
         self._retention = retention or DEFAULT_RETENTION
         self._downsampling = downsampling
         self._task: asyncio.Task = None
-        self._skip_config = False
 
     def __str__(self):
         return f'<{type(self).__name__} {self._database}>'
@@ -111,7 +109,6 @@ class InfluxWriter(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown()
-        self._skip_config = app['config']['skip_influx_config']
         self._task = await scheduler.create_task(app, self._run())
 
     async def shutdown(self, *_):
@@ -124,7 +121,7 @@ class InfluxWriter(features.ServiceFeature):
         This is done every time a new connection is made.
         """
 
-        if self._skip_config:
+        if self.app['config']['skip_influx_config']:
             return
 
         # Creates default database, and limits retention
@@ -158,13 +155,14 @@ class InfluxWriter(features.ServiceFeature):
                 await client.query(cquery)
 
     async def _run(self):
+        write_interval = self.app['config']['write_interval']
         # _generate_connections will keep yielding new connections
         async for client in self._generate_connections():
             try:
                 await self._on_connected(client)
 
                 while True:
-                    await asyncio.sleep(WRITE_INTERVAL_S)
+                    await asyncio.sleep(write_interval)
 
                     if not self._pending:
                         # Do a quick check whether the connection is still alive

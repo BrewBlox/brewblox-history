@@ -14,8 +14,6 @@ from brewblox_history import influx, queries
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
-POLL_INTERVAL_S = 1
-
 
 def setup(app: web.Application):
     features.add(app, ShutdownAlert(app))
@@ -134,6 +132,7 @@ async def subscribe(request: web.Request) -> web.Response:
     params = await queries.configure_params(client, **params)
     open_ended = _check_open_ended(params)
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
+    poll_interval = request.app['config']['poll_interval']
 
     def check_shutdown():
         if alert.shutdown_signal.is_set():
@@ -156,7 +155,7 @@ async def subscribe(request: web.Request) -> web.Response:
                     break
 
                 check_shutdown()
-                await asyncio.sleep(POLL_INTERVAL_S)
+                await asyncio.sleep(poll_interval)
 
             except asyncio.CancelledError:
                 raise  # Client closed the connection, or server is shutting down

@@ -55,12 +55,8 @@ def influx_mock(mocker):
 
 
 @pytest.fixture
-def interval_mock(mocker):
-    mocker.patch(TESTED + '.POLL_INTERVAL_S', 0.001)
-
-
-@pytest.fixture
-async def app(app, influx_mock, interval_mock):
+async def app(app, influx_mock):
+    app['config']['poll_interval'] = 0.001
     sse.setup(app)
     return app
 
