@@ -23,10 +23,12 @@ def create_parser(default_name='history'):
                         action='store_true')
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
-                        default=5)
+                        default=5,
+                        type=float)
     parser.add_argument('--poll-interval',
                         help='Interval (sec) between queries in live SSE requests. [%(default)s]',
-                        default=5)
+                        default=5,
+                        type=float)
     return parser
 
 
