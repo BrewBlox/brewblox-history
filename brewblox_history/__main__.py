@@ -14,13 +14,6 @@ def create_parser(default_name='history'):
     parser.add_argument('--broadcast-exchange',
                         help='Eventbus exchange to which device services broadcast their state. [%(default)s]',
                         default='brewcast')
-    parser.add_argument('--logging-exchange',
-                        help='Eventbus exchange to which device services broadcast their logs. [%(default)s]',
-                        default='logcast')
-    parser.add_argument('--skip-influx-config',
-                        help='Skip configuring Influx database after each connection. '
-                        'This is useful when using custom configuration.',
-                        action='store_true')
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
                         default=5,
@@ -44,10 +37,6 @@ def main():
 
     relays.get_data_relay(app).subscribe(
         exchange_name=app['config']['broadcast_exchange'],
-        routing='#'
-    )
-    relays.get_log_relay(app).subscribe(
-        exchange_name=app['config']['logging_exchange'],
         routing='#'
     )
 

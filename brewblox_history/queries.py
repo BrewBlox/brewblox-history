@@ -5,7 +5,7 @@ Converts REST endpoints into Influx queries
 import asyncio
 import re
 import time
-from typing import Callable, List, Optional
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 import dpath
 from aiohttp import web
@@ -19,8 +19,7 @@ routes = web.RouteTableDef()
 
 
 DEFAULT_APPROX_POINTS = 100
-DOWNSAMPLING_PREFIX = 'mean_'
-PREFIX_PATTERN = re.compile('^mean_')
+DOWNSAMPLING_PREFIX = 'm_'
 
 
 def setup(app: web.Application):
@@ -35,7 +34,7 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
     except asyncio.CancelledError:  # pragma: no cover
         raise
     except Exception as ex:
-        LOGGER.info(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
+        LOGGER.error(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
         return web.json_response({'error': f'{type(ex).__name__}({ex})'}, status=500)
 
 
@@ -108,7 +107,7 @@ def format_fields(keys: List[str], prefix: str = ''):
 async def configure_params(client: influx.QueryClient,
                            measurement: str,
                            fields: Optional[List[str]] = ['*'],
-                           database: Optional[str] = None,
+                           database: Optional[str] = influx.DEFAULT_DATABASE,
                            start: Optional[str] = None,
                            duration: Optional[str] = None,
                            end: Optional[str] = None,
@@ -127,24 +126,21 @@ async def configure_params(client: influx.QueryClient,
     duration = duration if not duration else duration.replace(' ', '')
     end = nanosecond_date(end)
 
-    if approx_points:
-        # Workaround for https://github.com/influxdata/influxdb/issues/7332
-        # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
-        fields = format_fields(fields, DOWNSAMPLING_PREFIX)
-        downsampled = True
-        approx_points = int(approx_points)
-        select_params = _prune(locals(), {'measurement', 'database',
-                                          'approx_points', 'start', 'duration', 'end'})
-        database = await select_downsampling_database(client, **select_params)
-    else:
-        fields = format_fields(fields)
+    # Workaround for https://github.com/influxdata/influxdb/issues/7332
+    # The continuous query that fills the downsampled database inserts "key" as "m_key"
+    approx_points = int(approx_points or 0)
+    select_params = _prune(locals(), {'measurement', 'database',
+                                      'approx_points', 'start', 'duration', 'end'})
+    policy, prefix = await select_downsampling_policy(client, **select_params)
+    fields = format_fields(fields, prefix)
+    LOGGER.info(f'Now selecting fields from {database}.{policy}.{measurement}')
 
-    return _prune(locals(), {'query', 'database', 'measurement', 'fields',
-                             'start', 'duration', 'end', 'order_by', 'limit', 'downsampled'})
+    return _prune(locals(), {'query', 'database', 'policy', 'measurement', 'fields',
+                             'start', 'duration', 'end', 'order_by', 'limit', 'prefix'})
 
 
 def build_query(params: dict):
-    query = 'select {fields} from "{measurement}"'
+    query = 'select {fields} from "{database}"."{policy}"."{measurement}"'
 
     query += _find_time_frame(
         params.get('start'),
@@ -168,31 +164,33 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
         # Only support single-measurement queries
         response = dpath.util.get(query_response, 'results/0/series/0')
         # Workaround for https://github.com/influxdata/influxdb/issues/7332
-        # The continuous query that fills the downsampled database inserts "key" as "mean_" + "key"
-        if params.get('downsampled'):
-            response['columns'] = [re.sub(PREFIX_PATTERN, '', v) for v in response.get('columns', [])]
+        # The continuous query that fills the downsampled database inserts "key" as "m_key"
+        prefix = params.get('prefix')
+        if prefix:
+            response['columns'] = [re.sub(prefix, '', v) for v in response.get('columns', [])]
     except KeyError:
         # Nothing found
         response = dict()
 
     response['database'] = params.get('database') or influx.DEFAULT_DATABASE
+    response['policy'] = params.get('policy') or influx.DEFAULT_POLICY
     return response
 
 
-async def select_downsampling_database(client: influx.QueryClient,
-                                       measurement: str,
-                                       database: str = influx.DEFAULT_DATABASE,
-                                       approx_points: int = DEFAULT_APPROX_POINTS,
-                                       start: Optional[str] = None,
-                                       duration: Optional[str] = None,
-                                       end: Optional[str] = None,
-                                       ):
+async def select_downsampling_policy(client: influx.QueryClient,
+                                     measurement: str,
+                                     database: str = influx.DEFAULT_DATABASE,
+                                     approx_points: int = DEFAULT_APPROX_POINTS,
+                                     start: Optional[str] = None,
+                                     duration: Optional[str] = None,
+                                     end: Optional[str] = None,
+                                     ) -> Awaitable[Tuple[str, str]]:
     """
-    Chooses the downsampling database that will yield the optimum number of results when queried.
+    Chooses the downsampling policy that will yield the optimum number of results when queried.
     This is calculated by taking the request number of points (approx_points), and measurement count,
     and dividing the highest value by the lowest.
 
-    The database where this calculation yields the lowest value is chosen.
+    The policy where this calculation yields the lowest value is chosen.
 
     Examples, for approx_points = 100:
         [20, 200] => 200
@@ -200,17 +198,22 @@ async def select_downsampling_database(client: influx.QueryClient,
         [100, 200] => 100
         [500, 200] => 200
         [20, 600] => 20
+
+    return name of the policy, and the prefix that should be added/stripped from fields in said policy
     """
     time_frame = _find_time_frame(start, duration, end)
-    downsampled_databases = [f'{database}_{interval}' for interval in influx.DOWNSAMPLE_INTERVALS]
+    all_policies = await client.policies()
+
+    if not approx_points:
+        return (all_policies[0], '')
 
     queries = [
-        f'select count(*) from "{db}".autogen."{measurement}"{time_frame} fill(0)'
-        for db in downsampled_databases
+        f'select count(*) from "{database}"."{policy}"."{measurement}"{time_frame} fill(0)'
+        for policy in all_policies
     ]
     query = ';'.join(queries)
 
-    params = _prune(locals(), {'query', 'database', 'start', 'duration', 'end'})
+    params = _prune(locals(), {'query', 'database', 'policy', 'measurement', 'start', 'duration', 'end'})
     query_response = await client.query(**params)
 
     values = dpath.util.values(query_response, 'results/*/series/0/values/0')  # int[] for each measurement -> int[][]
@@ -219,9 +222,13 @@ async def select_downsampling_database(client: influx.QueryClient,
     # Create a dict where key=approximation score, and values=database name
     # Calculate approximation score by comparing it to 'approx_points' target
     # Values are compared by dividing the highest by the lowest
+    # Policies without any values are disqualified
+    # Every time the database is downsampled, a downsampling prefix is added
+    # We can calculate that prefix by using idx * prefix. Result == '', 'm_', 'm_m_', 'm_m_m_', etc
     proximity = {
-        (max(approx_points, v) / (min(approx_points, v) or 1)): db
-        for v, db in zip(values, downsampled_databases)
+        (max(approx_points, v) / (min(approx_points, v))): (policy, idx*DOWNSAMPLING_PREFIX)
+        for v, policy, idx, in zip(values, all_policies, range(len(values)))
+        if v
     }
 
     # Lowest score indicates closest to target value
@@ -229,7 +236,7 @@ async def select_downsampling_database(client: influx.QueryClient,
     try:
         return proximity[min(proximity.keys(), default=0)]
     except KeyError:
-        return downsampled_databases[0]
+        return (all_policies[0], '')
 
 
 ########################################################################################################
