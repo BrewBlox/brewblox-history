@@ -162,7 +162,7 @@ async def subscribe(request: web.Request) -> web.Response:
 
             except Exception as ex:
                 msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
-                LOGGER.warn(msg)
+                LOGGER.error(msg)
                 break
 
     return resp

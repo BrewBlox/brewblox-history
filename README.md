@@ -14,19 +14,11 @@ Periodically writes scheduled data points to InfluxDB.
 
 Publicly offers the `write_soon()` function, where data can be scheduled for writing.
 
-When connecting to InfluxDB, it will configure the database for automatic downsampling.
-
 ### DataRelay ([relays.py](./brewblox_history/relays.py))
 
 Subscribes to the broadcast exchange on the event bus, and schedules all received data for writing to the database.
 
 By default, it is subscribed to the broadcast exchange specified with the `--broadcast-exchange` commandline argument. Additional subscriptions can be added.
-
-### LogRelay ([relays.py](./brewblox_history/relays.py))
-
-Operates under the same principles as `DataRelay` (subscribe to events, write to database).
-
-It is different in that it uses a different data protocol, and the log database is not downsampled.
 
 ## REST API
 

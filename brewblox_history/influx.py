@@ -1,9 +1,9 @@
 import asyncio
 import datetime
+import warnings
 from concurrent.futures import CancelledError
 from typing import Iterator, List, Union
 
-import dpath
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
@@ -18,6 +18,7 @@ MAX_PENDING_POINTS = 5000
 
 DEFAULT_DATABASE = 'brewblox'
 DEFAULT_POLICY = 'autogen'
+COMBINED_POINTS_FIELD = ' Influx downsampling rate'
 
 
 def setup(app):
@@ -56,11 +57,6 @@ class QueryClient(features.ServiceFeature):
         if self._client:
             await self._client.close()
             self._client = None
-
-    async def policies(self) -> List[str]:
-        return dpath.util.values(
-            await self._client.query(f'SHOW RETENTION POLICIES ON {DEFAULT_DATABASE}'),
-            'results/0/series/0/values/*/0')
 
     async def query(self, query: str, **kwargs):
         kwargs.setdefault('database', DEFAULT_DATABASE)
@@ -127,13 +123,14 @@ class InfluxWriter(features.ServiceFeature):
                 break
 
             except ClientConnectionError as ex:
-                LOGGER.warn(f'Database connection lost {self} {ex}')
+                warnings.warn(f'Database connection lost {self} {ex}')
                 await asyncio.sleep(RECONNECT_INTERVAL_S)
                 continue
 
             except Exception as ex:
-                LOGGER.error(f'Exiting {self} {ex}')
-                raise ex
+                warnings.warn(f'{type(ex).__name__}({ex})')
+                await asyncio.sleep(RECONNECT_INTERVAL_S)
+                continue
 
     async def _generate_connections(self) -> Iterator[InfluxDBClient]:
         """Iterator that keeps yielding new (connected) clients.
@@ -154,7 +151,7 @@ class InfluxWriter(features.ServiceFeature):
 
     async def write_soon(self,
                          measurement: str,
-                         fields: dict = None,
+                         fields: dict,
                          tags: dict = None,
                          time: Union[datetime.datetime, str] = None):
         """Schedules a data point for writing.
@@ -162,10 +159,11 @@ class InfluxWriter(features.ServiceFeature):
         Actual writing is done in a timed interval, to batch database writing.
         If the remote is not connected, the data point is kept locally until reconnect.
         """
+        fields[COMBINED_POINTS_FIELD] = 1
         point = dict(
             time=time or datetime.datetime.today(),
             measurement=measurement,
-            fields=fields or dict(),
+            fields=fields,
             tags=tags or dict()
         )
         self._pending.append(point)
@@ -174,5 +172,5 @@ class InfluxWriter(features.ServiceFeature):
         # To avoid large gaps, the data is downsampled: only every 2nd element is kept
         # Note: using this approach, resolution decreases with age (downsampled more often)
         if len(self._pending) >= MAX_PENDING_POINTS:
-            LOGGER.warn(f'Downsampling pending points...')
+            warnings.warn(f'Downsampling pending points...')
             self._pending = self._pending[::2]

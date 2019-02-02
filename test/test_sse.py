@@ -16,39 +16,6 @@ TESTED = sse.__name__
 
 
 @pytest.fixture
-def values_result():
-    return {
-        'results': [
-            {
-                'statement_id': 0,
-                'series': [
-                    {
-                        'name': 'average_temperature',
-                        'columns': [
-                            'time',
-                            'degrees',
-                            'location'
-                        ],
-                        'values': [
-                            [
-                                9000,
-                                82,
-                                'coyote_creek'
-                            ],
-                            [
-                                9001,
-                                85,
-                                'santa_monica'
-                            ]
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-
-
-@pytest.fixture
 def influx_mock(mocker):
     m = mocker.patch(TESTED + '.influx.get_client').return_value
     return m
@@ -61,8 +28,13 @@ async def app(app, influx_mock):
     return app
 
 
-async def test_subscribe(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(side_effect=[{}, values_result, values_result])
+async def test_subscribe(app, client, influx_mock, policies_result, count_result, values_result):
+    influx_mock.query = CoroutineMock(side_effect=[
+        policies_result,
+        count_result,
+        values_result,
+        values_result,
+    ])
     res = await client.get('/sse/values', params=urlencode({
         'measurement': 'm',
         'fields': ['k1', 'k2'],
@@ -74,8 +46,8 @@ async def test_subscribe(app, client, influx_mock, values_result):
     # SSE prefixes output with 'data: '
     fragments = [json.loads(v) for v in (await res.text()).split('data:') if v]
     assert len(fragments) == 2
-    # get downsample db, 3 * query, 1 * query error
-    assert influx_mock.query.call_count == 4
+    # get policies, get point count, 3 * query, 1 * query error
+    assert influx_mock.query.call_count == 5
 
 
 async def test_subscribe_single(app, client, influx_mock, values_result):

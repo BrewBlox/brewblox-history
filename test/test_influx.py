@@ -57,14 +57,7 @@ async def app(app, mocker, influx_mock, reduced_sleep):
     return app
 
 
-@pytest.fixture
-async def app_skip_config(app):
-    app['config']['skip_influx_config'] = True
-    return app
-
-
 async def test_setup(app, client):
-    assert influx.get_log_writer(app)
     assert influx.get_data_writer(app)
     assert influx.get_client(app)
 
@@ -110,15 +103,12 @@ async def test_running_writer(influx_mock, app, client, mocker):
 
 async def test_run_error(influx_mock, app, client, mocker):
     data_writer = influx.get_data_writer(app)
-    log_writer = influx.get_log_writer(app)
     influx_mock.ping.side_effect = RuntimeError
-    warn_mock = mocker.spy(influx.LOGGER, 'warn')
 
-    await asyncio.sleep(0.1)
+    with pytest.warns(UserWarning, match='RuntimeError'):
+        await asyncio.sleep(0.1)
 
     assert not data_writer.is_running
-    assert not log_writer.is_running
-    assert warn_mock.call_count == 2
 
 
 async def test_retry_generate_connection(influx_mock, app, client):
@@ -183,8 +173,3 @@ async def test_downsample(influx_mock, app, client, fewer_max_points):
     assert influx_mock.write.call_count == 0
     influx_mock.create_database.side_effect = None
     await asyncio.sleep(0.1)
-
-
-async def test_skip_config(influx_mock, app_skip_config, client):
-    await asyncio.sleep(0.1)
-    assert influx_mock.create_database.call_count == 0

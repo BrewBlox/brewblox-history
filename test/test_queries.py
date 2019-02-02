@@ -7,7 +7,7 @@ from unittest.mock import call
 import pytest
 from asynctest import CoroutineMock
 
-from brewblox_history import queries
+from brewblox_history import influx, queries
 
 TESTED = queries.__name__
 
@@ -73,132 +73,6 @@ def field_keys_result():
     }
 
 
-@pytest.fixture
-def values_result():
-    return {
-        'results': [
-            {
-                'statement_id': 0,
-                'series': [
-                    {
-                        'name': 'average_temperature',
-                        'columns': [
-                            'time',
-                            'degrees',
-                            'location'
-                        ],
-                        'values': [
-                            [
-                                1439856000000000000,
-                                82,
-                                'coyote_creek'
-                            ],
-                            [
-                                1439856000000000000,
-                                85,
-                                'santa_monica'
-                            ],
-                            [
-                                1439856360000000000,
-                                73,
-                                'coyote_creek'
-                            ],
-                            [
-                                1439856360000000000,
-                                74,
-                                'santa_monica'
-                            ],
-                            [
-                                1439856720000000000,
-                                86,
-                                'coyote_creek'
-                            ],
-                            [
-                                1439856720000000000,
-                                80,
-                                'santa_monica'
-                            ],
-                            [
-                                1439857080000000000,
-                                89,
-                                'coyote_creek'
-                            ],
-                            [
-                                1439857080000000000,
-                                81,
-                                'santa_monica'
-                            ],
-                            [
-                                1439857440000000000,
-                                77,
-                                'coyote_creek'
-                            ],
-                            [
-                                1439857440000000000,
-                                81,
-                                'santa_monica'
-                            ]
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-
-
-@pytest.fixture
-def count_result():
-    return {
-        'results': [
-            {
-                'statement_id': 0,
-                'series': [
-                    {
-                        'name': 'brewblox_10s.autogen.pressure',
-                        'columns': ['time', 'k1'],
-                        'values': [[0, 600]],
-                    }],
-            },
-            {
-                'statement_id': 1,
-                'series': [
-                    {
-                        'name': 'brewblox_1m.autogen.pressure',
-                        'columns': ['time', 'k1'],
-                        'values': [[0, 200]],
-                    }],
-            },
-            {
-                'statement_id': 2,
-                'series': [
-                    {
-                        'name': 'brewblox_10m.autogen.pressure',
-                        'columns': ['time', 'k1'],
-                        'values': [[0, 100]],
-                    }],
-            },
-            {
-                'statement_id': 3,
-                'series': [
-                    {
-                        'name': 'brewblox_1h.autogen.pressure',
-                        'columns': ['time', 'k1'],
-                        'values': [[0, 20]],
-                    }],
-            },
-            {
-                'statement_id': 4,
-                'series': [
-                    {
-                        'name': 'brewblox_6h.autogen.pressure',
-                        'columns': ['time', 'k1'],
-                        'values': [[0, 5]],
-                    }],
-            },
-        ]
-    }
-
-
 async def test_custom_query(app, client, query_mock):
     content = {
         'database': 'brewblox',
@@ -229,9 +103,9 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
     await client.post('/query/objects', json={'database': 'the_internet'})
 
     assert query_mock.mock_calls == [
-        call(query='show field keys'),
-        call(query='show field keys from "{measurement}"', measurement='measy'),
-        call(database='the_internet', query='show field keys')
+        call(query='SHOW FIELD KEYS'),
+        call(query='SHOW FIELD KEYS FROM "{measurement}"', measurement='measy'),
+        call(database='the_internet', query='SHOW FIELD KEYS')
     ]
 
 
@@ -243,9 +117,12 @@ async def test_single_key(app, client, query_mock, values_result):
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {fields} from "{measurement}"',
+        query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+        fields='"single"',
+        database=influx.DEFAULT_DATABASE,
+        policy=influx.DEFAULT_POLICY,
         measurement='m',
-        fields='"single"'
+        prefix='',
     )
 
 
@@ -257,9 +134,12 @@ async def test_quote_fields(app, client, query_mock, values_result):
     assert res.status == 200
 
     query_mock.assert_called_once_with(
-        query='select {fields} from "{measurement}"',
+        query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+        fields='"first","second"',
+        database=influx.DEFAULT_DATABASE,
+        policy=influx.DEFAULT_POLICY,
         measurement='m',
-        fields='"first","second"'
+        prefix='',
     )
 
 
@@ -278,64 +158,75 @@ async def test_value_data_format(app, client, query_mock, values_result):
 @pytest.mark.parametrize('input_args, query_str', [
     (
         {},
-        'select {fields} from "{measurement}"'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
     ),
     (
         {'fields': ['you']},
-        'select {fields} from "{measurement}"'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
     ),
     (
         {'fields': ['key1', 'key2']},
-        'select {fields} from "{measurement}"'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
     ),
     (
         {'database': 'db'},
-        'select {fields} from "{measurement}"'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from "{measurement}" where time >= {start}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= {start}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'duration': 'some time'},
-        'select {fields} from "{measurement}" where time >= {start} and time <= {start} + {duration}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= {start} AND time <= {start} + {duration}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'end': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from "{measurement}" where time >= {start} and time <= {end}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= {start} AND time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00'},
-        'select {fields} from "{measurement}" where time <= {end}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00', 'duration': 'bright side'},
-        'select {fields} from "{measurement}" where time >= {end} - {duration} and time <= {end}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= {end} - {duration} AND time <= {end}'
     ),
     (
         {'duration': 'eternal'},
-        'select {fields} from "{measurement}" where time >= now() - {duration}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= now() - {duration}'
     ),
     (
         {'fields': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
-        'select {fields} from "{measurement}" order by {order_by} limit {limit}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'ORDER BY {order_by} LIMIT {limit}'
     ),
     (
         {'duration': 'eternal', 'limit': 1},
-        'select {fields} from "{measurement}" where time >= now() - {duration} limit {limit}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= now() - {duration} LIMIT {limit}'
     ),
     (
         {'database': 'db', 'fields': ['something', 'else'],
             'start': '2018-10-10T12:00:00.000+02:00', 'duration': '1d', 'limit': 5},
-        'select {fields} from "{measurement}" where time >= {start} and time <= {start} + {duration} limit {limit}'
+        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'WHERE time >= {start} AND time <= {start} + {duration} LIMIT {limit}'
     )
 ])
 async def test_get_values(input_args, query_str, app, client, influx_mock, query_mock, values_result):
     query_mock.side_effect = lambda **kwargs: values_result
 
-    # Measurement is a required argument
-    # Always add it to input_args
+    # Add default args
+    input_args.setdefault('prefix', '')
+    input_args.setdefault('policy', influx.DEFAULT_POLICY)
     input_args.setdefault('measurement', 'emmy')
+
     call_args = await queries.configure_params(influx_mock, **input_args)
     query_mock.reset_mock()
 
@@ -384,21 +275,31 @@ async def test_error_response(app, client, query_mock):
     assert 'Whoops.' in await resp.text()
 
 
-@pytest.mark.parametrize('approx_points, used_database', [
+@pytest.mark.parametrize('approx_points, used_policy, used_prefix', [
     # exact values
-    (600, 'brewblox_10s'),
-    (200, 'brewblox_1m'),
-    (100, 'brewblox_10m'),
-    (20, 'brewblox_1h'),
-    (5, 'brewblox_6h'),
+    (600, 'autogen', ''),
+    (200, 'downsample_1m', 'm_'),
+    (100, 'downsample_10m', 'm_m_'),
+    (20, 'downsample_1h', 'm_m_m_'),
+    (5, 'downsample_6h', 'm_m_m_m_'),
     # approximate
-    (10000, 'brewblox_10s'),
-    (500, 'brewblox_10s'),
-    (40, 'brewblox_1h'),
-    (1, 'brewblox_6h'),
+    (10000, 'autogen', ''),
+    (500, 'autogen', ''),
+    (40, 'downsample_1h', 'm_m_m_'),
+    (1, 'downsample_6h', 'm_m_m_m_'),
 ])
-async def test_select_downsampling_database(approx_points, used_database, app, client, query_mock, count_result):
-    query_mock.side_effect = lambda **kwargs: count_result
+async def test_select_downsampling_database(
+        approx_points,
+        used_policy,
+        used_prefix,
+        app,
+        client,
+        query_mock,
+        policies_result,
+        count_result,
+        values_result):
+    query_mock.side_effect = [policies_result, count_result, values_result]
+
     resp = await client.post('/query/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
@@ -408,28 +309,33 @@ async def test_select_downsampling_database(approx_points, used_database, app, c
     print(query_mock.call_args_list)
 
     assert query_mock.call_args_list == [
+        call('SHOW RETENTION POLICIES ON "brewblox"'),
+        call(';'.join([
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            for policy in [
+                'autogen',
+                'downsample_1m',
+                'downsample_10m',
+                'downsample_1h',
+                'downsample_6h'
+            ]
+        ])),
         call(
-            query=';'.join([
-                f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
-                for duration in ['10s', '1m', '10m', '1h', '6h']
-            ]),
-            database='brewblox',
-        ),
-        call(
-            query='select {fields} from "{measurement}"',
-            fields='"mean_k1","mean_k2"',
+            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+            fields=f'"{used_prefix}k1","{used_prefix}k2"',
             measurement='m',
-            database=used_database,
-            downsampled=True,
+            database='brewblox',
+            policy=used_policy,
+            prefix=used_prefix,
         )
     ]
 
 
-async def test_empty_downsampling(app, client, query_mock):
+async def test_empty_downsampling(app, client, query_mock, policies_result, values_result):
     """
-    Default to highest resolution (10s) when no rows are found in database
+    Default to highest resolution (autogen) when no rows are found in database
     """
-    query_mock.side_effect = lambda **kwargs: {'results': [{'series': []}]}
+    query_mock.side_effect = [policies_result, {'results': [{'statement_id': id} for i in range(5)]}, values_result]
     resp = await client.post('/query/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
@@ -438,18 +344,34 @@ async def test_empty_downsampling(app, client, query_mock):
     assert resp.status == 200
 
     assert query_mock.call_args_list == [
+        call('SHOW RETENTION POLICIES ON "brewblox"'),
+        call(';'.join([
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            for policy in [
+                'autogen',
+                'downsample_1m',
+                'downsample_10m',
+                'downsample_1h',
+                'downsample_6h'
+            ]
+        ])),
         call(
-            query=';'.join([
-                f'select count(*) from "brewblox_{duration}".autogen."m" fill(0)'
-                for duration in ['10s', '1m', '10m', '1h', '6h']
-            ]),
-            database='brewblox',
-        ),
-        call(
-            query='select {fields} from "{measurement}"',
-            fields='"mean_k1","mean_k2"',
+            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+            fields=f'"k1","k2"',
             measurement='m',
-            database='brewblox_10s',
-            downsampled=True,
+            database=influx.DEFAULT_DATABASE,
+            policy=influx.DEFAULT_POLICY,
+            prefix='',
         )
     ]
+
+
+async def test_configure(app, client, query_mock):
+    query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
+    resp = await client.post('/query/configure')
+    assert resp.status == 200
+    assert (await resp.json()) == {'configure': True}
+    # 5 * create / alter policy
+    # 5 * drop / create continuous query
+    # 1 * status query
+    assert query_mock.call_count == (5*2) + (4*2) + 1
