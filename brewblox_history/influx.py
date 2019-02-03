@@ -18,7 +18,7 @@ MAX_PENDING_POINTS = 5000
 
 DEFAULT_DATABASE = 'brewblox'
 DEFAULT_POLICY = 'autogen'
-COMBINED_POINTS_FIELD = ' Influx downsampling rate'
+COMBINED_POINTS_FIELD = ' Combined Influx points'
 
 
 def setup(app):
