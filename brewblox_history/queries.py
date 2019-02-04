@@ -335,8 +335,8 @@ async def configure_db(client: influx.QueryClient) -> dict:
     await create_policy('autogen', '1d', '6h')
     await create_policy('downsample_1m', 'INF', '1w')
     await create_policy('downsample_10m', 'INF', '1w')
-    await create_policy('downsample_1h', 'INF', '1w')
-    await create_policy('downsample_6h', 'INF', '1w')
+    await create_policy('downsample_1h', 'INF', '4w')
+    await create_policy('downsample_6h', 'INF', '4w')
 
     await create_cquery('1m', 'autogen')
     await create_cquery('10m', 'downsample_1m')
