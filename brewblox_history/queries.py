@@ -172,7 +172,7 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
         # The continuous query that fills the downsampled database inserts "key" as "m_key"
         prefix = params.get('prefix')
         if prefix:
-            response['columns'] = [re.sub(prefix, '', v) for v in response.get('columns', [])]
+            response['columns'] = [re.sub(prefix, '', v, count=1) for v in response.get('columns', [])]
     except KeyError:
         # Nothing found
         response = dict()
