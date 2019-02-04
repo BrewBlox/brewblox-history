@@ -302,7 +302,7 @@ async def test_select_downsampling_database(
 
     resp = await client.post('/query/values', json={
         'measurement': 'm',
-        'fields': ['k1', 'k2'],
+        'fields': ['k1', 'k2', used_prefix + 'v'],
         'approx_points': approx_points
     })
     assert resp.status == 200
@@ -322,7 +322,7 @@ async def test_select_downsampling_database(
         ])),
         call(
             query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            fields=f'"{used_prefix}k1","{used_prefix}k2"',
+            fields=f'"{used_prefix}k1","{used_prefix}k2","{used_prefix}{used_prefix}v"',
             measurement='m',
             database='brewblox',
             policy=used_policy,
