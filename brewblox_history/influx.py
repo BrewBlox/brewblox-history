@@ -1,7 +1,8 @@
 import asyncio
 import datetime
+import warnings
 from concurrent.futures import CancelledError
-from typing import Iterator, Union
+from typing import Iterator, List, Union
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
@@ -16,11 +17,8 @@ RECONNECT_INTERVAL_S = 1
 MAX_PENDING_POINTS = 5000
 
 DEFAULT_DATABASE = 'brewblox'
-LOG_DATABASE = 'brewblox_logs'
-
-DEFAULT_RETENTION = '1w'
-DOWNSAMPLE_INTERVALS = ['10s', '1m', '10m', '1h', '6h']
-DOWNSAMPLE_RETENTION = ['INF', 'INF', 'INF', 'INF', 'INF']
+DEFAULT_POLICY = 'autogen'
+COMBINED_POINTS_FIELD = ' Combined Influx points'
 
 
 def setup(app):
@@ -29,13 +27,6 @@ def setup(app):
     features.add(app,
                  InfluxWriter(app, database=DEFAULT_DATABASE),
                  'data_writer'
-                 )
-
-    features.add(app,
-                 InfluxWriter(app,
-                              database=LOG_DATABASE,
-                              downsampling=False),
-                 'log_writer'
                  )
 
 
@@ -47,10 +38,6 @@ def get_data_writer(app) -> 'InfluxWriter':
     return features.get(app, InfluxWriter, 'data_writer')
 
 
-def get_log_writer(app) -> 'InfluxWriter':
-    return features.get(app, InfluxWriter, 'log_writer')
-
-
 class QueryClient(features.ServiceFeature):
     """Offers an InfluxDB client for running queries against.
 
@@ -60,6 +47,7 @@ class QueryClient(features.ServiceFeature):
     def __init__(self, app: web.Application):
         super().__init__(app)
         self._client: InfluxDBClient = None
+        self._policies: List[str] = []
 
     async def startup(self, app: web.Application):
         await self.shutdown()
@@ -89,15 +77,12 @@ class InfluxWriter(features.ServiceFeature):
 
     def __init__(self,
                  app: web.Application,
-                 database: str = None,
-                 retention: str = None,
-                 downsampling: bool = True):
+                 database: str = None):
         super().__init__(app)
 
         self._pending = []
         self._database = database or DEFAULT_DATABASE
-        self._retention = retention or DEFAULT_RETENTION
-        self._downsampling = downsampling
+        self._policies = []
         self._task: asyncio.Task = None
 
     def __str__(self):
@@ -115,51 +100,12 @@ class InfluxWriter(features.ServiceFeature):
         await scheduler.cancel_task(self.app, self._task)
         self._task = None
 
-    async def _on_connected(self, client: InfluxDBClient):
-        """
-        Sets database configuration.
-        This is done every time a new connection is made.
-        """
-
-        if self.app['config']['skip_influx_config']:
-            return
-
-        # Creates default database, and limits retention
-        await client.create_database(db=self._database)
-        await client.query(f'ALTER RETENTION POLICY autogen ON {self._database} duration {self._retention}')
-
-        if self._downsampling:
-            # Data is downsampled multiple times, and stored in separate databases
-            # Database naming scheme is <database_name>_<downsample_interval>
-            #
-            # Influx does not support selecting mean(*) while retaining original field names
-            # (See: https://github.com/influxdata/influxdb/issues/7332)
-            # 'SELECT mean(*) AS "mean"' will result in every field being prefixed with "mean_"
-            for interval, retention, prev_interval in zip(
-                DOWNSAMPLE_INTERVALS,
-                DOWNSAMPLE_RETENTION,
-                [''] + DOWNSAMPLE_INTERVALS,
-            ):
-                downsampled_db = f'{self._database}_{interval}'
-                source_db = f'{self._database}_{prev_interval}' if prev_interval else self._database
-                db_query = f'CREATE DATABASE {downsampled_db} WITH DURATION {retention}'
-                cquery = f'''
-                CREATE CONTINUOUS QUERY "cq_downsample_{interval}" ON "{source_db}"
-                BEGIN
-                    SELECT mean(*) AS "mean" INTO "{downsampled_db}"."autogen".:MEASUREMENT
-                    FROM /.*/
-                    GROUP BY time({interval}),*
-                END
-                '''
-                await client.query(db_query)
-                await client.query(cquery)
-
     async def _run(self):
         write_interval = self.app['config']['write_interval']
         # _generate_connections will keep yielding new connections
         async for client in self._generate_connections():
             try:
-                await self._on_connected(client)
+                await client.create_database(db=self._database)
 
                 while True:
                     await asyncio.sleep(write_interval)
@@ -177,13 +123,14 @@ class InfluxWriter(features.ServiceFeature):
                 break
 
             except ClientConnectionError as ex:
-                LOGGER.warn(f'Database connection lost {self} {ex}')
+                warnings.warn(f'Database connection lost {self} {ex}')
                 await asyncio.sleep(RECONNECT_INTERVAL_S)
                 continue
 
             except Exception as ex:
-                LOGGER.warn(f'Exiting {self} {ex}')
-                raise ex
+                warnings.warn(f'{type(ex).__name__}({ex})')
+                await asyncio.sleep(RECONNECT_INTERVAL_S)
+                continue
 
     async def _generate_connections(self) -> Iterator[InfluxDBClient]:
         """Iterator that keeps yielding new (connected) clients.
@@ -204,7 +151,7 @@ class InfluxWriter(features.ServiceFeature):
 
     async def write_soon(self,
                          measurement: str,
-                         fields: dict = None,
+                         fields: dict,
                          tags: dict = None,
                          time: Union[datetime.datetime, str] = None):
         """Schedules a data point for writing.
@@ -212,10 +159,11 @@ class InfluxWriter(features.ServiceFeature):
         Actual writing is done in a timed interval, to batch database writing.
         If the remote is not connected, the data point is kept locally until reconnect.
         """
+        fields[COMBINED_POINTS_FIELD] = 1
         point = dict(
             time=time or datetime.datetime.today(),
             measurement=measurement,
-            fields=fields or dict(),
+            fields=fields,
             tags=tags or dict()
         )
         self._pending.append(point)
@@ -224,5 +172,5 @@ class InfluxWriter(features.ServiceFeature):
         # To avoid large gaps, the data is downsampled: only every 2nd element is kept
         # Note: using this approach, resolution decreases with age (downsampled more often)
         if len(self._pending) >= MAX_PENDING_POINTS:
-            LOGGER.warn(f'Downsampling pending points...')
+            warnings.warn(f'Downsampling pending points...')
             self._pending = self._pending[::2]
