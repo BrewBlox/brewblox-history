@@ -113,7 +113,7 @@ async def test_single_key(app, client, query_mock, values_result):
     """Asserts that ['single'] is split to 'single', and not 's,i,n,g,l,e'"""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['single']})
+    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['single'], 'approx_points': 0})
     assert res.status == 200
 
     query_mock.assert_called_once_with(
@@ -130,7 +130,11 @@ async def test_quote_fields(app, client, query_mock, values_result):
     """field keys must be quoted with double quotes. '*' is an exception."""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm', 'fields': ['first', 'second']})
+    res = await client.post('/query/values', json={
+        'measurement': 'm',
+        'fields': ['first', 'second'],
+        'approx_points': 0,
+    })
     assert res.status == 200
 
     query_mock.assert_called_once_with(
@@ -146,7 +150,7 @@ async def test_quote_fields(app, client, query_mock, values_result):
 async def test_value_data_format(app, client, query_mock, values_result):
     query_mock.side_effect = lambda **kwargs: values_result
 
-    res = await client.post('/query/values', json={'measurement': 'm'})
+    res = await client.post('/query/values', json={'measurement': 'm', 'approx_points': 0})
     assert res.status == 200
 
     data = await res.json()
@@ -226,6 +230,7 @@ async def test_get_values(input_args, query_str, app, client, influx_mock, query
     input_args.setdefault('prefix', '')
     input_args.setdefault('policy', influx.DEFAULT_POLICY)
     input_args.setdefault('measurement', 'emmy')
+    input_args.setdefault('approx_points', 0)
 
     call_args = await queries.configure_params(influx_mock, **input_args)
     query_mock.reset_mock()
@@ -262,7 +267,7 @@ async def test_unparsable_timeframe(app, client):
 async def test_no_values_found(app, client, query_mock):
     query_mock.side_effect = {'results': []}
 
-    res = await client.post('/query/values', json={'measurement': 'm'})
+    res = await client.post('/query/values', json={'measurement': 'm', 'approx_points': 0})
     assert res.status == 200
     assert 'values' not in await res.json()
 

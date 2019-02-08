@@ -53,7 +53,7 @@ async def test_subscribe(app, client, influx_mock, policies_result, count_result
 async def test_subscribe_single(app, client, influx_mock, values_result):
     influx_mock.query = CoroutineMock(return_value=values_result)
     async with client.get('/sse/values', params=urlencode(
-        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00'},
+        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
     )) as resp:
         assert await resp.content.read(6) == b'data: '
@@ -67,7 +67,7 @@ async def test_subscribe_single(app, client, influx_mock, values_result):
 async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
     influx_mock.query = CoroutineMock(side_effect=[{}])
     res = await client.get('/sse/values', params=urlencode(
-        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00'},
+        {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
     ))
     assert res.status == 200
