@@ -20,7 +20,7 @@ LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
 
-DEFAULT_APPROX_POINTS = 100
+DEFAULT_APPROX_POINTS = 200
 
 
 def setup(app: web.Application):
@@ -119,7 +119,7 @@ async def configure_params(client: influx.QueryClient,
                            end: Optional[str] = None,
                            order_by: Optional[str] = None,
                            limit: Optional[int] = None,
-                           approx_points: Optional[int] = None,
+                           approx_points: Optional[int] = DEFAULT_APPROX_POINTS,
                            **_  # allow, but discard all other kwargs
                            ) -> dict:
     def nanosecond_date(dt):
@@ -132,12 +132,13 @@ async def configure_params(client: influx.QueryClient,
     duration = duration if not duration else duration.replace(' ', '')
     end = nanosecond_date(end)
 
-    # Workaround for https://github.com/influxdata/influxdb/issues/7332
-    # The continuous query that fills the downsampled database inserts "key" as "m_key"
-    approx_points = int(approx_points or 0)
+    approx_points = int(approx_points)
     select_params = _prune(locals(), {'measurement', 'database',
                                       'approx_points', 'start', 'duration', 'end'})
     policy, prefix = await select_downsampling_policy(client, **select_params)
+
+    # Workaround for https://github.com/influxdata/influxdb/issues/7332
+    # The continuous query that fills the downsampled database inserts "key" as "m_key"
     fields = format_fields(fields, prefix)
 
     return _prune(locals(), {'query', 'database', 'policy', 'measurement', 'fields',
