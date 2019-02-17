@@ -107,7 +107,7 @@ def format_fields(keys: List[str], prefix: str = '') -> str:
     Each successive downsample adds a prefix to inserted values.
     We must also add this prefix when selecting fields.
     """
-    return ','.join([f'"{prefix}{key}"' if key is not '*' else key for key in keys])
+    return ','.join([f'"{prefix}{key}"' if key != '*' else key for key in keys])
 
 
 async def configure_params(client: influx.QueryClient,
