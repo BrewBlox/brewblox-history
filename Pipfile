@@ -18,12 +18,9 @@ pytest-mock = "*"
 pytest-aiohttp = "*"
 asynctest = "*"
 aioresponses = "*"
-"flake8" = "~=3.6.0"
+"flake8" = "*"
 "autopep8" = "*"
 brewblox-tools = "*"
 
 [requires]
 python_version = "3.7"
-
-[pipenv]
-allow_prereleases = true
