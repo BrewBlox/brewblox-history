@@ -11,7 +11,7 @@ from typing import Awaitable, Callable, List, Optional, Tuple
 import dpath
 from aiohttp import web
 from aioinflux import InfluxDBError
-from brewblox_service import brewblox_logger
+from brewblox_service import brewblox_logger, strex
 from dateutil import parser as date_parser
 
 from brewblox_history import influx
@@ -35,8 +35,8 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
     except asyncio.CancelledError:  # pragma: no cover
         raise
     except Exception as ex:
-        LOGGER.error(f'REST error: {type(ex).__name__}({ex})', exc_info=request.app['config']['debug'])
-        return web.json_response({'error': f'{type(ex).__name__}({ex})'}, status=500)
+        LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
+        return web.json_response({'error': strex(ex)}, status=500)
 
 
 ########################################################################################################

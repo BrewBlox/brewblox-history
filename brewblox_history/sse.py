@@ -7,7 +7,7 @@ import json
 
 from aiohttp import hdrs, web
 from aiohttp_sse import sse_response
-from brewblox_service import brewblox_logger, features
+from brewblox_service import brewblox_logger, features, strex
 
 from brewblox_history import influx, queries
 
@@ -161,7 +161,7 @@ async def subscribe(request: web.Request) -> web.Response:
                 raise  # Client closed the connection, or server is shutting down
 
             except Exception as ex:
-                msg = f'Exiting SSE with error: {type(ex).__name__}({ex})'
+                msg = f'Exiting SSE with error: {strex(ex)}'
                 LOGGER.error(msg)
                 break
 
