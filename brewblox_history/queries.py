@@ -302,6 +302,45 @@ async def select_values(client: influx.QueryClient, **kwargs) -> dict:
     return await run_query(client, query, params)
 
 
+async def select_metrics(client: influx.QueryClient,
+                         measurement: str,
+                         fields: List[str],
+                         database: str = None,
+                         duration: str = None,
+                         ):
+    """
+    Selects the most recent value from all chosen fields.
+    Returns a list of dicts, with keys:
+        - field
+        - time
+        - value
+    """
+    database = database or influx.DEFAULT_DATABASE
+    duration = duration or '30d'
+    policy = influx.DEFAULT_POLICY
+
+    queries = [
+        f'SELECT last("{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
+        for field in fields
+    ]
+    query_response = await client.query(';'.join(queries))
+    LOGGER.info(query_response)
+
+    def extract(field, result):
+        try:
+            time, val = result['series'][0]['values'][0]
+        except KeyError:
+            time, val = [None, None]
+        return {'field': field, 'time': time, 'value': val}
+
+    query_result = [
+        extract(field, result)
+        for field, result in zip(fields, query_response['results'])
+    ]
+
+    return query_result
+
+
 async def configure_db(client: influx.QueryClient) -> dict:
     async def create_policy(name: str, duration: str, shard_duration: str):
         with suppress(InfluxDBError):
@@ -464,6 +503,42 @@ async def values_query(request: web.Request) -> web.Response:
                     example: 100
     """
     return await _do_with_handler(select_values, request)
+
+
+@routes.post('/query/metrics')
+async def metrics_query(request: web.Request) -> web.Response:
+    """
+    ---
+    tags:
+    - History
+    summary: Get current object values
+    operationId: history.query.metrics
+    produces:
+    - application/json
+    parameters:
+    -
+        in: body
+        name: body
+        required: true
+        schema:
+            type: object
+            properties:
+                database:
+                    type: string
+                    required: false
+                measurement:
+                    type: string
+                    required: true
+                fields:
+                    type: list
+                    required: true
+                    example: ["actuator-1/value"]
+                duration:
+                    type: string
+                    required: false
+                    example: "10m"
+    """
+    return await _do_with_handler(select_metrics, request)
 
 
 @routes.post('/query/configure')
