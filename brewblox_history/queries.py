@@ -1,51 +1,22 @@
 """
-Converts REST endpoints into Influx queries
+Builds Influx queries
 """
 
-import asyncio
 import re
 import time
 from contextlib import suppress
-from typing import Awaitable, Callable, List, Optional, Tuple
+from typing import Awaitable, List, Optional, Tuple
 
 import dpath
-from aiohttp import web
 from aioinflux import InfluxDBError
-from brewblox_service import brewblox_logger, strex
+from brewblox_service import brewblox_logger
 from dateutil import parser as date_parser
 
 from brewblox_history import influx
 
 LOGGER = brewblox_logger(__name__)
-routes = web.RouteTableDef()
-
 
 DEFAULT_APPROX_POINTS = 200
-
-
-def setup(app: web.Application):
-    app.router.add_routes(routes)
-    app.middlewares.append(controller_error_middleware)
-
-
-@web.middleware
-async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
-    try:
-        return await handler(request)
-    except asyncio.CancelledError:  # pragma: no cover
-        raise
-    except Exception as ex:
-        LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
-        return web.json_response({'error': strex(ex)}, status=500)
-
-
-########################################################################################################
-
-
-async def _do_with_handler(func: Callable, request: web.Request) -> web.Response:
-    args = await request.json()
-    response = await func(influx.get_client(request.app), **args)
-    return web.json_response(response)
 
 
 def _prune(vals: dict, relevant: set) -> dict:
@@ -302,6 +273,44 @@ async def select_values(client: influx.QueryClient, **kwargs) -> dict:
     return await run_query(client, query, params)
 
 
+async def select_last_values(client: influx.QueryClient,
+                             measurement: str,
+                             fields: List[str],
+                             database: str = None,
+                             duration: str = None,
+                             ):
+    """
+    Selects the most recent value from all chosen fields.
+    Returns a list of dicts, with keys:
+        - field
+        - time
+        - value
+    """
+    database = database or influx.DEFAULT_DATABASE
+    duration = duration or '30d'
+    policy = influx.DEFAULT_POLICY
+
+    queries = [
+        f'SELECT last("{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
+        for field in fields
+    ]
+    query_response = await client.query(query=';'.join(queries))
+
+    def extract(field, result):
+        try:
+            time, val = result['series'][0]['values'][0]
+        except KeyError:
+            time, val = [None, None]
+        return {'field': field, 'time': time, 'value': val}
+
+    query_result = [
+        extract(field, result)
+        for field, result in zip(fields, query_response['results'])
+    ]
+
+    return query_result
+
+
 async def configure_db(client: influx.QueryClient) -> dict:
     async def create_policy(name: str, duration: str, shard_duration: str):
         with suppress(InfluxDBError):
@@ -349,133 +358,3 @@ async def configure_db(client: influx.QueryClient) -> dict:
         SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; \
         SHOW CONTINUOUS QUERIES; \
         ')
-
-    ########################################################################################################
-
-
-@routes.post('/_debug/query')
-async def custom_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Query InfluxDB
-    description: Send a string query to the database.
-    operationId: history.query
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        description: Query
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                query:
-                    type: string
-    """
-    return await _do_with_handler(raw_query, request)
-
-
-@routes.post('/query/objects')
-async def objects_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: List objects
-    description: List available measurements and objects in database.
-    operationId: history.query.objects
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                    required: false
-                measurement:
-                    type: string
-                    required: false
-    """
-    return await _do_with_handler(show_keys, request)
-
-
-@routes.post('/query/values')
-async def values_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Get object values
-    operationId: history.query.values
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                    required: false
-                measurement:
-                    type: string
-                    required: true
-                fields:
-                    type: list
-                    required: true
-                    example: ["*"]
-                start:
-                    type: string
-                    required: false
-                    example: "1439873640000000000"
-                duration:
-                    type: string
-                    required: false
-                    example: "10m"
-                end:
-                    type: string
-                    required: false
-                    example: "1439873640000000000"
-                limit:
-                    type: int
-                    required: false
-                    example: 100
-                order_by:
-                    type: string
-                    required: false
-                    example: "time asc"
-                approx_points:
-                    type: int
-                    required: false
-                    example: 100
-    """
-    return await _do_with_handler(select_values, request)
-
-
-@routes.post('/query/configure')
-async def configure_db_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Configure database
-    operationId: history.query.configure
-    produces:
-    - application/json
-    """
-    return web.json_response(
-        await configure_db(influx.get_client(request.app)))

@@ -60,7 +60,7 @@ def _cors_headers(request):
 
 
 @routes.get('/sse/values')
-async def subscribe(request: web.Request) -> web.Response:
+async def subscribe_values(request: web.Request) -> web.Response:
     """
     ---
     tags:
@@ -118,14 +118,18 @@ async def subscribe(request: web.Request) -> web.Response:
             required: false
     """
     client = influx.get_client(request.app)
-    params = {k: request.query.get(k) for k in [
-        'database',
-        'measurement',
-        'approx_points',
-        'start',
-        'duration',
-        'end',
-    ] if k in request.query}
+    params = {
+        k: request.query.get(k)
+        for k in [
+            'database',
+            'measurement',
+            'approx_points',
+            'start',
+            'duration',
+            'end',
+        ]
+        if k in request.query
+    }
     if 'fields' in request.query:
         params['fields'] = request.query.getall('fields')
 
@@ -161,7 +165,84 @@ async def subscribe(request: web.Request) -> web.Response:
                 raise  # Client closed the connection, or server is shutting down
 
             except Exception as ex:
-                msg = f'Exiting SSE with error: {strex(ex)}'
+                msg = f'Exiting values SSE with error: {strex(ex)}'
+                LOGGER.error(msg)
+                break
+
+    return resp
+
+
+@routes.get('/sse/last_values')
+async def subscribe_last_values(request: web.Request) -> web.Response:
+    """
+    ---
+    tags:
+    - History
+    summary: Subscribe to updates of latest value in each field.
+    operationId: history.sse.last_values
+    produces:
+    - application/json
+    parameters:
+    -
+        in: query
+        name: database
+        schema:
+            type: string
+            required: false
+            example: "brewblox"
+    -
+        in: query
+        name: measurement
+        schema:
+            type: string
+            required: true
+            example: "sparkey"
+    -
+        in: query
+        name: fields
+        schema:
+            type: list
+            required: true
+            example: ["actuator-1/value"]
+    -
+        in: query
+        name: duration
+        schema:
+            type: string
+            required: false
+    """
+    client = influx.get_client(request.app)
+    params = {
+        k: request.query.get(k)
+        for k in [
+            'database',
+            'measurement',
+            'duration',
+        ]
+    }
+    params['fields'] = request.query.getall('fields')
+    alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
+    poll_interval = request.app['config']['poll_interval']
+
+    def check_shutdown():
+        if alert.shutdown_signal.is_set():
+            raise asyncio.CancelledError()
+
+    async with sse_response(request, headers=_cors_headers(request)) as resp:
+        while True:
+            try:
+                check_shutdown()
+                data = await queries.select_last_values(client, **params)
+                await resp.send(json.dumps(data))
+
+                check_shutdown()
+                await asyncio.sleep(poll_interval)
+
+            except asyncio.CancelledError:
+                raise  # Client closed the connection, or server is shutting down
+
+            except Exception as ex:
+                msg = f'Exiting last_values SSE with error: {strex(ex)}'
                 LOGGER.error(msg)
                 break
 
