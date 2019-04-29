@@ -7,7 +7,7 @@ from unittest.mock import call
 import pytest
 from asynctest import CoroutineMock
 
-from brewblox_history import influx, queries
+from brewblox_history import influx, queries, query_api
 
 TESTED = queries.__name__
 
@@ -26,7 +26,7 @@ def query_mock(influx_mock):
 
 @pytest.fixture
 async def app(app, mocker, query_mock):
-    queries.setup(app)
+    query_api.setup(app)
     return app
 
 
@@ -380,3 +380,32 @@ async def test_configure(app, client, query_mock):
     # 5 * drop / create continuous query
     # 1 * status query
     assert query_mock.call_count == (5*2) + (4*2) + 1
+
+
+async def test_select_last_values(app, client, query_mock, last_values_result):
+    query_mock.side_effect = lambda **kwargs: last_values_result
+
+    resp = await client.post('/query/last_values', json={
+        'measurement': 'sparkey',
+        'fields': ['val1', 'val2', 'val_none'],
+
+    })
+    assert resp.status == 200
+    retval = await resp.json()
+    assert retval == [
+        {
+            'field': 'val1',
+            'time': 1556527890131178000,
+            'value': 0,
+        },
+        {
+            'field': 'val2',
+            'time': 1556527890131178000,
+            'value': 100,
+        },
+        {
+            'field': 'val_none',
+            'time': None,
+            'value': None,
+        },
+    ]

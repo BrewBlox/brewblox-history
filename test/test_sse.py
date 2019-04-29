@@ -88,3 +88,59 @@ async def test_cancel_subscriptions(app, client, influx_mock, values_result):
         client.get('/sse/values', params=urlencode({'measurement': 'm'}, doseq=True)),
         close_after(0.1)
     )
+
+
+async def test_last_values_sse(app, client, influx_mock, last_values_result):
+    influx_mock.query = CoroutineMock(return_value=last_values_result)
+    signal = features.get(app, sse.ShutdownAlert).shutdown_signal
+
+    expected = [
+        {
+            'field': 'val1',
+            'time': 1556527890131178000,
+            'value': 0,
+        },
+        {
+            'field': 'val2',
+            'time': 1556527890131178000,
+            'value': 100,
+        },
+        {
+            'field': 'val_none',
+            'time': None,
+            'value': None,
+        },
+    ]
+    expected_len = len(json.dumps(expected))
+    prefix_len = len('data: ')
+
+    async with client.get(
+        '/sse/last_values',
+        params=urlencode(
+            {'measurement': 'sparkey', 'fields': ['val1', 'val2', 'val_none']},
+            doseq=True)) as resp:
+        resp_values = []
+
+        while len(resp_values) < 3:
+            read_val = (await resp.content.read(prefix_len + expected_len)).decode()
+            # Skip new line characters
+            if read_val.rstrip():
+                resp_values.append(json.loads(read_val[prefix_len:]))
+
+        assert resp_values == [expected, expected, expected]
+
+        signal.set()
+        await asyncio.sleep(0.1)
+
+    assert resp.status == 200
+
+
+async def test_last_values_sse_error(app, client, influx_mock):
+    influx_mock.query = CoroutineMock(side_effect=RuntimeError)
+
+    resp = await client.get(
+        '/sse/last_values',
+        params=urlencode(
+            {'measurement': 'sparkey', 'fields': ['val1', 'val2', 'val_none']},
+            doseq=True))
+    assert resp.status == 200  # stream responses return status before content

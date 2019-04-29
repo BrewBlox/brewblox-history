@@ -172,14 +172,14 @@ async def subscribe_values(request: web.Request) -> web.Response:
     return resp
 
 
-@routes.get('/sse/metrics')
-async def subscribe_metrics(request: web.Request) -> web.Response:
+@routes.get('/sse/last_values')
+async def subscribe_last_values(request: web.Request) -> web.Response:
     """
     ---
     tags:
     - History
     summary: Subscribe to updates of latest value in each field.
-    operationId: history.sse.metrics
+    operationId: history.sse.last_values
     produces:
     - application/json
     parameters:
@@ -232,7 +232,7 @@ async def subscribe_metrics(request: web.Request) -> web.Response:
         while True:
             try:
                 check_shutdown()
-                data = await queries.select_metrics(client, **params)
+                data = await queries.select_last_values(client, **params)
                 await resp.send(json.dumps(data))
 
                 check_shutdown()
@@ -242,7 +242,7 @@ async def subscribe_metrics(request: web.Request) -> web.Response:
                 raise  # Client closed the connection, or server is shutting down
 
             except Exception as ex:
-                msg = f'Exiting metrics SSE with error: {strex(ex)}'
+                msg = f'Exiting last_values SSE with error: {strex(ex)}'
                 LOGGER.error(msg)
                 break
 
