@@ -7,7 +7,7 @@ from typing import Iterator, List, Union
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
-from brewblox_service import brewblox_logger, features, scheduler
+from brewblox_service import brewblox_logger, features, scheduler, strex
 
 LOGGER = brewblox_logger(__name__)
 
@@ -128,7 +128,7 @@ class InfluxWriter(features.ServiceFeature):
                 continue
 
             except Exception as ex:
-                warnings.warn(f'{type(ex).__name__}({ex})')
+                warnings.warn(strex(ex))
                 await asyncio.sleep(RECONNECT_INTERVAL_S)
                 continue
 

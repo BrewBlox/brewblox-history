@@ -247,3 +247,34 @@ def values_result():
             }
         ]
     }
+
+
+@pytest.fixture
+def last_values_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'sparkey',
+                        'columns': ['time', 'last'],
+                        'values': [[1556527890131178000, 0]],
+                    },
+                ],
+            },
+            {
+                'statement_id': 1,
+                'series': [
+                    {
+                        'name': 'sparkey',
+                        'columns': ['time', 'last'],
+                        'values': [[1556527890131178000, 100]],
+                    },
+                ],
+            },
+            {
+                'statement_id': 2,
+            },
+        ],
+    }
