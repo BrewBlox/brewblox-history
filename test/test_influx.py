@@ -86,6 +86,10 @@ async def test_query_client(app, client, influx_mock):
     assert data == retval
 
 
+async def test_ping(app, client, influx_mock):
+    await influx.get_client(app).ping()
+
+
 async def test_running_writer(influx_mock, app, client, mocker):
     writer = influx.get_data_writer(app)
 
