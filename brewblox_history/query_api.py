@@ -67,6 +67,21 @@ async def custom_query(request: web.Request) -> web.Response:
     return await _do_with_handler(raw_query, request)
 
 
+@routes.get('/ping')
+async def ping(request: web.Request) -> web.Response:
+    """
+    ---
+    tags:
+    - History
+    summary: Ping InfluxDB
+    operationId: history.ping
+    produces:
+    - application/json
+    """
+    await influx.get_client(request.app).ping()
+    return web.json_response({'ok': True})
+
+
 @routes.post('/query/objects')
 async def objects_query(request: web.Request) -> web.Response:
     """

@@ -58,6 +58,9 @@ class QueryClient(features.ServiceFeature):
             await self._client.close()
             self._client = None
 
+    async def ping(self):
+        return await self._client.ping()
+
     async def query(self, query: str, **kwargs):
         database = kwargs.get('database', DEFAULT_DATABASE)
         return await self._client.query(query.format(**kwargs), db=database)

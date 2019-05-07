@@ -73,6 +73,12 @@ def field_keys_result():
     }
 
 
+async def test_ping(app, client, influx_mock):
+    influx_mock.ping = CoroutineMock()
+    resp = await client.get('/ping')
+    assert resp.status == 200
+
+
 async def test_custom_query(app, client, query_mock):
     content = {
         'database': 'brewblox',
