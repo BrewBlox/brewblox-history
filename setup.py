@@ -4,6 +4,7 @@ setup(
     name='brewblox-history',
     use_scm_version={'local_scheme': lambda v: ''},
     long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     url='https://github.com/BrewBlox/brewblox-history',
     author='BrewPi',
     author_email='development@brewpi.com',
