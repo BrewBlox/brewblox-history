@@ -296,7 +296,7 @@ async def test_error_response(app, client, query_mock):
     # approximate
     (10000, 'autogen', ''),
     (500, 'autogen', ''),
-    (40, 'downsample_1h', 'm_m_m_'),
+    (40, 'downsample_10m', 'm_m_'),
     (1, 'downsample_6h', 'm_m_m_m_'),
 ])
 async def test_select_downsampling_database(
