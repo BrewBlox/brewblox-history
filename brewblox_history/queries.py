@@ -164,17 +164,18 @@ async def select_downsampling_policy(client: influx.QueryClient,
                                      ) -> Awaitable[Tuple[str, str]]:
     """
     Chooses the downsampling policy that will yield the optimum number of results when queried.
-    This is calculated by taking the request number of points (approx_points), and measurement count,
-    and dividing the highest value by the lowest.
+    This is done by requesting the number of returned points from each policy,
+    and choosing the policy that has the fewest points, but at least [approx_points] points.
 
-    The policy where this calculation yields the lowest value is chosen.
+    If no policies have more than [approx_points] points, the default (not downsampled) policy is chosen.
 
     Examples, for approx_points = 100:
         [20, 200] => 200
-        [90, 200] => 90
+        [90, 200] => 200
         [100, 200] => 100
-        [500, 200] => 200
-        [20, 600] => 20
+        [200, 500] => 200
+        [20, 600] => 600
+        [10, 20] => 20
 
     return name of the policy, and the prefix that should be added/stripped from fields in said policy
     """
@@ -199,7 +200,6 @@ async def select_downsampling_policy(client: influx.QueryClient,
 
     best_result = default_result
     best_count = None
-    best_score = None
 
     for policy, result in zip(all_policies, query_response['results']):
         try:
@@ -211,15 +211,9 @@ async def select_downsampling_policy(client: influx.QueryClient,
         count = series['values'][0][1]  # time is at 0
         prefix = field_name[len('count_'):field_name.find(influx.COMBINED_POINTS_FIELD)]
 
-        # Calculate approximation score by comparing actual point count to 'approx_points'
-        # Values are compared by dividing the highest by the lowest
-        # Lower scores are better
-        score = max(approx_points, count) / min(approx_points, count)
-
-        if best_score is None or score < best_score:
+        if best_count is None or (count >= approx_points and count < best_count):
             best_result = (policy, prefix)
             best_count = count
-            best_score = score
 
     LOGGER.info(f'Selected {database}.{best_result[0]}.{measurement}, target={approx_points}, actual={best_count}')
     return best_result
