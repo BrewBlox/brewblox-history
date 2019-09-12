@@ -16,7 +16,6 @@ ARG service_info=UNKNOWN
 ENV SERVICE_INFO=${service_info}
 
 COPY --from=base /wheeley /wheeley
-COPY ./config /app/config
 
 RUN pip3 install --no-index --find-links=/wheeley brewblox-history \
     && rm -rf /wheeley \
