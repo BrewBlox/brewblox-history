@@ -90,6 +90,7 @@ async def configure_params(client: influx.QueryClient,
                            end: Optional[str] = None,
                            order_by: Optional[str] = None,
                            limit: Optional[int] = None,
+                           policy: Optional[str] = None,
                            approx_points: Optional[int] = DEFAULT_APPROX_POINTS,
                            **_  # allow, but discard all other kwargs
                            ) -> dict:
@@ -104,7 +105,7 @@ async def configure_params(client: influx.QueryClient,
     end = nanosecond_date(end)
 
     approx_points = int(approx_points)
-    select_params = _prune(locals(), {'measurement', 'database',
+    select_params = _prune(locals(), {'measurement', 'database', 'policy',
                                       'approx_points', 'start', 'duration', 'end'})
     policy, prefix = await select_downsampling_policy(client, **select_params)
 
@@ -157,6 +158,7 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
 async def select_downsampling_policy(client: influx.QueryClient,
                                      measurement: str,
                                      database: str,
+                                     policy: Optional[str] = None,
                                      approx_points: Optional[int] = None,
                                      start: Optional[str] = None,
                                      duration: Optional[str] = None,
@@ -190,8 +192,9 @@ async def select_downsampling_policy(client: influx.QueryClient,
         'results/0/series/0/values/*/0')
 
     queries = [
-        f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "{database}"."{policy}"."{measurement}"{time_frame}'
-        for policy in all_policies
+        f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) ' +
+        f'FROM "{database}"."{policy_opt}"."{measurement}"{time_frame}'
+        for policy_opt in all_policies
     ]
     query = ';'.join(queries)
 
@@ -201,7 +204,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
     best_result = default_result
     best_count = None
 
-    for policy, result in zip(all_policies, query_response['results']):
+    for policy_opt, result in zip(all_policies, query_response['results']):
         try:
             series = result['series'][0]
         except KeyError:
@@ -211,11 +214,16 @@ async def select_downsampling_policy(client: influx.QueryClient,
         count = series['values'][0][1]  # time is at 0
         prefix = field_name[len('count_'):field_name.find(influx.COMBINED_POINTS_FIELD)]
 
-        if best_count is None or (count >= approx_points and count < best_count):
-            best_result = (policy, prefix)
+        if best_count is None or policy_opt == policy or (count >= approx_points and count < best_count):
+            best_result = (policy_opt, prefix)
             best_count = count
 
-    LOGGER.info(f'Selected {database}.{best_result[0]}.{measurement}, target={approx_points}, actual={best_count}')
+    LOGGER.info(', '.join([
+        f'Selected {database}.{best_result[0]}.{measurement}',
+        f'policy={policy}',
+        f'target={approx_points}',
+        f'actual={best_count}',
+    ]))
     return best_result
 
 
