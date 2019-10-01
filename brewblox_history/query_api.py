@@ -159,6 +159,10 @@ async def values_query(request: web.Request) -> web.Response:
                     type: string
                     required: false
                     example: "time asc"
+                policy:
+                    type: string
+                    required: false
+                    example: "downsample_1m"
                 approx_points:
                     type: int
                     required: false
