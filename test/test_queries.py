@@ -267,7 +267,7 @@ async def test_invalid_time_frame(app, client):
 async def test_unparsable_timeframe(app, client):
     res = await client.post('/query/values', json={'measurement': 'm', 'start': 'x'})
     assert res.status == 500
-    assert 'ValueError' in await res.text()
+    assert 'Error' in await res.text()
 
 
 async def test_no_values_found(app, client, query_mock):
