@@ -299,7 +299,7 @@ async def test_error_response(app, client, query_mock):
     (40, 'downsample_10m', 'm_m_'),
     (1, 'downsample_6h', 'm_m_m_m_'),
 ])
-async def test_select_downsampling_database(
+async def test_select_policy(
         approx_points,
         used_policy,
         used_prefix,
@@ -338,6 +338,48 @@ async def test_select_downsampling_database(
             database='brewblox',
             policy=used_policy,
             prefix=used_prefix,
+        )
+    ]
+
+
+async def test_select_sparse_policy(app, client, query_mock, policies_result, count_result, values_result):
+    """
+    If the data interval is sufficiently sparse, the autogen policy can contain less data than downsampled policies.
+    This will happen if
+    - all policies have less than approx_points
+    - requested period is > 24h (retention span of autogen)
+    In this scenario, downsample_1m will have more points than autogen.
+    """
+    count_result['results'][0]['series'][0]['values'][0][1] = 180  # was 600
+    query_mock.side_effect = [policies_result, count_result, values_result]
+
+    resp = await client.post('/query/values', json={
+        'measurement': 'm',
+        'fields': ['k1', 'k2'],
+        'approx_points': 300
+    })
+    assert resp.status == 200
+    print(query_mock.call_args_list)
+
+    assert query_mock.call_args_list == [
+        call('SHOW RETENTION POLICIES ON "brewblox"'),
+        call(';'.join([
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            for policy in [
+                'autogen',
+                'downsample_1m',
+                'downsample_10m',
+                'downsample_1h',
+                'downsample_6h'
+            ]
+        ])),
+        call(
+            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+            fields=f'"m_k1","m_k2"',
+            measurement='m',
+            database='brewblox',
+            policy='downsample_1m',
+            prefix='m_',
         )
     ]
 
