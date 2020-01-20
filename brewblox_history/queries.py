@@ -214,7 +214,9 @@ async def select_downsampling_policy(client: influx.QueryClient,
         count = series['values'][0][1]  # time is at 0
         prefix = field_name[len('count_'):field_name.find(influx.COMBINED_POINTS_FIELD)]
 
-        if best_count is None or policy_opt == policy or (count >= approx_points and count < best_count):
+        if best_count is None or policy_opt == policy \
+            or (count >= approx_points and count < best_count) \
+                or (best_count < approx_points and count > best_count):
             best_result = (policy_opt, prefix)
             best_count = count
 
