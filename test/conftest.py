@@ -27,8 +27,7 @@ def app_config() -> dict:
         'host': 'localhost',
         'port': 1234,
         'debug': False,
-        'broadcast_exchange': 'brewcast',
-        'logging_exchange': 'logcast',
+        'broadcast_exchange': 'brewcast.history',
         'write_interval': 5,
         'poll_interval': 5,
     }
