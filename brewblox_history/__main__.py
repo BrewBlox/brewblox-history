@@ -7,13 +7,14 @@ from brewblox_service import brewblox_logger, events, scheduler, service
 from brewblox_history import influx, query_api, relays, sse
 
 LOGGER = brewblox_logger(__name__)
+OLD_EXCHANGE = 'brewcast'
 
 
 def create_parser(default_name='history'):
     parser = service.create_parser(default_name=default_name)
     parser.add_argument('--broadcast-exchange',
                         help='Eventbus exchange to which device services broadcast their state. [%(default)s]',
-                        default='brewcast')
+                        default='brewcast.history')
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
                         default=5,
@@ -35,6 +36,10 @@ def main():
     sse.setup(app)
     relays.setup(app)
 
+    relays.get_data_relay(app).subscribe(
+        exchange_name=OLD_EXCHANGE,
+        routing='#'
+    )
     relays.get_data_relay(app).subscribe(
         exchange_name=app['config']['broadcast_exchange'],
         routing='#'
