@@ -1,12 +1,12 @@
 import asyncio
 import datetime
 import warnings
-from concurrent.futures import CancelledError
 from typing import Iterator, List, Union
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
+
 from brewblox_service import brewblox_logger, features, scheduler, strex
 
 LOGGER = brewblox_logger(__name__)
@@ -122,7 +122,7 @@ class InfluxWriter(features.ServiceFeature):
                     LOGGER.debug(f'Pushed {len(self._pending)} points to database')
                     self._pending = []
 
-            except CancelledError:
+            except asyncio.CancelledError:
                 break
 
             except ClientConnectionError as ex:

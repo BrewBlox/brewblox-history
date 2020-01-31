@@ -7,12 +7,12 @@ import time
 from contextlib import suppress
 from typing import Awaitable, List, Optional, Tuple
 
-import dpath
+import dpath.util as dpath
 from aioinflux import InfluxDBError
-from brewblox_service import brewblox_logger
 from dateutil import parser as date_parser
 
 from brewblox_history import influx
+from brewblox_service import brewblox_logger
 
 LOGGER = brewblox_logger(__name__)
 
@@ -140,7 +140,7 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
 
     try:
         # Only support single-measurement queries
-        response = dpath.util.get(query_response, 'results/0/series/0')
+        response = dpath.get(query_response, 'results/0/series/0')
         # Workaround for https://github.com/influxdata/influxdb/issues/7332
         # The continuous query that fills the downsampled database inserts "key" as "m_key"
         prefix = params.get('prefix')
@@ -187,7 +187,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
         return default_result
 
     time_frame = _find_time_frame(start, duration, end)
-    all_policies = dpath.util.values(
+    all_policies = dpath.values(
         await client.query(f'SHOW RETENTION POLICIES ON "{database}"'),
         'results/0/series/0/values/*/0')
 
@@ -260,12 +260,12 @@ async def show_keys(client: influx.QueryClient,
 
     response = dict()
 
-    for path, meas_name in dpath.util.search(
+    for path, meas_name in dpath.search(
             query_response, 'results/*/series/*/name', yielded=True, dirs=False):
 
         # results/[index]/series/[index]/values/*/0
         values_glob = '/'.join(path.split('/')[:-1] + ['values', '*', '0'])
-        response[meas_name] = dpath.util.values(query_response, values_glob)
+        response[meas_name] = dpath.values(query_response, values_glob)
 
     return response
 
