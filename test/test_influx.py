@@ -3,14 +3,13 @@ Tests brewblox_history.influx
 """
 
 import asyncio
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp.client_exceptions import ClientConnectionError
-from asynctest import CoroutineMock
-from brewblox_service import scheduler
 
 from brewblox_history import influx
+from brewblox_service import scheduler
 
 TESTED = influx.__name__
 
@@ -37,7 +36,7 @@ async def fewer_max_points(mocker):
 @pytest.fixture()
 def influx_mock(mocker):
     m = InfluxClientMock()
-    [setattr(m.return_value, f, CoroutineMock()) for f in [
+    [setattr(m.return_value, f, AsyncMock()) for f in [
         'ping',
         'create_database',
         'write',

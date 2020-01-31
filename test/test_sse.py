@@ -4,13 +4,13 @@ Tests brewblox_history.sse
 
 import asyncio
 import json
+from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
 import pytest
-from asynctest import CoroutineMock
-from brewblox_service import features
 
 from brewblox_history import sse
+from brewblox_service import features
 
 TESTED = sse.__name__
 
@@ -29,7 +29,7 @@ async def app(app, influx_mock):
 
 
 async def test_subscribe(app, client, influx_mock, policies_result, count_result, values_result):
-    influx_mock.query = CoroutineMock(side_effect=[
+    influx_mock.query = AsyncMock(side_effect=[
         policies_result,
         count_result,
         values_result,
@@ -51,7 +51,7 @@ async def test_subscribe(app, client, influx_mock, policies_result, count_result
 
 
 async def test_subscribe_single(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(return_value=values_result)
+    influx_mock.query = AsyncMock(return_value=values_result)
     async with client.get('/sse/values', params=urlencode(
         {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
@@ -65,7 +65,7 @@ async def test_subscribe_single(app, client, influx_mock, values_result):
 
 
 async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(side_effect=[{}])
+    influx_mock.query = AsyncMock(side_effect=[{}])
     res = await client.get('/sse/values', params=urlencode(
         {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
@@ -77,7 +77,7 @@ async def test_subscribe_single_no_data(app, client, influx_mock, values_result)
 
 
 async def test_cancel_subscriptions(app, client, influx_mock, values_result):
-    influx_mock.query = CoroutineMock(return_value=values_result)
+    influx_mock.query = AsyncMock(return_value=values_result)
     signal = features.get(app, sse.ShutdownAlert).shutdown_signal
 
     async def close_after(delay):
@@ -91,7 +91,7 @@ async def test_cancel_subscriptions(app, client, influx_mock, values_result):
 
 
 async def test_last_values_sse(app, client, influx_mock, last_values_result):
-    influx_mock.query = CoroutineMock(return_value=last_values_result)
+    influx_mock.query = AsyncMock(return_value=last_values_result)
     signal = features.get(app, sse.ShutdownAlert).shutdown_signal
 
     expected = [
@@ -136,7 +136,7 @@ async def test_last_values_sse(app, client, influx_mock, last_values_result):
 
 
 async def test_last_values_sse_error(app, client, influx_mock):
-    influx_mock.query = CoroutineMock(side_effect=RuntimeError)
+    influx_mock.query = AsyncMock(side_effect=RuntimeError)
 
     resp = await client.get(
         '/sse/last_values',
