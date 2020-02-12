@@ -2,10 +2,9 @@
 Tests history.queries
 """
 
-from unittest.mock import call
+from unittest.mock import AsyncMock, call
 
 import pytest
-from asynctest import CoroutineMock
 
 from brewblox_history import influx, queries, query_api
 
@@ -20,7 +19,7 @@ def influx_mock(mocker):
 
 @pytest.fixture
 def query_mock(influx_mock):
-    influx_mock.query = CoroutineMock(side_effect=lambda *args, **kwargs: {})
+    influx_mock.query = AsyncMock(side_effect=lambda *args, **kwargs: {})
     return influx_mock.query
 
 
@@ -74,7 +73,7 @@ def field_keys_result():
 
 
 async def test_ping(app, client, influx_mock):
-    influx_mock.ping = CoroutineMock()
+    influx_mock.ping = AsyncMock()
     resp = await client.get('/ping')
     assert resp.status == 200
 
