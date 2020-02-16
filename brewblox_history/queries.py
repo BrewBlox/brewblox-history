@@ -5,7 +5,7 @@ Builds Influx queries
 import re
 import time
 from contextlib import suppress
-from typing import Awaitable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import dpath.util as dpath
 from aioinflux import InfluxDBError
@@ -163,7 +163,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
                                      start: Optional[str] = None,
                                      duration: Optional[str] = None,
                                      end: Optional[str] = None,
-                                     ) -> Awaitable[Tuple[str, str]]:
+                                     ) -> Tuple[str, str]:
     """
     Chooses the downsampling policy that will yield the optimum number of results when queried.
     This is done by requesting the number of returned points from each policy,
@@ -282,7 +282,7 @@ async def select_last_values(client: influx.QueryClient,
                              fields: List[str],
                              database: str = None,
                              duration: str = None,
-                             ):
+                             ) -> List[dict]:
     """
     Selects the most recent value from all chosen fields.
     Returns a list of dicts, with keys:

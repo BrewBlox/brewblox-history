@@ -16,20 +16,20 @@ TESTED = sse.__name__
 
 
 @pytest.fixture
-def influx_mock(mocker):
+def m_influx(mocker):
     m = mocker.patch(TESTED + '.influx.get_client').return_value
     return m
 
 
 @pytest.fixture
-async def app(app, influx_mock):
+async def app(app, m_influx):
     app['config']['poll_interval'] = 0.001
     sse.setup(app)
     return app
 
 
-async def test_subscribe(app, client, influx_mock, policies_result, count_result, values_result):
-    influx_mock.query = AsyncMock(side_effect=[
+async def test_subscribe(app, client, m_influx, policies_result, count_result, values_result):
+    m_influx.query = AsyncMock(side_effect=[
         policies_result,
         count_result,
         values_result,
@@ -47,11 +47,11 @@ async def test_subscribe(app, client, influx_mock, policies_result, count_result
     fragments = [json.loads(v) for v in (await res.text()).split('data:') if v]
     assert len(fragments) == 2
     # get policies, get point count, 3 * query, 1 * query error
-    assert influx_mock.query.call_count == 5
+    assert m_influx.query.call_count == 5
 
 
-async def test_subscribe_single(app, client, influx_mock, values_result):
-    influx_mock.query = AsyncMock(return_value=values_result)
+async def test_subscribe_single(app, client, m_influx, values_result):
+    m_influx.query = AsyncMock(return_value=values_result)
     async with client.get('/sse/values', params=urlencode(
         {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
@@ -64,8 +64,8 @@ async def test_subscribe_single(app, client, influx_mock, values_result):
         assert actual == expected
 
 
-async def test_subscribe_single_no_data(app, client, influx_mock, values_result):
-    influx_mock.query = AsyncMock(side_effect=[{}])
+async def test_subscribe_single_no_data(app, client, m_influx, values_result):
+    m_influx.query = AsyncMock(side_effect=[{}])
     res = await client.get('/sse/values', params=urlencode(
         {'measurement': 'm', 'end': '2018-10-10T12:00:00.000+02:00', 'approx_points': 0},
         doseq=True
@@ -73,11 +73,11 @@ async def test_subscribe_single_no_data(app, client, influx_mock, values_result)
     assert res.status == 200
     pushed = await res.text()
     assert not pushed  # no data available
-    assert influx_mock.query.call_count == 1
+    assert m_influx.query.call_count == 1
 
 
-async def test_cancel_subscriptions(app, client, influx_mock, values_result):
-    influx_mock.query = AsyncMock(return_value=values_result)
+async def test_cancel_subscriptions(app, client, m_influx, values_result):
+    m_influx.query = AsyncMock(return_value=values_result)
     signal = features.get(app, sse.ShutdownAlert).shutdown_signal
 
     async def close_after(delay):
@@ -90,8 +90,8 @@ async def test_cancel_subscriptions(app, client, influx_mock, values_result):
     )
 
 
-async def test_last_values_sse(app, client, influx_mock, last_values_result):
-    influx_mock.query = AsyncMock(return_value=last_values_result)
+async def test_last_values_sse(app, client, m_influx, last_values_result):
+    m_influx.query = AsyncMock(return_value=last_values_result)
     signal = features.get(app, sse.ShutdownAlert).shutdown_signal
 
     expected = [
@@ -115,10 +115,11 @@ async def test_last_values_sse(app, client, influx_mock, last_values_result):
     prefix_len = len('data: ')
 
     async with client.get(
-        '/sse/last_values',
-        params=urlencode(
-            {'measurement': 'sparkey', 'fields': ['val1', 'val2', 'val_none']},
-            doseq=True)) as resp:
+            '/sse/last_values',
+            params=urlencode({
+                'measurement': 'sparkey',
+                'fields': ['val1', 'val2', 'val_none']
+            }, doseq=True)) as resp:
         resp_values = []
 
         while len(resp_values) < 3:
@@ -135,8 +136,8 @@ async def test_last_values_sse(app, client, influx_mock, last_values_result):
     assert resp.status == 200
 
 
-async def test_last_values_sse_error(app, client, influx_mock):
-    influx_mock.query = AsyncMock(side_effect=RuntimeError)
+async def test_last_values_sse_error(app, client, m_influx):
+    m_influx.query = AsyncMock(side_effect=RuntimeError)
 
     resp = await client.get(
         '/sse/last_values',
