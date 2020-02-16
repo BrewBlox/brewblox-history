@@ -65,14 +65,14 @@ async def test_runtime_construction(app, client):
     # App is running, objects should still be createable
     query_client = influx.QueryClient(app)
     await query_client.startup(app)
-    await query_client.shutdown()
-    await query_client.shutdown()
+    await query_client.shutdown(app)
+    await query_client.shutdown(app)
 
     writer = influx.InfluxWriter(app)
     await writer.startup(app)
-    assert writer.is_running
-    await writer.shutdown()
-    await writer.shutdown()
+    assert writer.active
+    await writer.shutdown(app)
+    await writer.shutdown(app)
 
 
 async def test_query_client(app, client, influx_mock):
@@ -99,7 +99,7 @@ async def test_running_writer(influx_mock, app, client, mocker):
     )
 
     await asyncio.sleep(0.1)
-    assert writer.is_running
+    assert writer.active
     assert not writer._pending
     assert influx_mock.write.call_count == 1
 
@@ -108,15 +108,14 @@ async def test_run_error(influx_mock, app, client, mocker):
     data_writer = influx.get_data_writer(app)
     influx_mock.ping.side_effect = RuntimeError
 
-    with pytest.warns(UserWarning, match='RuntimeError'):
-        await asyncio.sleep(0.1)
-
-    assert not data_writer.is_running
+    await asyncio.sleep(0.1)
+    assert data_writer.active
+    assert influx_mock.ping.call_count > 0
 
 
 async def test_retry_generate_connection(influx_mock, app, client):
     writer = influx.get_data_writer(app)
-    await writer.shutdown()
+    await writer.shutdown(app)
 
     influx_mock.ping.reset_mock()
     influx_mock.create_database.reset_mock()
@@ -127,7 +126,7 @@ async def test_retry_generate_connection(influx_mock, app, client):
     await asyncio.sleep(0.1)
 
     # generate_connections() keeps trying, but no success so far
-    assert writer.is_running
+    assert writer.active
     assert influx_mock.ping.call_count > 0
     assert influx_mock.create_database.call_count == 0
 
@@ -137,7 +136,7 @@ async def test_reconnect(influx_mock, app, client):
 
     influx_mock.create_database.side_effect = ClientConnectionError
 
-    await writer.shutdown()
+    await writer.shutdown(app)
     await writer.startup(app)
 
     await writer.write_soon(
@@ -148,12 +147,12 @@ async def test_reconnect(influx_mock, app, client):
 
     await asyncio.sleep(0.1)
     assert influx_mock.write.call_count == 0
-    assert writer.is_running
+    assert writer.active
 
     influx_mock.create_database.side_effect = [True]
 
     await asyncio.sleep(0.1)
-    assert writer.is_running
+    assert writer.active
     assert influx_mock.write.call_count == 1
 
 
@@ -161,7 +160,7 @@ async def test_downsample(influx_mock, app, client, fewer_max_points):
     influx_mock.create_database.side_effect = ClientConnectionError
 
     writer = influx.get_data_writer(app)
-    await writer.shutdown()
+    await writer.shutdown(app)
     await writer.startup(app)
 
     for i in range(2 * influx.MAX_PENDING_POINTS + 1):

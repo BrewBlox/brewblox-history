@@ -2,16 +2,15 @@
 REST endpoints for queries
 """
 
-import asyncio
-from typing import Callable
+from typing import Awaitable
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import influx
 from brewblox_history.queries import (configure_db, raw_query,
                                       select_last_values, select_values,
                                       show_keys)
+from brewblox_service import brewblox_logger, strex
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -26,14 +25,12 @@ def setup(app: web.Application):
 async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
     try:
         return await handler(request)
-    except asyncio.CancelledError:  # pragma: no cover
-        raise
     except Exception as ex:
         LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
         return web.json_response({'error': strex(ex)}, status=500)
 
 
-async def _do_with_handler(func: Callable, request: web.Request) -> web.Response:
+async def _do_with_handler(func: Awaitable, request: web.Request) -> web.Response:
     args = await request.json()
     response = await func(influx.get_client(request.app), **args)
     return web.json_response(response)
