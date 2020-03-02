@@ -7,12 +7,13 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 from brewblox_history import relays
+from brewblox_service.testing import response
 
 TESTED = relays.__name__
 
 
 @pytest.fixture
-def data_writer_mock(mocker):
+def m_data_writer(mocker):
     call_mock = mocker.patch(TESTED + '.influx.get_data_writer')
     writer_mock = call_mock.return_value
     writer_mock.write_soon = AsyncMock()
@@ -20,36 +21,32 @@ def data_writer_mock(mocker):
 
 
 @pytest.fixture
-def listener_mock(mocker):
+def m_listener(mocker):
     call_mock = mocker.patch(TESTED + '.events.get_listener')
     return call_mock.return_value
 
 
 @pytest.fixture
-async def app(app, mocker, data_writer_mock, listener_mock):
+def m_subscribe(mocker):
+    m = mocker.patch(TESTED + '.subscribe')
+    return m
+
+
+@pytest.fixture
+async def app(app, mocker, m_data_writer, m_listener):
     relays.setup(app)
     return app
 
 
-async def test_subscribe_endpoint(app, client, mocker):
-    data_spy = mocker.spy(relays.get_data_relay(app), 'subscribe')
-
-    assert (await client.post('/subscribe', json={
+async def test_subscribe_endpoint(app, client, m_subscribe):
+    await response(client.post('/subscribe', json={
         'exchange': 'brewblox',
         'routing': 'controller.#'
-    })).status == 200
-    assert data_spy.call_count == 1
+    }))
+    assert m_subscribe.call_count == 1
 
 
-async def test_relay_subscribe(app, client, listener_mock):
-    relay = relays.get_data_relay(app)
-    relay.subscribe('arg', kw='kwarg')
-    listener_mock.subscribe.assert_called_once_with(
-        'arg', kw='kwarg', on_message=relay._on_event_message)
-    listener_mock.reset_mock()
-
-
-async def test_data_relay(app, client, data_writer_mock):
+async def test_data_relay(app, client, m_data_writer):
     relay = relays.get_data_relay(app)
 
     data = {
@@ -83,11 +80,11 @@ async def test_data_relay(app, client, data_writer_mock):
         'single/text': 'value',
     }
 
-    await relay._on_event_message(None, 'route.key', data)
-    await relay._on_event_message(None, 'route.single', 'value')
-    await relay._on_event_message(None, 'route', nested_empty_data)
+    await relay.on_event_message(None, 'route.key', data)
+    await relay.on_event_message(None, 'route.single', 'value')
+    await relay.on_event_message(None, 'route', nested_empty_data)
 
-    assert data_writer_mock.write_soon.call_args_list == [
+    assert m_data_writer.write_soon.call_args_list == [
         call(measurement='route', fields=flat_data),
         call(measurement='route', fields=flat_value)
     ]

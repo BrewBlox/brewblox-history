@@ -1,13 +1,13 @@
 import asyncio
 import datetime
 import warnings
-from typing import Iterator, List, Union
+from typing import List, Union
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
 
-from brewblox_service import brewblox_logger, features, scheduler, strex
+from brewblox_service import brewblox_logger, features, repeater
 
 LOGGER = brewblox_logger(__name__)
 
@@ -19,23 +19,6 @@ MAX_PENDING_POINTS = 5000
 DEFAULT_DATABASE = 'brewblox'
 DEFAULT_POLICY = 'autogen'
 COMBINED_POINTS_FIELD = ' Combined Influx points'
-
-
-def setup(app):
-    features.add(app, QueryClient(app))
-
-    features.add(app,
-                 InfluxWriter(app, database=DEFAULT_DATABASE),
-                 'data_writer'
-                 )
-
-
-def get_client(app) -> 'QueryClient':
-    return features.get(app, QueryClient)
-
-
-def get_data_writer(app) -> 'InfluxWriter':
-    return features.get(app, InfluxWriter, 'data_writer')
 
 
 class QueryClient(features.ServiceFeature):
@@ -66,7 +49,7 @@ class QueryClient(features.ServiceFeature):
         return await self._client.query(query.format(**kwargs), db=database)
 
 
-class InfluxWriter(features.ServiceFeature):
+class InfluxWriter(repeater.RepeaterFeature):
     """Batch writer of influx data points.
 
     Offers the write_soon() function where data points can be scheduled for writing to the database.
@@ -86,28 +69,21 @@ class InfluxWriter(features.ServiceFeature):
         self._pending = []
         self._database = database or DEFAULT_DATABASE
         self._policies = []
-        self._task: asyncio.Task = None
 
     def __str__(self):
         return f'<{type(self).__name__} {self._database}>'
 
-    @property
-    def is_running(self) -> bool:
-        return self._task and not self._task.done()
+    async def prepare(self):
+        """Overrides RepeaterFeature.prepare()"""
+        pass
 
-    async def startup(self, app: web.Application):
-        await self.shutdown()
-        self._task = await scheduler.create_task(app, self._run())
-
-    async def shutdown(self, *_):
-        await scheduler.cancel_task(self.app, self._task)
-        self._task = None
-
-    async def _run(self):
+    async def run(self):
+        """Overrides RepeaterFeature.run()"""
         write_interval = self.app['config']['write_interval']
-        # _generate_connections will keep yielding new connections
-        async for client in self._generate_connections():
-            try:
+        try:
+            async with InfluxDBClient(host=INFLUX_HOST, db=self._database) as client:
+                await client.ping()
+                LOGGER.info(f'Connected {self}')
                 await client.create_database(db=self._database)
 
                 while True:
@@ -122,35 +98,13 @@ class InfluxWriter(features.ServiceFeature):
                     LOGGER.debug(f'Pushed {len(self._pending)} points to database')
                     self._pending = []
 
-            except asyncio.CancelledError:
-                break
+        except ClientConnectionError as ex:
+            LOGGER.warn(f'Database connection failed {self} {ex}')
+            await asyncio.sleep(RECONNECT_INTERVAL_S)
 
-            except ClientConnectionError as ex:
-                warnings.warn(f'Database connection lost {self} {ex}')
-                await asyncio.sleep(RECONNECT_INTERVAL_S)
-                continue
-
-            except Exception as ex:
-                warnings.warn(strex(ex))
-                await asyncio.sleep(RECONNECT_INTERVAL_S)
-                continue
-
-    async def _generate_connections(self) -> Iterator[InfluxDBClient]:
-        """Iterator that keeps yielding new (connected) clients.
-
-        It will only yield an influx client if it could successfully ping the remote.
-        There is no limit to total number of clients yielded.
-        """
-        while True:
-            try:
-                async with InfluxDBClient(host=INFLUX_HOST, db=self._database) as client:
-                    await client.ping()
-                    LOGGER.info(f'Connected {self}')
-                    yield client
-
-            except ClientConnectionError:
-                # Sleep and try reconnect
-                await asyncio.sleep(RECONNECT_INTERVAL_S)
+        except Exception:
+            await asyncio.sleep(RECONNECT_INTERVAL_S)
+            raise
 
     async def write_soon(self,
                          measurement: str,
@@ -177,3 +131,16 @@ class InfluxWriter(features.ServiceFeature):
         if len(self._pending) >= MAX_PENDING_POINTS:
             warnings.warn(f'Downsampling pending points...')
             self._pending = self._pending[::2]
+
+
+def setup(app):
+    features.add(app, QueryClient(app))
+    features.add(app, InfluxWriter(app, database=DEFAULT_DATABASE))
+
+
+def get_client(app) -> QueryClient:
+    return features.get(app, QueryClient)
+
+
+def get_data_writer(app) -> InfluxWriter:
+    return features.get(app, InfluxWriter)

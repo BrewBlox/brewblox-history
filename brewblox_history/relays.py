@@ -5,23 +5,14 @@ Functionality for persisting eventbus messages to the database
 import collections
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, events, features
 
 from brewblox_history import influx
+from brewblox_service import brewblox_logger, events, features
 
 FLAT_SEPARATOR = '/'
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
-
-
-def setup(app):
-    features.add(app, DataRelay(app))
-    app.router.add_routes(routes)
-
-
-def get_data_relay(app) -> 'DataRelay':
-    return features.get(app, DataRelay)
 
 
 class DataRelay(features.ServiceFeature):
@@ -89,14 +80,6 @@ class DataRelay(features.ServiceFeature):
     async def shutdown(self, _):
         pass
 
-    def subscribe(self, *args, **kwargs):
-        """Adds relay behavior to subscription.
-
-        All arguments to this function are passed to brewblox_service.events.subscribe()
-        """
-        kwargs['on_message'] = self._on_event_message
-        self._listener.subscribe(*args, **kwargs)
-
     def _influx_formatted(self, d, parent_key='', sep='/'):
         """Converts a (nested) JSON dict to a flat, influx-ready dict
 
@@ -118,10 +101,10 @@ class DataRelay(features.ServiceFeature):
                 items.append((new_key, v))
         return dict(items)
 
-    async def _on_event_message(self,
-                                subscription: events.EventSubscription,
-                                routing: str,
-                                message: dict):
+    async def on_event_message(self,
+                               subscription: events.EventSubscription,
+                               routing: str,
+                               message: dict):
         # Routing is formatted as controller name followed by active sub-index
         # A complete push of the controller state is routed as just the controller name
         routing_list = routing.split('.')
@@ -135,6 +118,25 @@ class DataRelay(features.ServiceFeature):
 
         if data:
             await self._writer.write_soon(measurement=routing_list[0], fields=data)
+
+
+def setup(app: web.Application):
+    features.add(app, DataRelay(app))
+    app.router.add_routes(routes)
+
+
+def get_data_relay(app: web.Application) -> DataRelay:
+    return features.get(app, DataRelay)
+
+
+def subscribe(app: web.Application, exchange_name: str, routing: str):
+    """
+    Subscribe to exchange/routing with the callback being the data relay.
+    """
+    events.subscribe(app,
+                     exchange_name,
+                     routing,
+                     on_message=get_data_relay(app).on_event_message)
 
 
 @routes.post('/subscribe')
@@ -168,5 +170,5 @@ async def add_subscription(request: web.Request) -> web.Response:
     exchange = args['exchange']
     routing = args['routing']
 
-    get_data_relay(request.app).subscribe(exchange_name=exchange, routing=routing)
+    subscribe(request.app, exchange, routing)
     return web.Response()

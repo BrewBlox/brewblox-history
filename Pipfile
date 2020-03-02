@@ -16,10 +16,10 @@ pyyaml = "*"
 pytest-cov = "*"
 pytest-mock = "*"
 pytest-aiohttp = "*"
-aioresponses = "*"
 "flake8" = "*"
 "autopep8" = "*"
 brewblox-dev = "*"
+flake8-quotes = "*"
 
 [requires]
 python_version = "3.8"
