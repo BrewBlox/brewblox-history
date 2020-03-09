@@ -78,10 +78,10 @@
         },
         "brewblox-service": {
             "hashes": [
-                "sha256:01a1a0f2982d64a94911dd69ebf07e4e015b51ed2073571d6765d22164a599b6"
+                "sha256:5f1fd58123903eda2a43804b86af90abb36a0c0eb8f1eb31725ba05f8dbb12e2"
             ],
             "index": "pypi",
-            "version": "==0.23.1"
+            "version": "==0.23.2"
         },
         "cchardet": {
             "hashes": [
