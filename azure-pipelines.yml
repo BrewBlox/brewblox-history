@@ -24,7 +24,7 @@ steps:
 - task: UsePythonVersion@0
   inputs:
     addToPath: true
-    versionSpec: '3.8'
+    versionSpec: '3.7'
     architecture: 'x64'
 
 - bash: |
@@ -42,12 +42,11 @@ steps:
   displayName: Export build variables
 
 - bash: |
-    pip install pipenv
-    pipenv install --system --dev --deploy
-    python setup.py sdist
-  displayName: Build Python package
+    pip install poetry
+    poetry install
+  displayName: Install dependencies
 
-- bash: pytest
+- bash: poetry run pytest
   displayName: Run Pytest
 
 - bash: |
@@ -66,10 +65,9 @@ steps:
   displayName: Docker login
   condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
 
-- bash: |
-    pipenv lock --requirements > docker/requirements.txt
-    cp -rf dist/ docker/
-  displayName: Copy files to docker context
+- bash: bash ./before_build.sh
+  displayName: Run before_build.sh script
+  workingDirectory: docker
   condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
 
 - bash: >-

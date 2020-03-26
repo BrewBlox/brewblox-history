@@ -65,11 +65,7 @@ target/
 # pyenv
 .python-version
 .idea/
+.venv/
 
 # pytest
 .pytest_cache/
-
-# IDE local files
-.vscode/
-
-app/

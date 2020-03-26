@@ -2,12 +2,11 @@
 Tests brewblox_history.relays
 """
 
-from unittest.mock import AsyncMock, call
-
 import pytest
+from brewblox_service.testing import response
+from mock import AsyncMock, call
 
 from brewblox_history import relays
-from brewblox_service.testing import response
 
 TESTED = relays.__name__
 

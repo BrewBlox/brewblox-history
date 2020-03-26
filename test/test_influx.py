@@ -3,13 +3,13 @@ Tests brewblox_history.influx
 """
 
 import asyncio
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiohttp.client_exceptions import ClientConnectionError
+from brewblox_service import scheduler
+from mock import AsyncMock, Mock
 
 from brewblox_history import influx
-from brewblox_service import scheduler
 
 TESTED = influx.__name__
 

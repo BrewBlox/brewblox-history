@@ -7,9 +7,9 @@ import json
 
 from aiohttp import hdrs, web
 from aiohttp_sse import sse_response
+from brewblox_service import brewblox_logger, features, strex
 
 from brewblox_history import influx, queries
-from brewblox_service import brewblox_logger, features, strex
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -161,6 +161,9 @@ async def subscribe_values(request: web.Request) -> web.Response:
                 check_shutdown()
                 await asyncio.sleep(poll_interval)
 
+            except asyncio.CancelledError:
+                raise
+
             except Exception as ex:
                 msg = f'Exiting values SSE with error: {strex(ex)}'
                 LOGGER.error(msg)
@@ -234,6 +237,9 @@ async def subscribe_last_values(request: web.Request) -> web.Response:
 
                 check_shutdown()
                 await asyncio.sleep(poll_interval)
+
+            except asyncio.CancelledError:
+                raise
 
             except Exception as ex:
                 msg = f'Exiting last_values SSE with error: {strex(ex)}'
