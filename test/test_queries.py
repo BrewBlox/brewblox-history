@@ -2,12 +2,11 @@
 Tests history.queries
 """
 
-from unittest.mock import AsyncMock, call
-
 import pytest
+from brewblox_service.testing import response
+from mock import AsyncMock, call
 
 from brewblox_history import influx, queries, query_api
-from brewblox_service.testing import response
 
 TESTED = queries.__name__
 
