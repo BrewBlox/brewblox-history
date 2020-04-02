@@ -4,13 +4,13 @@ Tests brewblox_history.sse
 
 import asyncio
 import json
-from unittest.mock import AsyncMock
 from urllib.parse import urlencode
 
 import pytest
+from brewblox_service import features
 
 from brewblox_history import sse
-from brewblox_service import features
+from mock import AsyncMock
 
 TESTED = sse.__name__
 

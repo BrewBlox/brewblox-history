@@ -1,14 +1,13 @@
-FROM brewblox/brewblox-service:newest-tag as base
+FROM python:3.7 as base
 
 COPY ./dist /app/dist
 COPY ./requirements.txt /app/requirements.txt
 
 RUN pip3 install wheel \
-    && ls /wheeley-base \
-    && pip3 wheel --wheel-dir=/wheeley --find-links=/wheeley-base -r /app/requirements.txt \
+    && pip3 wheel --wheel-dir=/wheeley --extra-index-url=https://www.piwheels.org/simple -r /app/requirements.txt \
     && pip3 wheel --wheel-dir=/wheeley --find-links=/wheeley --no-index /app/dist/*
 
-FROM python:3.8-slim
+FROM python:3.7-slim
 EXPOSE 5000
 WORKDIR /app
 

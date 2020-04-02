@@ -6,7 +6,6 @@ from typing import List, Union
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
 from aioinflux import InfluxDBClient
-
 from brewblox_service import brewblox_logger, features, repeater
 
 LOGGER = brewblox_logger(__name__)
@@ -101,6 +100,9 @@ class InfluxWriter(repeater.RepeaterFeature):
         except ClientConnectionError as ex:
             LOGGER.warn(f'Database connection failed {self} {ex}')
             await asyncio.sleep(RECONNECT_INTERVAL_S)
+
+        except asyncio.CancelledError:
+            raise
 
         except Exception:
             await asyncio.sleep(RECONNECT_INTERVAL_S)
