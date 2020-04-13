@@ -9,10 +9,10 @@ from typing import List, Optional, Tuple
 
 import dpath.util as dpath
 from aioinflux import InfluxDBError
+from brewblox_service import brewblox_logger
 from dateutil import parser as date_parser
 
 from brewblox_history import influx
-from brewblox_service import brewblox_logger
 
 LOGGER = brewblox_logger(__name__)
 
@@ -315,7 +315,7 @@ async def select_last_values(client: influx.QueryClient,
     return query_result
 
 
-async def configure_db(client: influx.QueryClient) -> dict:
+async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
     async def create_policy(name: str, duration: str, shard_duration: str):
         with suppress(InfluxDBError):
             await client.query(f' \
@@ -357,8 +357,11 @@ async def configure_db(client: influx.QueryClient) -> dict:
     await create_cquery('1h', 'downsample_10m')
     await create_cquery('6h', 'downsample_1h')
 
-    return await client.query(f' \
-        SHOW DATABASES; \
-        SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; \
-        SHOW CONTINUOUS QUERIES; \
-        ')
+    if verbose:
+        return await client.query(f' \
+            SHOW DATABASES; \
+            SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; \
+            SHOW CONTINUOUS QUERIES; \
+            ')
+    else:
+        return {}

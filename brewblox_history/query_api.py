@@ -2,15 +2,16 @@
 REST endpoints for queries
 """
 
+from json import JSONDecodeError
 from typing import Awaitable
 
 from aiohttp import web
+from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import influx
 from brewblox_history.queries import (configure_db, raw_query,
                                       select_last_values, select_values,
                                       show_keys)
-from brewblox_service import brewblox_logger, strex
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -30,8 +31,13 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
         return web.json_response({'error': strex(ex)}, status=500)
 
 
-async def _do_with_handler(func: Awaitable, request: web.Request) -> web.Response:
-    args = await request.json()
+async def _do_with_handler(func: Awaitable, request: web.Request, default_args=...) -> web.Response:
+    try:
+        args = await request.json()
+    except JSONDecodeError:
+        if default_args is ...:
+            raise
+        args = default_args
     response = await func(influx.get_client(request.app), **args)
     return web.json_response(response)
 
@@ -214,6 +220,16 @@ async def configure_db_query(request: web.Request) -> web.Response:
     operationId: history.query.configure
     produces:
     - application/json
+    parameters:
+    -
+        in: body
+        name: body
+        required: false
+        schema:
+            type: object
+            properties:
+                verbose:
+                    type: boolean
+                    required: false
     """
-    return web.json_response(
-        await configure_db(influx.get_client(request.app)))
+    return await _do_with_handler(configure_db, request, {'verbose': False})
