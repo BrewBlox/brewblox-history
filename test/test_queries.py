@@ -435,7 +435,6 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
     resp = await response(client.post('/query/last_values', json={
         'measurement': 'sparkey',
         'fields': ['val1', 'val2', 'val_none'],
-
     }))
     assert resp == [
         {
@@ -454,3 +453,9 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
             'value': None,
         },
     ]
+
+    await response(client.post('/query/last_values', json={
+        'measurement': 'sparkey',
+        'fields': ['val1', 'val2', 'val_none'],
+        'policy': 'economic'
+    }), 500)
