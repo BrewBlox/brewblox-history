@@ -17,6 +17,13 @@ from brewblox_history import influx
 LOGGER = brewblox_logger(__name__)
 
 DEFAULT_APPROX_POINTS = 200
+POLICIES = [
+    'autogen',
+    'downsample_1m',
+    'downsample_10m',
+    'downsample_1h',
+    'downsample_6h',
+]
 
 
 def _prune(vals: dict, relevant: set) -> dict:
@@ -282,6 +289,7 @@ async def select_last_values(client: influx.QueryClient,
                              fields: List[str],
                              database: str = None,
                              duration: str = None,
+                             policy: str = None
                              ) -> List[dict]:
     """
     Selects the most recent value from all chosen fields.
@@ -292,10 +300,15 @@ async def select_last_values(client: influx.QueryClient,
     """
     database = database or influx.DEFAULT_DATABASE
     duration = duration or '30d'
-    policy = influx.DEFAULT_POLICY
+    policy = policy or influx.DEFAULT_POLICY
+
+    if policy not in POLICIES:
+        raise ValueError(f'Invalid policy "{policy}". Policy must be one of {POLICIES}')
+
+    prefix = 'm_' * POLICIES.index(policy)
 
     queries = [
-        f'SELECT last("{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
+        f'SELECT last("{prefix}{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
         for field in fields
     ]
     query_response = await client.query(query=';'.join(queries))
@@ -358,10 +371,10 @@ async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
     await create_cquery('6h', 'downsample_1h')
 
     if verbose:
-        return await client.query(f' \
-            SHOW DATABASES; \
-            SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; \
-            SHOW CONTINUOUS QUERIES; \
-            ')
+        return await client.query(
+            f'SHOW DATABASES; ' +
+            f'SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; ' +
+            f'SHOW CONTINUOUS QUERIES; '
+        )
     else:
         return {}

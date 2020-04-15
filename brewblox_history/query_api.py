@@ -206,6 +206,10 @@ async def last_values_query(request: web.Request) -> web.Response:
                     type: string
                     required: false
                     example: "10m"
+                policy:
+                    type: string
+                    required: false
+                    example: "downsample_1m"
     """
     return await _do_with_handler(select_last_values, request)
 
