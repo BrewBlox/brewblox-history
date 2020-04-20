@@ -8,9 +8,9 @@ from urllib.parse import urlencode
 
 import pytest
 from brewblox_service import features
+from mock import AsyncMock
 
 from brewblox_history import sse
-from mock import AsyncMock
 
 TESTED = sse.__name__
 
@@ -28,9 +28,8 @@ async def app(app, m_influx):
     return app
 
 
-async def test_subscribe(app, client, m_influx, policies_result, count_result, values_result):
+async def test_subscribe(app, client, m_influx, count_result, values_result):
     m_influx.query = AsyncMock(side_effect=[
-        policies_result,
         count_result,
         values_result,
         values_result,
@@ -46,8 +45,8 @@ async def test_subscribe(app, client, m_influx, policies_result, count_result, v
     # SSE prefixes output with 'data: '
     fragments = [json.loads(v) for v in (await res.text()).split('data:') if v]
     assert len(fragments) == 2
-    # get policies, get point count, 3 * query, 1 * query error
-    assert m_influx.query.call_count == 5
+    # get point count, 3 * query, 1 * query error
+    assert m_influx.query.call_count == 4
 
 
 async def test_subscribe_single(app, client, m_influx, values_result):
