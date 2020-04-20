@@ -28,7 +28,7 @@ POLICIES = [
 ]
 
 
-def _prune(vals: dict, relevant: set) -> dict:
+def _prune(vals: dict, relevant: List[str]) -> dict:
     """Creates a dict only containing meaningful and relevant key/value pairs.
 
     All pairs in the returned dict met three conditions:
@@ -166,6 +166,25 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
     return response
 
 
+def valid_policies(start: Optional[str] = None,
+                   duration: Optional[str] = None,
+                   end: Optional[str] = None,
+                   ) -> List[str]:
+    used_policies = POLICIES.copy()
+
+    # The autogen policy only keeps data for 24h
+    # Exclude autogen if start date is before yesterday
+    _yesterday = nanosecond_date(datetime.now() - timedelta(days=1))
+    _duration = parse_duration(duration or '0s') * 1e9
+    _end = end or nanosecond_date(datetime.now())
+    _start = start or (_end - _duration)
+
+    if _start < _yesterday:
+        used_policies = used_policies[1:]
+
+    return used_policies
+
+
 async def select_downsampling_policy(client: influx.QueryClient,
                                      measurement: str,
                                      database: str,
@@ -198,18 +217,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
         return default_result
 
     time_frame = _find_time_frame(start, duration, end)
-    used_policies = POLICIES.copy()
-
-    # The autogen policy only keeps data for 24h
-    # Exclude autogen if start date is before yesterday
-    _yesterday = nanosecond_date(datetime.now() - timedelta(days=1))
-    _duration = parse_duration(duration or '0s') * 1e9
-    _end = end or nanosecond_date(datetime.now())
-    _start = start or (_end - _duration)
-
-    if _start < _yesterday:
-        LOGGER.info('truncating used policies')
-        used_policies = used_policies[1:]
+    used_policies = valid_policies(start, duration, end)
 
     queries = [
         f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) ' +
@@ -243,6 +251,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
     LOGGER.info(', '.join([
         f'Selected {database}.{best_result[0]}.{measurement}',
         f'policy={policy}',
+        f'autogen_valid={"autogen" in used_policies}',
         f'target={approx_points}',
         f'actual={best_count}',
     ]))
