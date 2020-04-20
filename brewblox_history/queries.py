@@ -5,12 +5,14 @@ Builds Influx queries
 import re
 import time
 from contextlib import suppress
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 import dpath.util as dpath
 from aioinflux import InfluxDBError
 from brewblox_service import brewblox_logger
 from dateutil import parser as date_parser
+from pytimeparse import parse as parse_duration
 
 from brewblox_history import influx
 
@@ -26,7 +28,7 @@ POLICIES = [
 ]
 
 
-def _prune(vals: dict, relevant: set) -> dict:
+def _prune(vals: dict, relevant: List[str]) -> dict:
     """Creates a dict only containing meaningful and relevant key/value pairs.
 
     All pairs in the returned dict met three conditions:
@@ -88,6 +90,14 @@ def format_fields(keys: List[str], prefix: str = '') -> str:
     return ','.join([f'"{prefix}{key}"' if key != '*' else key for key in keys])
 
 
+def nanosecond_date(dt):
+    if isinstance(dt, str):
+        dt = date_parser.parse(dt)
+    if isinstance(dt, datetime):
+        dt = int(dt.timestamp() - time.timezone) * 10 ** 9 + dt.microsecond * 1000
+    return dt
+
+
 async def configure_params(client: influx.QueryClient,
                            measurement: str,
                            fields: Optional[List[str]] = ['*'],
@@ -101,27 +111,21 @@ async def configure_params(client: influx.QueryClient,
                            approx_points: Optional[int] = DEFAULT_APPROX_POINTS,
                            **_  # allow, but discard all other kwargs
                            ) -> dict:
-    def nanosecond_date(dt):
-        if isinstance(dt, str):
-            dt = date_parser.parse(dt)
-            return int(dt.timestamp() - time.timezone) * 10 ** 9 + dt.microsecond * 1000
-        return dt
-
     start = nanosecond_date(start)
     duration = duration if not duration else duration.replace(' ', '')
     end = nanosecond_date(end)
 
     approx_points = int(approx_points)
-    select_params = _prune(locals(), {'measurement', 'database', 'policy',
-                                      'approx_points', 'start', 'duration', 'end'})
+    select_params = _prune(locals(), ['measurement', 'database', 'policy',
+                                      'approx_points', 'start', 'duration', 'end'])
     policy, prefix = await select_downsampling_policy(client, **select_params)
 
     # Workaround for https://github.com/influxdata/influxdb/issues/7332
     # The continuous query that fills the downsampled database inserts "key" as "m_key"
     fields = format_fields(fields, prefix)
 
-    return _prune(locals(), {'query', 'database', 'policy', 'measurement', 'fields',
-                             'start', 'duration', 'end', 'order_by', 'limit', 'prefix'})
+    return _prune(locals(), ['query', 'database', 'policy', 'measurement', 'fields',
+                             'start', 'duration', 'end', 'order_by', 'limit', 'prefix'])
 
 
 def build_query(params: dict):
@@ -162,6 +166,25 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
     return response
 
 
+def valid_policies(start: Optional[str] = None,
+                   duration: Optional[str] = None,
+                   end: Optional[str] = None,
+                   ) -> List[str]:
+    used_policies = POLICIES.copy()
+
+    # The autogen policy only keeps data for 24h
+    # Exclude autogen if start date is before yesterday
+    _yesterday = nanosecond_date(datetime.now() - timedelta(days=1))
+    _duration = parse_duration(duration or '0s') * 1e9
+    _end = end or nanosecond_date(datetime.now())
+    _start = start or (_end - _duration)
+
+    if _start < _yesterday:
+        used_policies = used_policies[1:]
+
+    return used_policies
+
+
 async def select_downsampling_policy(client: influx.QueryClient,
                                      measurement: str,
                                      database: str,
@@ -194,24 +217,22 @@ async def select_downsampling_policy(client: influx.QueryClient,
         return default_result
 
     time_frame = _find_time_frame(start, duration, end)
-    all_policies = dpath.values(
-        await client.query(f'SHOW RETENTION POLICIES ON "{database}"'),
-        'results/0/series/0/values/*/0')
+    used_policies = valid_policies(start, duration, end)
 
     queries = [
         f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) ' +
         f'FROM "{database}"."{policy_opt}"."{measurement}"{time_frame}'
-        for policy_opt in all_policies
+        for policy_opt in used_policies
     ]
     query = ';'.join(queries)
 
-    params = _prune(locals(), {'start', 'duration', 'end'})
+    params = _prune(locals(), ['start', 'duration', 'end'])
     query_response = await client.query(query, **params)
 
     best_result = default_result
     best_count = None
 
-    for policy_opt, result in zip(all_policies, query_response['results']):
+    for policy_opt, result in zip(used_policies, query_response['results']):
         try:
             series = result['series'][0]
         except KeyError:
@@ -230,6 +251,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
     LOGGER.info(', '.join([
         f'Selected {database}.{best_result[0]}.{measurement}',
         f'policy={policy}',
+        f'autogen_valid={"autogen" in used_policies}',
         f'target={approx_points}',
         f'actual={best_count}',
     ]))
@@ -262,7 +284,7 @@ async def show_keys(client: influx.QueryClient,
     if measurement:
         query += ' FROM "{measurement}"'
 
-    params = _prune(locals(), {'query', 'database', 'measurement'})
+    params = _prune(locals(), ['query', 'database', 'measurement'])
     query_response = await client.query(**params)
 
     response = dict()
