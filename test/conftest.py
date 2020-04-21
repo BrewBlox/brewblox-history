@@ -7,10 +7,10 @@ Any fixtures declared here are available to all test functions in this directory
 import logging
 
 import pytest
+from brewblox_service import service
 
 from brewblox_history import influx
 from brewblox_history.__main__ import create_parser
-from brewblox_service import service
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -26,7 +26,7 @@ def app_config() -> dict:
         'name': 'test_app',
         'host': 'localhost',
         'port': 1234,
-        'debug': False,
+        'debug': True,
         'broadcast_exchange': 'brewcast.history',
         'write_interval': 5,
         'poll_interval': 5,
@@ -43,6 +43,7 @@ def sys_args(app_config) -> list:
         '--broadcast-exchange', app_config['broadcast_exchange'],
         '--write-interval', app_config['write_interval'],
         '--poll-interval', app_config['poll_interval'],
+        '--debug',
     ]]
 
 
@@ -67,65 +68,6 @@ async def client(app, aiohttp_client, loop):
     Any tests wishing to add custom behavior to app can override the fixture
     """
     return await aiohttp_client(app)
-
-
-@pytest.fixture
-def policies_result():
-    return {
-        'results': [
-            {
-                'statement_id': 0,
-                'series': [
-                    {
-                        'columns': [
-                            'name',
-                            'duration',
-                            'shardGroupDuration',
-                            'replicaN',
-                            'default'
-                        ],
-                        'values': [
-                            [
-                                'autogen',
-                                '24h0m0s',
-                                '6h0m0s',
-                                1,
-                                True
-                            ],
-                            [
-                                'downsample_1m',
-                                '0s',
-                                '168h0m0s',
-                                1,
-                                False
-                            ],
-                            [
-                                'downsample_10m',
-                                '0s',
-                                '168h0m0s',
-                                1,
-                                False
-                            ],
-                            [
-                                'downsample_1h',
-                                '0s',
-                                '168h0m0s',
-                                1,
-                                False
-                            ],
-                            [
-                                'downsample_6h',
-                                '0s',
-                                '168h0m0s',
-                                1,
-                                False
-                            ]
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
 
 
 @pytest.fixture

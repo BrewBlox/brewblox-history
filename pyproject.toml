@@ -14,6 +14,7 @@ dpath = "^2.0.1"
 aiohttp-sse = "^2.0.0"
 python-dateutil = "^2.8.1"
 poetry = "^1.0.5"
+pytimeparse = "^1.1.8"
 
 [tool.poetry.dev-dependencies]
 pytest-flake8 = "^1.0.4"

@@ -295,10 +295,9 @@ async def test_select_policy(
         app,
         client,
         query_mock,
-        policies_result,
         count_result,
         values_result):
-    query_mock.side_effect = [policies_result, count_result, values_result]
+    query_mock.side_effect = [count_result, values_result]
 
     await response(client.post('/query/values', json={
         'measurement': 'm',
@@ -308,7 +307,6 @@ async def test_select_policy(
     print(query_mock.call_args_list)
 
     assert query_mock.call_args_list == [
-        call('SHOW RETENTION POLICIES ON "brewblox"'),
         call(';'.join([
             f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
             for policy in [
@@ -321,16 +319,16 @@ async def test_select_policy(
         ])),
         call(
             query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            fields=f'"{used_prefix}k1","{used_prefix}k2","{used_prefix}{used_prefix}v"',
-            measurement='m',
             database='brewblox',
             policy=used_policy,
+            measurement='m',
+            fields=f'"{used_prefix}k1","{used_prefix}k2","{used_prefix}{used_prefix}v"',
             prefix=used_prefix,
         )
     ]
 
 
-async def test_select_sparse_policy(app, client, query_mock, policies_result, count_result, values_result):
+async def test_select_sparse_policy(app, client, query_mock, count_result, values_result):
     """
     If the data interval is sufficiently sparse, the autogen policy can contain less data than downsampled policies.
     This will happen if
@@ -339,7 +337,7 @@ async def test_select_sparse_policy(app, client, query_mock, policies_result, co
     In this scenario, downsample_1m will have more points than autogen.
     """
     count_result['results'][0]['series'][0]['values'][0][1] = 180  # was 600
-    query_mock.side_effect = [policies_result, count_result, values_result]
+    query_mock.side_effect = [count_result, values_result]
 
     await response(client.post('/query/values', json={
         'measurement': 'm',
@@ -349,7 +347,6 @@ async def test_select_sparse_policy(app, client, query_mock, policies_result, co
     print(query_mock.call_args_list)
 
     assert query_mock.call_args_list == [
-        call('SHOW RETENTION POLICIES ON "brewblox"'),
         call(';'.join([
             f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
             for policy in [
@@ -362,20 +359,20 @@ async def test_select_sparse_policy(app, client, query_mock, policies_result, co
         ])),
         call(
             query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            fields=f'"m_k1","m_k2"',
-            measurement='m',
             database='brewblox',
             policy='downsample_1m',
+            measurement='m',
+            fields=f'"m_k1","m_k2"',
             prefix='m_',
         )
     ]
 
 
-async def test_empty_downsampling(app, client, query_mock, policies_result, values_result):
+async def test_empty_downsampling(app, client, query_mock, values_result):
     """
     Default to highest resolution (autogen) when no rows are found in database
     """
-    query_mock.side_effect = [policies_result, {'results': [{'statement_id': id} for i in range(5)]}, values_result]
+    query_mock.side_effect = [{'results': [{'statement_id': id} for i in range(5)]}, values_result]
     await response(client.post('/query/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
@@ -383,7 +380,6 @@ async def test_empty_downsampling(app, client, query_mock, policies_result, valu
     }))
 
     assert query_mock.call_args_list == [
-        call('SHOW RETENTION POLICIES ON "brewblox"'),
         call(';'.join([
             f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
             for policy in [
@@ -396,11 +392,51 @@ async def test_empty_downsampling(app, client, query_mock, policies_result, valu
         ])),
         call(
             query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            fields=f'"k1","k2"',
-            measurement='m',
             database=influx.DEFAULT_DATABASE,
             policy=influx.DEFAULT_POLICY,
+            measurement='m',
+            fields=f'"k1","k2"',
             prefix='',
+        )
+    ]
+
+
+async def test_exclude_autogen(app, client, query_mock, count_result, values_result):
+    """
+    If start is more than 24h ago, autogen should be excluded.
+    """
+    del count_result['results'][0]
+    query_mock.side_effect = [count_result, values_result]
+
+    await response(client.post('/query/values', json={
+        'measurement': 'm',
+        'fields': ['k1', 'k2'],
+        'approx_points': 300,
+        'duration': '30h',
+    }))
+    print(query_mock.call_args_list)
+
+    assert query_mock.call_args_list == [
+        call(
+            ';'.join([
+                (f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+                 + ' WHERE time >= now() - {duration}')
+                for policy in [
+                    'downsample_1m',
+                    'downsample_10m',
+                    'downsample_1h',
+                    'downsample_6h'
+                ]
+            ]),
+            duration='30h'),
+        call(
+            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}" WHERE time >= now() - {duration}',
+            database='brewblox',
+            policy='downsample_1m',
+            measurement='m',
+            fields=f'"m_k1","m_k2"',
+            duration='30h',
+            prefix='m_',
         )
     ]
 
@@ -408,11 +444,25 @@ async def test_empty_downsampling(app, client, query_mock, policies_result, valu
 async def test_configure(app, client, query_mock):
     query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
     resp = await response(client.post('/query/configure'))
+    assert resp == {}
+    # 5 * create / alter policy
+    # 5 * drop / create continuous query
+    assert query_mock.call_count == (5*2) + (4*2)
+
+
+async def test_configure_verbose(app, client, query_mock):
+    query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
+    resp = await response(client.post('/query/configure', json={'verbose': True}))
     assert resp == {'configure': True}
     # 5 * create / alter policy
     # 5 * drop / create continuous query
     # 1 * status query
     assert query_mock.call_count == (5*2) + (4*2) + 1
+
+
+async def test_handler_defaults(app, client, query_mock):
+    # No defaults are set - absence of json body should raise exception
+    await response(client.post('/query/last_values'), 500)
 
 
 async def test_select_last_values(app, client, query_mock, last_values_result):
@@ -421,7 +471,6 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
     resp = await response(client.post('/query/last_values', json={
         'measurement': 'sparkey',
         'fields': ['val1', 'val2', 'val_none'],
-
     }))
     assert resp == [
         {
@@ -440,3 +489,9 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
             'value': None,
         },
     ]
+
+    await response(client.post('/query/last_values', json={
+        'measurement': 'sparkey',
+        'fields': ['val1', 'val2', 'val_none'],
+        'policy': 'economic'
+    }), 500)

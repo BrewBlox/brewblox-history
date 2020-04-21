@@ -786,6 +786,14 @@ cli = ["click (>=5.0)"]
 
 [[package]]
 category = "main"
+description = "Time expression parser"
+name = "pytimeparse"
+optional = false
+python-versions = "*"
+version = "1.1.8"
+
+[[package]]
+category = "main"
 description = ""
 marker = "python_version >= \"3.5\" and python_version < \"4.0\" and sys_platform == \"win32\""
 name = "pywin32-ctypes"
@@ -921,7 +929,7 @@ docs = ["sphinx", "jaraco.packaging (>=3.2)", "rst.linker (>=1.9)"]
 testing = ["jaraco.itertools", "func-timeout"]
 
 [metadata]
-content-hash = "e78cdd8d36a82327cc430c5c930c0f47beaddc4a2faeae2b8b72130c8fe32edf"
+content-hash = "fbc2ea26a50b61c90af1388451cb56cef588b218a2aa2e0a45409bc3a5284666"
 python-versions = ">=3.7"
 
 [metadata.files]
@@ -1331,6 +1339,10 @@ python-dateutil = [
 python-dotenv = [
     {file = "python-dotenv-0.12.0.tar.gz", hash = "sha256:92b3123fb2d58a284f76cc92bfe4ee6c502c32ded73e8b051c4f6afc8b6751ed"},
     {file = "python_dotenv-0.12.0-py2.py3-none-any.whl", hash = "sha256:81822227f771e0cab235a2939f0f265954ac4763cafd806d845801c863bf372f"},
+]
+pytimeparse = [
+    {file = "pytimeparse-1.1.8-py2.py3-none-any.whl", hash = "sha256:04b7be6cc8bd9f5647a6325444926c3ac34ee6bc7e69da4367ba282f076036bd"},
+    {file = "pytimeparse-1.1.8.tar.gz", hash = "sha256:e86136477be924d7e670646a98561957e8ca7308d44841e21f5ddea757556a0a"},
 ]
 pywin32-ctypes = [
     {file = "pywin32-ctypes-0.2.0.tar.gz", hash = "sha256:24ffc3b341d457d48e8922352130cf2644024a4ff09762a2261fd34c36ee5942"},
