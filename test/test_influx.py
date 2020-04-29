@@ -92,7 +92,7 @@ async def test_ping(app, client, influx_mock):
 async def test_running_writer(influx_mock, app, client, mocker):
     writer = influx.get_data_writer(app)
 
-    await writer.write_soon(
+    writer.write_soon(
         measurement='measurement',
         fields=dict(field1=1, field2=2),
         tags=dict(tag1=1, tag2=2)
@@ -139,7 +139,7 @@ async def test_reconnect(influx_mock, app, client):
     await writer.shutdown(app)
     await writer.startup(app)
 
-    await writer.write_soon(
+    writer.write_soon(
         measurement='measurement',
         fields=dict(field1=1, field2=2),
         tags=dict(tag1=1, tag2=2)
@@ -156,22 +156,22 @@ async def test_reconnect(influx_mock, app, client):
     assert influx_mock.write.call_count == 1
 
 
-async def test_downsample(influx_mock, app, client, fewer_max_points):
+async def test_avoid_overflow(influx_mock, app, client, fewer_max_points):
     influx_mock.create_database.side_effect = ClientConnectionError
 
     writer = influx.get_data_writer(app)
     await writer.shutdown(app)
     await writer.startup(app)
 
-    for i in range(2 * influx.MAX_PENDING_POINTS + 1):
-        await writer.write_soon(
+    for i in range(2 * influx.MAX_PENDING_POINTS):
+        writer.write_soon(
             measurement='measurement',
             fields=dict(field1=1, field2=2),
             tags=dict(tag1=1, tag2=2)
         )
 
-    # It's been downsampled to half every time it hit max points
-    assert len(writer._pending) == 0.5 * influx.MAX_PENDING_POINTS + 1
+    writer._avoid_overflow()
+    assert len(writer._pending) == influx.MAX_PENDING_POINTS
     assert influx_mock.write.call_count == 0
     influx_mock.create_database.side_effect = None
     await asyncio.sleep(0.1)

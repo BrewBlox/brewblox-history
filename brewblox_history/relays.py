@@ -5,9 +5,9 @@ Functionality for persisting eventbus messages to the database
 import collections
 
 from aiohttp import web
+from brewblox_service import brewblox_logger, events, features
 
 from brewblox_history import influx
-from brewblox_service import brewblox_logger, events, features
 
 FLAT_SEPARATOR = '/'
 
@@ -113,11 +113,13 @@ class DataRelay(features.ServiceFeature):
         if isinstance(message, str):
             message = dict(text=message)
 
+        measurement = routing_list[0]
         parent = FLAT_SEPARATOR.join(routing_list[1:])
         data = self._influx_formatted(message, parent_key=parent, sep=FLAT_SEPARATOR)
 
+        LOGGER.debug(f'recv {measurement}, data={bool(data)}')
         if data:
-            await self._writer.write_soon(measurement=routing_list[0], fields=data)
+            self._writer.write_soon(measurement=measurement, fields=data)
 
 
 def setup(app: web.Application):

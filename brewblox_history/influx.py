@@ -93,13 +93,16 @@ class InfluxWriter(repeater.RepeaterFeature):
                         await client.ping()
                         continue
 
-                    await client.write(self._pending)
-                    LOGGER.debug(f'Pushed {len(self._pending)} points to database')
-                    self._pending = []
+                    points = self._pending.copy()
+                    await client.write(points)
+                    LOGGER.debug(f'Pushed {len(points)} points to database')
+                    # Make sure to keep points that were inserted during the write
+                    self._pending = self._pending[len(points):]
 
         except ClientConnectionError as ex:
             LOGGER.warn(f'Database connection failed {self} {ex}')
             await asyncio.sleep(RECONNECT_INTERVAL_S)
+            self._avoid_overflow()
 
         except asyncio.CancelledError:
             raise
@@ -108,11 +111,19 @@ class InfluxWriter(repeater.RepeaterFeature):
             await asyncio.sleep(RECONNECT_INTERVAL_S)
             raise
 
-    async def write_soon(self,
-                         measurement: str,
-                         fields: dict,
-                         tags: dict = None,
-                         time: Union[datetime.datetime, str] = None):
+    def _avoid_overflow(self):
+        # Ensure that a disconnected influx does not cause this service to run out of memory
+        # To avoid large gaps, the data is downsampled: only every 2nd element is kept
+        # Note: using this approach, resolution decreases with age (downsampled more often)
+        if len(self._pending) >= MAX_PENDING_POINTS:
+            warnings.warn(f'Downsampling pending points...')
+            self._pending = self._pending[::2]
+
+    def write_soon(self,
+                   measurement: str,
+                   fields: dict,
+                   tags: dict = None,
+                   time: Union[datetime.datetime, str] = None):
         """Schedules a data point for writing.
 
         Actual writing is done in a timed interval, to batch database writing.
@@ -126,13 +137,6 @@ class InfluxWriter(repeater.RepeaterFeature):
             tags=tags or dict()
         )
         self._pending.append(point)
-
-        # Ensure that a disconnected influx does not cause this service to run out of memory
-        # To avoid large gaps, the data is downsampled: only every 2nd element is kept
-        # Note: using this approach, resolution decreases with age (downsampled more often)
-        if len(self._pending) >= MAX_PENDING_POINTS:
-            warnings.warn(f'Downsampling pending points...')
-            self._pending = self._pending[::2]
 
 
 def setup(app):
