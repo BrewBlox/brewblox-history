@@ -4,7 +4,7 @@ Tests brewblox_history.relays
 
 import pytest
 from brewblox_service.testing import response
-from mock import AsyncMock, call
+from mock import call
 
 from brewblox_history import relays
 
@@ -15,7 +15,6 @@ TESTED = relays.__name__
 def m_data_writer(mocker):
     call_mock = mocker.patch(TESTED + '.influx.get_data_writer')
     writer_mock = call_mock.return_value
-    writer_mock.write_soon = AsyncMock()
     return writer_mock
 
 
