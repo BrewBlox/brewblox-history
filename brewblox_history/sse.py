@@ -162,7 +162,7 @@ async def subscribe_values(request: web.Request) -> web.Response:
                 await asyncio.sleep(poll_interval)
 
             except asyncio.CancelledError:
-                raise
+                return resp
 
             except Exception as ex:
                 msg = f'Exiting values SSE with error: {strex(ex)}'
@@ -239,7 +239,7 @@ async def subscribe_last_values(request: web.Request) -> web.Response:
                 await asyncio.sleep(poll_interval)
 
             except asyncio.CancelledError:
-                raise
+                return resp
 
             except Exception as ex:
                 msg = f'Exiting last_values SSE with error: {strex(ex)}'

@@ -65,6 +65,7 @@ class InfluxWriter(repeater.RepeaterFeature):
                  database: str = None):
         super().__init__(app)
 
+        self._last_ok = True
         self._pending = []
         self._database = database or DEFAULT_DATABASE
         self._policies = []
@@ -100,7 +101,9 @@ class InfluxWriter(repeater.RepeaterFeature):
                     self._pending = self._pending[len(points):]
 
         except ClientConnectionError as ex:
-            LOGGER.warn(f'Database connection failed {self} {ex}')
+            if self._last_ok:
+                LOGGER.warn(f'Database connection failed {self} {ex}')
+                self._last_ok = False
             await asyncio.sleep(RECONNECT_INTERVAL_S)
             self._avoid_overflow()
 
