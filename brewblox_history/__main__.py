@@ -2,7 +2,7 @@
 Example of how to import and use the brewblox service
 """
 
-from brewblox_service import brewblox_logger, events, scheduler, service
+from brewblox_service import brewblox_logger, events, mqtt, scheduler, service
 
 from brewblox_history import influx, query_api, relays, sse
 
@@ -31,6 +31,7 @@ def main():
 
     scheduler.setup(app)
     events.setup(app)
+    mqtt.setup(app)
     influx.setup(app)
     query_api.setup(app)
     sse.setup(app)
