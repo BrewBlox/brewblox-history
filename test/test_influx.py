@@ -97,6 +97,10 @@ async def test_running_writer(influx_mock, app, client, mocker):
         fields=dict(field1=1, field2=2),
         tags=dict(tag1=1, tag2=2)
     )
+    writer.write_soon(
+        measurement='measurement',
+        fields={},
+    )
 
     await asyncio.sleep(0.1)
     assert writer.active
@@ -139,7 +143,8 @@ async def test_reconnect(influx_mock, app, client):
     await writer.shutdown(app)
     await writer.startup(app)
 
-    writer.write_soon(
+    influx.write_soon(
+        app,
         measurement='measurement',
         fields=dict(field1=1, field2=2),
         tags=dict(tag1=1, tag2=2)

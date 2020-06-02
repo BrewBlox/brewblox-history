@@ -362,7 +362,7 @@ async def test_select_sparse_policy(app, client, query_mock, count_result, value
             database='brewblox',
             policy='downsample_1m',
             measurement='m',
-            fields=f'"m_k1","m_k2"',
+            fields='"m_k1","m_k2"',
             prefix='m_',
         )
     ]
@@ -395,7 +395,7 @@ async def test_empty_downsampling(app, client, query_mock, values_result):
             database=influx.DEFAULT_DATABASE,
             policy=influx.DEFAULT_POLICY,
             measurement='m',
-            fields=f'"k1","k2"',
+            fields='"k1","k2"',
             prefix='',
         )
     ]
@@ -434,7 +434,7 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
             database='brewblox',
             policy='downsample_1m',
             measurement='m',
-            fields=f'"m_k1","m_k2"',
+            fields='"m_k1","m_k2"',
             duration='30h',
             prefix='m_',
         )
@@ -447,7 +447,7 @@ async def test_configure(app, client, query_mock):
     assert resp == {}
     # 5 * create / alter policy
     # 5 * drop / create continuous query
-    assert query_mock.call_count == (5*2) + (4*2)
+    assert query_mock.call_count == (5 * 2) + (4 * 2)
 
 
 async def test_configure_verbose(app, client, query_mock):
@@ -457,7 +457,7 @@ async def test_configure_verbose(app, client, query_mock):
     # 5 * create / alter policy
     # 5 * drop / create continuous query
     # 1 * status query
-    assert query_mock.call_count == (5*2) + (4*2) + 1
+    assert query_mock.call_count == (5 * 2) + (4 * 2) + 1
 
 
 async def test_handler_defaults(app, client, query_mock):
