@@ -119,7 +119,7 @@ class InfluxWriter(repeater.RepeaterFeature):
         # To avoid large gaps, the data is downsampled: only every 2nd element is kept
         # Note: using this approach, resolution decreases with age (downsampled more often)
         if len(self._pending) >= MAX_PENDING_POINTS:
-            warnings.warn(f'Downsampling pending points...')
+            warnings.warn('Downsampling pending points...')
             self._pending = self._pending[::2]
 
     def write_soon(self,
@@ -132,6 +132,8 @@ class InfluxWriter(repeater.RepeaterFeature):
         Actual writing is done in a timed interval, to batch database writing.
         If the remote is not connected, the data point is kept locally until reconnect.
         """
+        if not fields:
+            return
         fields[COMBINED_POINTS_FIELD] = 1
         point = dict(
             time=time or datetime.datetime.today(),
@@ -147,9 +149,17 @@ def setup(app):
     features.add(app, InfluxWriter(app, database=DEFAULT_DATABASE))
 
 
-def get_client(app) -> QueryClient:
+def get_client(app: web.Application) -> QueryClient:
     return features.get(app, QueryClient)
 
 
-def get_data_writer(app) -> InfluxWriter:
+def get_data_writer(app: web.Application) -> InfluxWriter:
     return features.get(app, InfluxWriter)
+
+
+def write_soon(app: web.Application,
+               measurement: str,
+               fields: dict,
+               *args,
+               **kwargs):
+    get_data_writer(app).write_soon(measurement, fields, *args, **kwargs)

@@ -2,8 +2,9 @@
 Example of how to import and use the brewblox service
 """
 
-from brewblox_history import influx, query_api, relays, sse
 from brewblox_service import brewblox_logger, events, scheduler, service
+
+from brewblox_history import influx, query_api, relays, sse
 
 LOGGER = brewblox_logger(__name__)
 OLD_EXCHANGE = 'brewcast'
@@ -34,13 +35,6 @@ def main():
     query_api.setup(app)
     sse.setup(app)
     relays.setup(app)
-
-    relays.subscribe(app,
-                     exchange_name=OLD_EXCHANGE,
-                     routing='#')
-    relays.subscribe(app,
-                     exchange_name=app['config']['broadcast_exchange'],
-                     routing='#')
 
     service.furnish(app)
     service.run(app)

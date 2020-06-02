@@ -394,9 +394,9 @@ async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
 
     if verbose:
         return await client.query(
-            f'SHOW DATABASES; ' +
-            f'SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; ' +
-            f'SHOW CONTINUOUS QUERIES; '
+            'SHOW DATABASES; ' +
+            'SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; ' +
+            'SHOW CONTINUOUS QUERIES; '
         )
     else:
         return {}
