@@ -197,7 +197,7 @@ class MQTTDataRelay(features.ServiceFeature):
         with suppress(ValueError):
             await mqtt.unsubscribe(app, self.topic)
         with suppress(ValueError):
-            await mqtt.unlisten(app, self.topic)
+            await mqtt.unlisten(app, self.topic, self.on_event_message)
 
     async def on_event_message(self, topic: str, message: dict):
         if not self.schema.is_valid(message):
