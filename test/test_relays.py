@@ -19,6 +19,7 @@ def m_write_soon(mocker):
 @pytest.fixture
 def m_prepare(mocker):
     mocker.patch(TESTED + '.events.subscribe')
+    mocker.patch(TESTED + '.mqtt.publish', AsyncMock())
     mocker.patch(TESTED + '.mqtt.subscribe', AsyncMock())
     mocker.patch(TESTED + '.mqtt.listen', AsyncMock())
     mocker.patch(TESTED + '.mqtt.unsubscribe', AsyncMock())
@@ -127,3 +128,44 @@ async def test_mqtt_relay(app, client, m_write_soon):
         call(app, 'm', flat_value),
         call(app, 'm', {}),
     ]
+
+
+async def test_retained_relay(app, client):
+    relay = relays.retained_relay(app)
+    m_publish = relays.mqtt.publish
+
+    await relay.on_request_message('brewcast/request/state', {})
+    m_publish.assert_not_awaited()
+
+    msg_1_false = {
+        'key': 'value_service',
+        'type': 'value',
+        'data': {'value': False}
+    }
+    msg_1_true = {
+        'key': 'value_service',
+        'type': 'value',
+        'data': {'value': True}
+    }
+    msg_2_false = {
+        'key': 'other_service',
+        'type': 'other',
+        'data': {'other': False}
+    }
+    msg_2_true = {
+        'key': 'other_service',
+        'type': 'other',
+        'data': {'other': True}
+    }
+
+    await relay.on_state_message('brewcast/state', msg_1_false)
+    await relay.on_state_message('brewcast/state', msg_1_true)
+    await relay.on_state_message('brewcast/state', {'key': 'testface'})
+    await relay.on_state_message('brewcast/state', msg_2_false)
+    await relay.on_state_message('brewcast/state/other', msg_2_true)
+    await relay.on_request_message('brewcast/request/state', {})
+
+    m_publish.assert_has_awaits([
+        call(app, 'brewcast/state', msg_1_true),
+        call(app, 'brewcast/state/other', msg_2_true),
+    ], any_order=True)

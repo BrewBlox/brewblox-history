@@ -2,12 +2,13 @@
 Functionality for persisting eventbus messages to the database
 """
 
+import asyncio
 import collections
 from contextlib import suppress
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, events, features, mqtt
-from schema import Schema
+from brewblox_service import brewblox_logger, events, features, mqtt, strex
+from schema import Optional, Or, Schema, SchemaError
 
 from brewblox_history import influx
 
@@ -200,8 +201,10 @@ class MQTTDataRelay(features.ServiceFeature):
             await mqtt.unlisten(app, self.topic, self.on_event_message)
 
     async def on_event_message(self, topic: str, message: dict):
-        if not self.schema.is_valid(message):
-            LOGGER.error(f'Invalid MQTT: {topic} = {str(message)[:30]}...')
+        try:
+            self.schema.validate(message)
+        except SchemaError as ex:
+            LOGGER.error(f'Invalid MQTT: {topic} {strex(ex)}')
             return
 
         measurement = message['key']
@@ -211,9 +214,62 @@ class MQTTDataRelay(features.ServiceFeature):
         influx.write_soon(self.app, measurement, data)
 
 
+class MQTTRetainedRelay(features.ServiceFeature):
+
+    state_schema: Schema = Schema(
+        {
+            'key': str,
+            'type': str,
+            'data': Or(dict, list),
+            Optional('ttl'): str,
+        },
+        ignore_extra_keys=True)
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.state_topic = None
+        self.request_topic = 'brewcast/request/state'
+        self.cache = {}
+
+    async def startup(self, app: web.Application):
+        self.state_topic = app['config']['state_topic'] + '/#'
+        await mqtt.listen(app, self.state_topic, self.on_state_message)
+        await mqtt.subscribe(app, self.state_topic)
+        await mqtt.subscribe(app, self.request_topic)
+        await mqtt.listen(app, self.request_topic, self.on_request_message)
+
+    async def shutdown(self, app: web.Application):
+        with suppress(ValueError):
+            await mqtt.unsubscribe(app, self.state_topic)
+            await mqtt.unsubscribe(app, self.request_topic)
+            await mqtt.unlisten(app, self.state_topic, self.on_state_message)
+            await mqtt.unlisten(app, self.request_topic, self.on_request_message)
+
+    async def on_state_message(self, topic: str, message: dict):
+        try:
+            self.state_schema.validate(message)
+        except SchemaError as ex:
+            LOGGER.error(f'Invalid State: {topic} {strex(ex)}')
+            return
+
+        key = message['key']
+        type = message['type']
+        self.cache[f'{key}__{type}'] = (topic, message)
+
+    async def on_request_message(self, topic: str, message: dict):
+        LOGGER.info(f'Cached: {[*self.cache]}')
+        if self.cache:
+            await asyncio.gather(
+                *[mqtt.publish(self.app, topic, message)
+                  for (topic, message) in self.cache.values()],
+                return_exceptions=True
+            )
+
+
 def setup(app: web.Application):
     features.add(app, AMQPDataRelay(app))
     features.add(app, MQTTDataRelay(app))
+    features.add(app, MQTTRetainedRelay(app))
     app.router.add_routes(routes)
 
 
@@ -223,3 +279,7 @@ def amqp_relay(app: web.Application):
 
 def mqtt_relay(app: web.Application):
     return features.get(app, MQTTDataRelay)
+
+
+def retained_relay(app: web.Application):
+    return features.get(app, MQTTRetainedRelay)
