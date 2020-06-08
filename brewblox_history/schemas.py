@@ -24,19 +24,19 @@ class HistoryQuerySchema(HistoryMeasurementSchema):
     policy = fields.String(required=False)
 
 
-class HistoryValuesSchema(HistoryQuerySchema):
-    start = fields.String(required=False)
-    duration = fields.String(required=False)
-    end = fields.String(required=False)
+class HistoryBoundedValuesSchema(HistoryQuerySchema):
+    start = fields.Raw(required=False)
+    duration = fields.Raw(required=False)
+    end = fields.Raw(required=False)
 
+
+class HistoryValuesSchema(HistoryBoundedValuesSchema):
     limit = fields.Integer(required=False)
     order_by = fields.String(required=False)
 
 
-class HistorySSEValuesSchema(HistoryQuerySchema):
-    start = fields.String(required=False)
-    duration = fields.String(required=False)
-    end = fields.String(required=False)
+class HistorySSEValuesSchema(HistoryBoundedValuesSchema):
+    pass
 
 
 class HistoryLastValuesSchema(HistoryQuerySchema):
@@ -61,7 +61,6 @@ class MQTTStateSchema(Schema):
 
     @validates_schema
     def check_data_field(self, data, **kwargs):
-        print(data)
         if not isinstance(data['data'], (dict, list)):
             raise ValidationError('"data" field must be a dict or list')
         return data
