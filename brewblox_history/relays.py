@@ -7,10 +7,9 @@ import collections
 from contextlib import suppress
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, events, features, mqtt, strex
-from schema import Optional, Or, Schema, SchemaError
+from brewblox_service import brewblox_logger, features, mqtt
 
-from brewblox_history import influx
+from brewblox_history import amqp, influx, schemas
 
 FLAT_SEPARATOR = '/'
 
@@ -100,16 +99,16 @@ class AMQPDataRelay(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         self.exchange = app['config']['broadcast_exchange']
-        events.subscribe(app,
-                         exchange_name=self.exchange,
-                         routing='#',
-                         on_message=self.on_event_message)
+        amqp.subscribe(app,
+                       exchange_name=self.exchange,
+                       routing='#',
+                       on_message=self.on_event_message)
 
     async def shutdown(self, _):
         pass
 
     async def on_event_message(self,
-                               subscription: events.EventSubscription,
+                               subscription: amqp.EventSubscription,
                                routing: str,
                                message: dict):
         # Routing is formatted as controller name followed by active sub-index
@@ -174,13 +173,7 @@ class MQTTDataRelay(features.ServiceFeature):
             'block1/sensor1/values/other': 1
         }
     """
-
-    schema: Schema = Schema(
-        {
-            'key': str,
-            'data': dict,
-        },
-        ignore_extra_keys=True)
+    schema = schemas.MQTTHistorySchema(unknown='exclude')
 
     def __init__(self, app):
         super().__init__(app)
@@ -201,10 +194,9 @@ class MQTTDataRelay(features.ServiceFeature):
             await mqtt.unlisten(app, self.topic, self.on_event_message)
 
     async def on_event_message(self, topic: str, message: dict):
-        try:
-            self.schema.validate(message)
-        except SchemaError as ex:
-            LOGGER.error(f'Invalid MQTT: {topic} {strex(ex)}')
+        errors = self.schema.validate(message)
+        if errors:
+            LOGGER.error(f'Invalid MQTT: {topic} {errors}')
             return
 
         measurement = message['key']
@@ -216,14 +208,7 @@ class MQTTDataRelay(features.ServiceFeature):
 
 class MQTTRetainedRelay(features.ServiceFeature):
 
-    state_schema: Schema = Schema(
-        {
-            'key': str,
-            'type': str,
-            'data': Or(dict, list),
-            Optional('ttl'): str,
-        },
-        ignore_extra_keys=True)
+    schema = schemas.MQTTStateSchema(unknown='exclude')
 
     def __init__(self, app):
         super().__init__(app)
@@ -246,10 +231,9 @@ class MQTTRetainedRelay(features.ServiceFeature):
             await mqtt.unlisten(app, self.request_topic, self.on_request_message)
 
     async def on_state_message(self, topic: str, message: dict):
-        try:
-            self.state_schema.validate(message)
-        except SchemaError as ex:
-            LOGGER.error(f'Invalid State: {topic} {strex(ex)}')
+        errors = self.schema.validate(message)
+        if errors:
+            LOGGER.error(f'Invalid State message: {topic} {errors}')
             return
 
         key = message['key']
