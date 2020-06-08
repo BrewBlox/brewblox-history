@@ -443,26 +443,14 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
 
 async def test_configure(app, client, query_mock):
     query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
-    resp = await response(client.post('/query/configure'))
-    assert resp == {}
+    await response(client.post('/query/configure'))
     # 5 * create / alter policy
     # 5 * drop / create continuous query
     assert query_mock.call_count == (5 * 2) + (4 * 2)
 
 
-async def test_configure_verbose(app, client, query_mock):
-    query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
-    resp = await response(client.post('/query/configure', json={'verbose': True}))
-    assert resp == {'configure': True}
-    # 5 * create / alter policy
-    # 5 * drop / create continuous query
-    # 1 * status query
-    assert query_mock.call_count == (5 * 2) + (4 * 2) + 1
-
-
-async def test_handler_defaults(app, client, query_mock):
-    # No defaults are set - absence of json body should raise exception
-    await response(client.post('/query/last_values'), 500)
+async def test_invalid_data(app, client, query_mock):
+    await response(client.post('/query/last_values'), 422)
 
 
 async def test_select_last_values(app, client, query_mock, last_values_result):

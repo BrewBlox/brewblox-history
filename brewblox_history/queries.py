@@ -211,6 +211,9 @@ async def select_downsampling_policy(client: influx.QueryClient,
 
     return name of the policy, and the prefix that should be added/stripped from fields in said policy
     """
+    if policy:
+        return (policy, 'm_' * POLICIES.index(policy))
+
     default_result = (influx.DEFAULT_POLICY, '')
 
     if not approx_points:
@@ -391,12 +394,3 @@ async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
     await create_cquery('10m', 'downsample_1m')
     await create_cquery('1h', 'downsample_10m')
     await create_cquery('6h', 'downsample_1h')
-
-    if verbose:
-        return await client.query(
-            'SHOW DATABASES; ' +
-            'SHOW RETENTION POLICIES ON {influx.DEFAULT_DATABASE}; ' +
-            'SHOW CONTINUOUS QUERIES; '
-        )
-    else:
-        return {}

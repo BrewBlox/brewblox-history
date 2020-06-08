@@ -2,13 +2,11 @@
 REST endpoints for queries
 """
 
-from json import JSONDecodeError
-from typing import Awaitable
-
 from aiohttp import web
+from aiohttp_apispec import docs, request_schema
 from brewblox_service import brewblox_logger, strex
 
-from brewblox_history import influx
+from brewblox_history import influx, schemas
 from brewblox_history.queries import (configure_db, raw_query,
                                       select_last_values, select_values,
                                       show_keys)
@@ -22,6 +20,10 @@ def setup(app: web.Application):
     app.middlewares.append(controller_error_middleware)
 
 
+def _client(request: web.Request) -> influx.QueryClient:
+    return influx.get_client(request.app)
+
+
 @web.middleware
 async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
     try:
@@ -31,209 +33,71 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
         return web.json_response({'error': strex(ex)}, status=500)
 
 
-async def _do_with_handler(func: Awaitable, request: web.Request, default_args=...) -> web.Response:
-    try:
-        args = await request.json()
-    except JSONDecodeError:
-        if default_args is ...:
-            raise
-        args = default_args
-    response = await func(influx.get_client(request.app), **args)
-    return web.json_response(response)
-
-
+@docs(
+    tags=['Debug'],
+    summary='Run a manual query against the database',
+)
 @routes.post('/_debug/query')
+@request_schema(schemas.DebugQuerySchema)
 async def custom_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Query InfluxDB
-    description: Send a string query to the database.
-    operationId: history.query
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        description: Query
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                query:
-                    type: string
-    """
-    return await _do_with_handler(raw_query, request)
+    return web.json_response(
+        await raw_query(_client(request), **request['data'])
+    )
 
 
+@docs(
+    tags=['Debug'],
+    summary='Ping the database',
+)
 @routes.get('/ping')
 async def ping(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Ping InfluxDB
-    operationId: history.ping
-    produces:
-    - application/json
-    """
-    await influx.get_client(request.app).ping()
+    await _client(request).ping()
     return web.json_response({'ok': True})
 
 
+@docs(
+    tags=['History'],
+    summary='List available measurements and fields in the database',
+)
 @routes.post('/query/objects')
+@request_schema(schemas.ObjectsQuerySchema)
 async def objects_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: List objects
-    description: List available measurements and objects in database.
-    operationId: history.query.objects
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                    required: false
-                measurement:
-                    type: string
-                    required: false
-    """
-    return await _do_with_handler(show_keys, request)
+    return web.json_response(
+        await show_keys(_client(request), **request['data'])
+    )
 
 
+@docs(
+    tags=['History'],
+    summary='Get values from database',
+)
 @routes.post('/query/values')
+@request_schema(schemas.HistoryValuesSchema)
 async def values_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Get object values
-    operationId: history.query.values
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                    required: false
-                measurement:
-                    type: string
-                    required: true
-                fields:
-                    type: list
-                    required: true
-                    example: ["*"]
-                start:
-                    type: string
-                    required: false
-                    example: "1439873640000000000"
-                duration:
-                    type: string
-                    required: false
-                    example: "10m"
-                end:
-                    type: string
-                    required: false
-                    example: "1439873640000000000"
-                limit:
-                    type: int
-                    required: false
-                    example: 100
-                order_by:
-                    type: string
-                    required: false
-                    example: "time asc"
-                policy:
-                    type: string
-                    required: false
-                    example: "downsample_1m"
-                approx_points:
-                    type: int
-                    required: false
-                    example: 100
-    """
-    return await _do_with_handler(select_values, request)
+    print(request['data'])
+    return web.json_response(
+        await select_values(_client(request), **request['data'])
+    )
 
 
+@docs(
+    tags=['History'],
+    summary='Get last values from database for each field',
+)
 @routes.post('/query/last_values')
+@request_schema(schemas.HistoryLastValuesSchema)
 async def last_values_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Get current object values
-    operationId: history.query.last_values
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: true
-        schema:
-            type: object
-            properties:
-                database:
-                    type: string
-                    required: false
-                measurement:
-                    type: string
-                    required: true
-                fields:
-                    type: list
-                    required: true
-                    example: ["actuator-1/value"]
-                duration:
-                    type: string
-                    required: false
-                    example: "10m"
-                policy:
-                    type: string
-                    required: false
-                    example: "downsample_1m"
-    """
-    return await _do_with_handler(select_last_values, request)
+    return web.json_response(
+        await select_last_values(_client(request), **request['data'])
+    )
 
 
+@docs(
+    tags=['History'],
+    summary='Configure database',
+)
 @routes.post('/query/configure')
 async def configure_db_query(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Configure database
-    operationId: history.query.configure
-    produces:
-    - application/json
-    parameters:
-    -
-        in: body
-        name: body
-        required: false
-        schema:
-            type: object
-            properties:
-                verbose:
-                    type: boolean
-                    required: false
-    """
-    return await _do_with_handler(configure_db, request, {'verbose': False})
+    return web.json_response(
+        await configure_db(_client(request), verbose=False)
+    )

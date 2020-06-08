@@ -18,7 +18,7 @@ def m_write_soon(mocker):
 
 @pytest.fixture
 def m_prepare(mocker):
-    mocker.patch(TESTED + '.events.subscribe')
+    mocker.patch(TESTED + '.amqp.subscribe')
     mocker.patch(TESTED + '.mqtt.publish', AsyncMock())
     mocker.patch(TESTED + '.mqtt.subscribe', AsyncMock())
     mocker.patch(TESTED + '.mqtt.listen', AsyncMock())
@@ -150,12 +150,17 @@ async def test_retained_relay(app, client):
     msg_2_false = {
         'key': 'other_service',
         'type': 'other',
-        'data': {'other': False}
+        'data': [False]
     }
     msg_2_true = {
         'key': 'other_service',
         'type': 'other',
-        'data': {'other': True}
+        'data': [True]
+    }
+    msg_3_invalid = {
+        'key': 'fantasy',
+        'type': 'emptiness',
+        'data': 'nonsense',
     }
 
     await relay.on_state_message('brewcast/state', msg_1_false)
@@ -163,6 +168,7 @@ async def test_retained_relay(app, client):
     await relay.on_state_message('brewcast/state', {'key': 'testface'})
     await relay.on_state_message('brewcast/state', msg_2_false)
     await relay.on_state_message('brewcast/state/other', msg_2_true)
+    await relay.on_state_message('brewcast/state/invalid', msg_3_invalid)
     await relay.on_request_message('brewcast/request/state', {})
 
     m_publish.assert_has_awaits([
