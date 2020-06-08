@@ -74,7 +74,6 @@ async def objects_query(request: web.Request) -> web.Response:
 @routes.post('/query/values')
 @request_schema(schemas.HistoryValuesSchema)
 async def values_query(request: web.Request) -> web.Response:
-    print(request['data'])
     return web.json_response(
         await select_values(_client(request), **request['data'])
     )
