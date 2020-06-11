@@ -12,11 +12,12 @@ LOGGER = brewblox_logger(__name__)
 
 
 INFLUX_HOST = 'influx'
-RECONNECT_INTERVAL_S = 1
+RECONNECT_INTERVAL_S = 5
 MAX_PENDING_POINTS = 5000
 
 DEFAULT_DATABASE = 'brewblox'
 DEFAULT_POLICY = 'autogen'
+DEFAULT_EPOCH = 'ns'
 COMBINED_POINTS_FIELD = ' Combined Influx points'
 
 
@@ -45,7 +46,8 @@ class QueryClient(features.ServiceFeature):
 
     async def query(self, query: str, **kwargs):
         database = kwargs.get('database', DEFAULT_DATABASE)
-        return await self._client.query(query.format(**kwargs), db=database)
+        epoch = kwargs.get('epoch', DEFAULT_EPOCH)
+        return await self._client.query(query.format(**kwargs), db=database, epoch=epoch)
 
 
 class InfluxWriter(repeater.RepeaterFeature):

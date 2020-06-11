@@ -2,7 +2,8 @@
 Schemas used in API endpoints
 """
 
-from marshmallow import Schema, ValidationError, fields, validates_schema
+from marshmallow import (Schema, ValidationError, fields, validate,
+                         validates_schema)
 
 
 class ObjectsQuerySchema(Schema):
@@ -22,6 +23,8 @@ class HistoryQuerySchema(HistoryMeasurementSchema):
                           required=False)
     approx_points = fields.Integer(required=False)
     policy = fields.String(required=False)
+    epoch = fields.String(required=False,
+                          validate=validate.OneOf(['ns', 'u', 'µ', 'ms', 's', 'm', 'h']))
 
 
 class HistoryBoundedValuesSchema(HistoryQuerySchema):

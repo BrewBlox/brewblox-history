@@ -109,6 +109,7 @@ async def configure_params(client: influx.QueryClient,
                            limit: Optional[int] = None,
                            policy: Optional[str] = None,
                            approx_points: Optional[int] = DEFAULT_APPROX_POINTS,
+                           epoch: Optional[str] = None,
                            **_  # allow, but discard all other kwargs
                            ) -> dict:
     start = nanosecond_date(start)
@@ -125,7 +126,7 @@ async def configure_params(client: influx.QueryClient,
     fields = format_fields(fields, prefix)
 
     return _prune(locals(), ['query', 'database', 'policy', 'measurement', 'fields',
-                             'start', 'duration', 'end', 'order_by', 'limit', 'prefix'])
+                             'start', 'duration', 'end', 'order_by', 'limit', 'prefix', 'epoch'])
 
 
 def build_query(params: dict):
@@ -163,6 +164,7 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
 
     response['database'] = params.get('database') or influx.DEFAULT_DATABASE
     response['policy'] = params.get('policy') or influx.DEFAULT_POLICY
+    response['epoch'] = params.get('epoch') or influx.DEFAULT_EPOCH
     return response
 
 
