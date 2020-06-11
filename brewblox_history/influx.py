@@ -12,7 +12,7 @@ LOGGER = brewblox_logger(__name__)
 
 
 INFLUX_HOST = 'influx'
-RECONNECT_INTERVAL_S = 1
+RECONNECT_INTERVAL_S = 5
 MAX_PENDING_POINTS = 5000
 
 DEFAULT_DATABASE = 'brewblox'
