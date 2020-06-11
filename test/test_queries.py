@@ -211,7 +211,7 @@ async def test_value_data_format(app, client, query_mock, values_result):
         'ORDER BY {order_by} LIMIT {limit}'
     ),
     (
-        {'duration': 'eternal', 'limit': 1},
+        {'duration': 'eternal', 'limit': 1, 'epoch': 'ms'},
         'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
         'WHERE time >= now() - {duration} LIMIT {limit}'
     ),
