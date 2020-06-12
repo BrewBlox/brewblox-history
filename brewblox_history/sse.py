@@ -98,7 +98,7 @@ async def subscribe_values(request: web.Request) -> web.Response:
                     await resp.send(json.dumps(data))
                     # to get data updates we adjust the start parameter to result 'time' + 1
                     # 'start' param when given in numbers must always be in ns
-                    mult = int(NS_MULT[params.get('epoch', 'ns')])
+                    mult = int(NS_MULT[params.get('epoch') or 'ns'])
                     params['start'] = int(data['values'][-1][0] + 1) * mult
                     params.pop('duration', None)
 
