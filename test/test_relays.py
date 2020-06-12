@@ -162,6 +162,11 @@ async def test_retained_relay(app, client):
         'type': 'emptiness',
         'data': 'nonsense',
     }
+    msg_cancelled = {
+        'key': 'cancelled',
+        'type': 'testing',
+        'data': {'soon': True},
+    }
 
     await relay.on_state_message('brewcast/state', msg_1_false)
     await relay.on_state_message('brewcast/state', msg_1_true)
@@ -169,6 +174,10 @@ async def test_retained_relay(app, client):
     await relay.on_state_message('brewcast/state', msg_2_false)
     await relay.on_state_message('brewcast/state/other', msg_2_true)
     await relay.on_state_message('brewcast/state/invalid', msg_3_invalid)
+    await relay.on_state_message('brewcast/cancelled', msg_cancelled)
+    await relay.on_state_message('brewcast/cancelled', None)
+    await relay.on_state_message('brewcast', None)
+
     await relay.on_request_message('brewcast/request/state', {})
 
     m_publish.assert_has_awaits([

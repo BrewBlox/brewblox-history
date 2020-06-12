@@ -230,7 +230,16 @@ class MQTTRetainedRelay(features.ServiceFeature):
             await mqtt.unlisten(app, self.state_topic, self.on_state_message)
             await mqtt.unlisten(app, self.request_topic, self.on_request_message)
 
-    async def on_state_message(self, topic: str, message: dict):
+    async def on_state_message(self, topic: str, message: mqtt.EventData_):
+        if message is None:
+            cleared = [k
+                       for k, (t, msg) in self.cache.items()
+                       if t == topic]
+            LOGGER.info(f'Cache clear: {topic} => {cleared}')
+            for k in cleared:
+                del self.cache[k]
+            return
+
         errors = self.schema.validate(message)
         if errors:
             LOGGER.error(f'Invalid State message: {topic} {errors}')
@@ -240,8 +249,8 @@ class MQTTRetainedRelay(features.ServiceFeature):
         type = message['type']
         self.cache[f'{key}__{type}'] = (topic, message)
 
-    async def on_request_message(self, topic: str, message: dict):
-        LOGGER.info(f'Cached: {[*self.cache]}')
+    async def on_request_message(self, topic: str, message: mqtt.EventData_):
+        LOGGER.info(f'Cache publish: {[*self.cache]}')
         if self.cache:
             await asyncio.gather(
                 *[mqtt.publish(self.app, topic, message)
