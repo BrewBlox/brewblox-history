@@ -15,6 +15,16 @@ from brewblox_history import influx, queries, schemas
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
+NS_MULT = {
+    'ns': 1,
+    'u': 1e3,
+    'µ': 1e3,
+    'ms': 1e6,
+    's': 1e9,
+    'm': 6e10,
+    'h': 3.6e12
+}
+
 
 def setup(app: web.Application):
     features.add(app, ShutdownAlert(app))
@@ -86,8 +96,10 @@ async def subscribe_values(request: web.Request) -> web.Response:
 
                 if data.get('values'):
                     await resp.send(json.dumps(data))
-                    # Reset time frame for subsequent updates
-                    params['start'] = data['values'][-1][0] + 1
+                    # to get data updates we adjust the start parameter to result 'time' + 1
+                    # 'start' param when given in numbers must always be in ns
+                    mult = int(NS_MULT[params.get('epoch', 'ns')])
+                    params['start'] = int(data['values'][-1][0] + 1) * mult
                     params.pop('duration', None)
 
                 if not open_ended:
