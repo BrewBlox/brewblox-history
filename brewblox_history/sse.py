@@ -6,13 +6,24 @@ import asyncio
 import json
 
 from aiohttp import hdrs, web
+from aiohttp_apispec import docs, querystring_schema
 from aiohttp_sse import sse_response
 from brewblox_service import brewblox_logger, features, strex
 
-from brewblox_history import influx, queries
+from brewblox_history import influx, queries, schemas
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
+
+NS_MULT = {
+    'ns': 1,
+    'u': 1e3,
+    'µ': 1e3,
+    'ms': 1e6,
+    's': 1e9,
+    'm': 6e10,
+    'h': 3.6e12
+}
 
 
 def setup(app: web.Application):
@@ -59,81 +70,15 @@ def _cors_headers(request):
     }
 
 
+@docs(
+    tags=['History'],
+    summary='Open an SSE stream for Influx values'
+)
 @routes.get('/sse/values')
+@querystring_schema(schemas.HistorySSEValuesSchema)
 async def subscribe_values(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: subscribe to InfluxDB updates
-    operationId: history.sse.values
-    produces:
-    - application/json
-    parameters:
-    -
-        in: query
-        name: database
-        schema:
-            type: string
-            required: false
-            example: "brewblox"
-    -
-        in: query
-        name: measurement
-        schema:
-            type: string
-            required: true
-            example: "spark"
-    -
-        in: query
-        name: fields
-        schema:
-            type: list
-            required: false
-            example: ["*"]
-    -
-        in: query
-        name: approx_points
-        schema:
-            type: int
-            required: false
-            example: 100
-    -
-        in: query
-        name: start
-        schema:
-            type: string
-            required: false
-    -
-        in: query
-        name: duration
-        schema:
-            type: string
-            required: false
-    -
-        in: query
-        name: end
-        schema:
-            type: string
-            required: false
-    """
     client = influx.get_client(request.app)
-    params = {
-        k: request.query.get(k)
-        for k in [
-            'database',
-            'measurement',
-            'approx_points',
-            'start',
-            'duration',
-            'end',
-        ]
-        if k in request.query
-    }
-    if 'fields' in request.query:
-        params['fields'] = request.query.getall('fields')
-
-    params = await queries.configure_params(client, **params)
+    params = await queries.configure_params(client, **request['querystring'])
     open_ended = _check_open_ended(params)
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
     poll_interval = request.app['config']['poll_interval']
@@ -151,8 +96,10 @@ async def subscribe_values(request: web.Request) -> web.Response:
 
                 if data.get('values'):
                     await resp.send(json.dumps(data))
-                    # Reset time frame for subsequent updates
-                    params['start'] = data['values'][-1][0] + 1
+                    # to get data updates we adjust the start parameter to result 'time' + 1
+                    # 'start' param when given in numbers must always be in ns
+                    mult = int(NS_MULT[params.get('epoch') or 'ns'])
+                    params['start'] = int(data['values'][-1][0] + 1) * mult
                     params.pop('duration', None)
 
                 if not open_ended:
@@ -172,55 +119,15 @@ async def subscribe_values(request: web.Request) -> web.Response:
     return resp
 
 
+@docs(
+    tags=['History'],
+    summary='Open an SSE stream for latest Influx values'
+)
 @routes.get('/sse/last_values')
+@querystring_schema(schemas.HistoryLastValuesSchema)
 async def subscribe_last_values(request: web.Request) -> web.Response:
-    """
-    ---
-    tags:
-    - History
-    summary: Subscribe to updates of latest value in each field.
-    operationId: history.sse.last_values
-    produces:
-    - application/json
-    parameters:
-    -
-        in: query
-        name: database
-        schema:
-            type: string
-            required: false
-            example: "brewblox"
-    -
-        in: query
-        name: measurement
-        schema:
-            type: string
-            required: true
-            example: "sparkey"
-    -
-        in: query
-        name: fields
-        schema:
-            type: list
-            required: true
-            example: ["actuator-1/value"]
-    -
-        in: query
-        name: duration
-        schema:
-            type: string
-            required: false
-    """
     client = influx.get_client(request.app)
-    params = {
-        k: request.query.get(k)
-        for k in [
-            'database',
-            'measurement',
-            'duration',
-        ]
-    }
-    params['fields'] = request.query.getall('fields')
+    params = request['querystring']
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
     poll_interval = request.app['config']['poll_interval']
 

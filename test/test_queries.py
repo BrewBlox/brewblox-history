@@ -211,7 +211,7 @@ async def test_value_data_format(app, client, query_mock, values_result):
         'ORDER BY {order_by} LIMIT {limit}'
     ),
     (
-        {'duration': 'eternal', 'limit': 1},
+        {'duration': 'eternal', 'limit': 1, 'epoch': 'ms'},
         'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
         'WHERE time >= now() - {duration} LIMIT {limit}'
     ),
@@ -362,7 +362,7 @@ async def test_select_sparse_policy(app, client, query_mock, count_result, value
             database='brewblox',
             policy='downsample_1m',
             measurement='m',
-            fields=f'"m_k1","m_k2"',
+            fields='"m_k1","m_k2"',
             prefix='m_',
         )
     ]
@@ -395,7 +395,7 @@ async def test_empty_downsampling(app, client, query_mock, values_result):
             database=influx.DEFAULT_DATABASE,
             policy=influx.DEFAULT_POLICY,
             measurement='m',
-            fields=f'"k1","k2"',
+            fields='"k1","k2"',
             prefix='',
         )
     ]
@@ -434,7 +434,7 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
             database='brewblox',
             policy='downsample_1m',
             measurement='m',
-            fields=f'"m_k1","m_k2"',
+            fields='"m_k1","m_k2"',
             duration='30h',
             prefix='m_',
         )
@@ -443,26 +443,14 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
 
 async def test_configure(app, client, query_mock):
     query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
-    resp = await response(client.post('/query/configure'))
-    assert resp == {}
+    await response(client.post('/query/configure'))
     # 5 * create / alter policy
     # 5 * drop / create continuous query
-    assert query_mock.call_count == (5*2) + (4*2)
+    assert query_mock.call_count == (5 * 2) + (4 * 2)
 
 
-async def test_configure_verbose(app, client, query_mock):
-    query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
-    resp = await response(client.post('/query/configure', json={'verbose': True}))
-    assert resp == {'configure': True}
-    # 5 * create / alter policy
-    # 5 * drop / create continuous query
-    # 1 * status query
-    assert query_mock.call_count == (5*2) + (4*2) + 1
-
-
-async def test_handler_defaults(app, client, query_mock):
-    # No defaults are set - absence of json body should raise exception
-    await response(client.post('/query/last_values'), 500)
+async def test_invalid_data(app, client, query_mock):
+    await response(client.post('/query/last_values'), 422)
 
 
 async def test_select_last_values(app, client, query_mock, last_values_result):
