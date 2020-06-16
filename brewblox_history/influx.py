@@ -44,10 +44,12 @@ class QueryClient(features.ServiceFeature):
     async def ping(self):
         return await self._client.ping()
 
-    async def query(self, query: str, **kwargs):
-        database = kwargs.get('database', DEFAULT_DATABASE)
-        epoch = kwargs.get('epoch', DEFAULT_EPOCH)
-        return await self._client.query(query.format(**kwargs), db=database, epoch=epoch)
+    async def query(self,
+                    query: str,
+                    database=DEFAULT_DATABASE,
+                    epoch=DEFAULT_EPOCH,
+                    **kwargs):
+        return await self._client.query(query.format(database=database, **kwargs), db=database, epoch=epoch)
 
 
 class InfluxWriter(repeater.RepeaterFeature):
