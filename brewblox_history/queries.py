@@ -316,7 +316,8 @@ async def select_last_values(client: influx.QueryClient,
                              fields: List[str],
                              database: str = None,
                              duration: str = None,
-                             policy: str = None
+                             policy: str = None,
+                             epoch: str = None,
                              ) -> List[dict]:
     """
     Selects the most recent value from all chosen fields.
@@ -338,7 +339,7 @@ async def select_last_values(client: influx.QueryClient,
         f'SELECT last("{prefix}{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
         for field in fields
     ]
-    query_response = await client.query(query=';'.join(queries))
+    query_response = await client.query(query=';'.join(queries), epoch=epoch)
 
     def extract(field, result):
         try:
