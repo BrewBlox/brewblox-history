@@ -117,7 +117,8 @@ async def test_last_values_sse(app, client, m_influx, last_values_result):
             '/sse/last_values',
             params=urlencode({
                 'measurement': 'sparkey',
-                'fields': ['val1', 'val2', 'val_none']
+                'fields': ['val1', 'val2', 'val_none'],
+                'epoch': 'ms',
             }, doseq=True)) as resp:
         resp_values = []
 
