@@ -107,6 +107,19 @@ async def test_running_writer(influx_mock, app, client, mocker):
     assert not writer._pending
     assert influx_mock.write.call_count == 1
 
+    writer.write_soon(
+        measurement='measurement',
+        fields=dict(field1=1, field2=2),
+        tags=dict(tag1=1, tag2=2)
+    )
+    writer.write_soon(
+        measurement='measurement',
+        fields={},
+    )
+
+    await asyncio.sleep(0.1)
+    assert influx_mock.write.call_count == 2
+
 
 async def test_run_error(influx_mock, app, client, mocker):
     data_writer = influx.get_data_writer(app)
@@ -180,3 +193,21 @@ async def test_avoid_overflow(influx_mock, app, client, fewer_max_points):
     assert influx_mock.write.call_count == 0
     influx_mock.create_database.side_effect = None
     await asyncio.sleep(0.1)
+
+
+async def test_write_error(influx_mock, app, client):
+    influx_mock.write.side_effect = influx.InfluxDBWriteError(Mock())
+    writer = influx.get_data_writer(app)
+
+    influx.write_soon(
+        app,
+        measurement='measurement',
+        fields=dict(field1=1, field2=2),
+        tags=dict(tag1=1, tag2=2)
+    )
+
+    await asyncio.sleep(0.1)
+    assert influx_mock.write.call_count == 1
+    assert writer.active
+    # Points are not kept after a write error
+    assert not writer._pending

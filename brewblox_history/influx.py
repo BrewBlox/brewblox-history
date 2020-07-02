@@ -5,8 +5,8 @@ from typing import List, Union
 
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionError
-from aioinflux import InfluxDBClient
-from brewblox_service import brewblox_logger, features, repeater
+from aioinflux import InfluxDBClient, InfluxDBError, InfluxDBWriteError
+from brewblox_service import brewblox_logger, features, repeater, strex
 
 LOGGER = brewblox_logger(__name__)
 
@@ -69,25 +69,35 @@ class InfluxWriter(repeater.RepeaterFeature):
                  database: str = None):
         super().__init__(app)
 
-        self._last_ok = True
+        self._last_err = 'init'
         self._pending = []
         self._database = database or DEFAULT_DATABASE
         self._policies = []
 
     def __str__(self):
-        return f'<{type(self).__name__} {self._database}>'
+        return f'<{type(self).__name__} db={self._database}>'
 
     async def prepare(self):
         """Overrides RepeaterFeature.prepare()"""
         pass
 
     async def run(self):
-        """Overrides RepeaterFeature.run()"""
+        """Periodically flush points to the database.
+
+        Points are appended to the buffer by using write_soon().
+        run() collects and writes all points every [write_interval].
+
+        Automatic reconnects are handled here.
+        Points are only removed from the buffer after the write completed.
+
+        Influx supports partially-valid writes:
+        if 1/5 points in a batch is invalid, the other 4 are still written.
+        If an InfluxDBWriteError is raised, written points are removed from the buffer.
+        """
         write_interval = self.app['config']['write_interval']
         try:
             async with InfluxDBClient(host=INFLUX_HOST, db=self._database) as client:
                 await client.ping()
-                LOGGER.info(f'Connected {self}')
                 await client.create_database(db=self._database)
 
                 while True:
@@ -99,24 +109,39 @@ class InfluxWriter(repeater.RepeaterFeature):
                         continue
 
                     points = self._pending.copy()
-                    await client.write(points)
-                    LOGGER.debug(f'Pushed {len(points)} points to database')
+                    LOGGER.debug(f'Pushing {len(points)} points to database')
+
+                    try:
+                        await client.write(points)
+                    except InfluxDBWriteError as ex:
+                        # Points were either written or invalid
+                        # Either way, no need to retry
+                        LOGGER.error(strex(ex))
+
                     # Make sure to keep points that were inserted during the write
                     self._pending = self._pending[len(points):]
 
-        except ClientConnectionError as ex:
-            if self._last_ok:
-                LOGGER.warn(f'Database connection failed {self} {ex}')
-                self._last_ok = False
-            await asyncio.sleep(RECONNECT_INTERVAL_S)
-            self._avoid_overflow()
+                    if self._last_err:
+                        LOGGER.info(f'{self} now writing')
+                        self._last_err = None
 
         except asyncio.CancelledError:
             raise
 
-        except Exception:
+        except (ClientConnectionError, InfluxDBError) as ex:
+            msg = strex(ex)
+            if msg != self._last_err:
+                LOGGER.warn(f'{self} {msg}')
+                self._last_err = msg
+            await asyncio.sleep(RECONNECT_INTERVAL_S)
+
+        except Exception as ex:
+            LOGGER.error(strex(ex))
             await asyncio.sleep(RECONNECT_INTERVAL_S)
             raise
+
+        finally:
+            self._avoid_overflow()
 
     def _avoid_overflow(self):
         # Ensure that a disconnected influx does not cause this service to run out of memory
