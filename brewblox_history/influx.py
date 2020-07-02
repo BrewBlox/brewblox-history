@@ -122,7 +122,7 @@ class InfluxWriter(repeater.RepeaterFeature):
                     self._pending = self._pending[len(points):]
 
                     if self._last_err:
-                        LOGGER.info(f'{self} now writing')
+                        LOGGER.info(f'{self} now active')
                         self._last_err = None
 
         except asyncio.CancelledError:
