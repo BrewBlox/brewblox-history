@@ -4,7 +4,7 @@ set -e
 
 pushd "$(dirname "$(readlink -f "$0")")/.." > /dev/null
 
-rm -rf dist docker/dist docker/binaries
+rm -rf dist docker/dist
 
 poetry install
 poetry build --format sdist
