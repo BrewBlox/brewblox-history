@@ -4,10 +4,10 @@ set -e
 
 pushd "$(dirname "$(readlink -f "$0")")/.." > /dev/null
 
-rm -rf dist docker/dist
-poetry build --format sdist
-cp -rf dist/ docker/
+rm -rf dist docker/dist docker/binaries
 
+poetry install
+poetry build --format sdist
 poetry export --without-hashes -f requirements.txt -o docker/requirements.txt
 
-popd > /dev/null
+cp -rf dist/ docker/
