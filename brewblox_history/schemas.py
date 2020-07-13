@@ -2,8 +2,7 @@
 Schemas used in API endpoints
 """
 
-from marshmallow import (Schema, ValidationError, fields, validate,
-                         validates_schema)
+from marshmallow import Schema, fields, validate
 
 
 class ObjectsQuerySchema(Schema):
@@ -54,16 +53,3 @@ class DebugQuerySchema(Schema):
 class MQTTHistorySchema(Schema):
     key = fields.String(required=True)
     data = fields.Dict(required=True)
-
-
-class MQTTStateSchema(Schema):
-    key = fields.String(required=True)
-    type = fields.String(required=True)
-    ttl = fields.String(required=False)
-    data = fields.Raw(required=True)
-
-    @validates_schema
-    def check_data_field(self, data, **kwargs):
-        if not isinstance(data['data'], (dict, list)):
-            raise ValidationError('"data" field must be a dict or list')
-        return data

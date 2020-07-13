@@ -30,7 +30,6 @@ from typing import Callable, Coroutine, List, Optional, Union
 
 import aioamqp
 from aiohttp import web
-
 from brewblox_service import brewblox_logger, features, repeater, strex
 
 LOGGER = brewblox_logger(__name__)
@@ -39,7 +38,7 @@ routes = web.RouteTableDef()
 EvtCallbackType_ = Callable[['EventSubscription', str, Union[dict, str]], Coroutine]
 ExchangeType_ = str  # Literal['topic', 'fanout', 'direct']
 
-RECONNECT_INTERVAL = timedelta(seconds=1)
+RECONNECT_INTERVAL = timedelta(seconds=10)
 PENDING_WAIT_TIMEOUT = timedelta(seconds=5)
 
 ##############################################################################

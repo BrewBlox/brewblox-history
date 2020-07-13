@@ -122,65 +122,10 @@ async def test_mqtt_relay(app, client, m_write_soon):
     await relay.on_event_message(topic, {'key': 'm', 'data': flat_value})
     await relay.on_event_message(topic, {'key': 'm', 'data': nested_empty_data})
     await relay.on_event_message(topic, {'pancakes': 'yummy'})
+    await relay.on_event_message(topic, {'key': 'm', 'data': 'no'})
 
     assert m_write_soon.call_args_list == [
         call(app, 'm', flat_data),
         call(app, 'm', flat_value),
         call(app, 'm', {}),
     ]
-
-
-async def test_retained_relay(app, client):
-    relay = relays.retained_relay(app)
-    m_publish = relays.mqtt.publish
-
-    await relay.on_request_message('brewcast/request/state', {})
-    m_publish.assert_not_awaited()
-
-    msg_1_false = {
-        'key': 'value_service',
-        'type': 'value',
-        'data': {'value': False}
-    }
-    msg_1_true = {
-        'key': 'value_service',
-        'type': 'value',
-        'data': {'value': True}
-    }
-    msg_2_false = {
-        'key': 'other_service',
-        'type': 'other',
-        'data': [False]
-    }
-    msg_2_true = {
-        'key': 'other_service',
-        'type': 'other',
-        'data': [True]
-    }
-    msg_3_invalid = {
-        'key': 'fantasy',
-        'type': 'emptiness',
-        'data': 'nonsense',
-    }
-    msg_cancelled = {
-        'key': 'cancelled',
-        'type': 'testing',
-        'data': {'soon': True},
-    }
-
-    await relay.on_state_message('brewcast/state', msg_1_false)
-    await relay.on_state_message('brewcast/state', msg_1_true)
-    await relay.on_state_message('brewcast/state', {'key': 'testface'})
-    await relay.on_state_message('brewcast/state', msg_2_false)
-    await relay.on_state_message('brewcast/state/other', msg_2_true)
-    await relay.on_state_message('brewcast/state/invalid', msg_3_invalid)
-    await relay.on_state_message('brewcast/cancelled', msg_cancelled)
-    await relay.on_state_message('brewcast/cancelled', None)
-    await relay.on_state_message('brewcast', None)
-
-    await relay.on_request_message('brewcast/request/state', {})
-
-    m_publish.assert_has_awaits([
-        call(app, 'brewcast/state', msg_1_true),
-        call(app, 'brewcast/state/other', msg_2_true),
-    ], any_order=True)
