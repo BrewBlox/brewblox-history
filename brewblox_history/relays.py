@@ -2,7 +2,6 @@
 Functionality for persisting eventbus messages to the database
 """
 
-import asyncio
 import collections
 from contextlib import suppress
 
@@ -206,63 +205,9 @@ class MQTTDataRelay(features.ServiceFeature):
         influx.write_soon(self.app, measurement, data)
 
 
-class MQTTRetainedRelay(features.ServiceFeature):
-
-    schema = schemas.MQTTStateSchema(unknown='exclude')
-
-    def __init__(self, app):
-        super().__init__(app)
-        self.state_topic = None
-        self.request_topic = 'brewcast/request/state'
-        self.cache = {}
-
-    async def startup(self, app: web.Application):
-        self.state_topic = app['config']['state_topic'] + '/#'
-        await mqtt.listen(app, self.state_topic, self.on_state_message)
-        await mqtt.subscribe(app, self.state_topic)
-        await mqtt.subscribe(app, self.request_topic)
-        await mqtt.listen(app, self.request_topic, self.on_request_message)
-
-    async def shutdown(self, app: web.Application):
-        with suppress(ValueError):
-            await mqtt.unsubscribe(app, self.state_topic)
-            await mqtt.unsubscribe(app, self.request_topic)
-            await mqtt.unlisten(app, self.state_topic, self.on_state_message)
-            await mqtt.unlisten(app, self.request_topic, self.on_request_message)
-
-    async def on_state_message(self, topic: str, message: mqtt.EventData_):
-        if message is None:
-            cleared = [k
-                       for k, (t, msg) in self.cache.items()
-                       if t == topic]
-            LOGGER.info(f'Cache clear: {topic} => {cleared}')
-            for k in cleared:
-                del self.cache[k]
-            return
-
-        errors = self.schema.validate(message)
-        if errors:
-            LOGGER.error(f'Invalid State message: {topic} {errors}')
-            return
-
-        key = message['key']
-        type = message['type']
-        self.cache[f'{key}__{type}'] = (topic, message)
-
-    async def on_request_message(self, topic: str, message: mqtt.EventData_):
-        LOGGER.info(f'Cache publish: {[*self.cache]}')
-        if self.cache:
-            await asyncio.gather(
-                *[mqtt.publish(self.app, topic, message)
-                  for (topic, message) in self.cache.values()],
-                return_exceptions=True
-            )
-
-
 def setup(app: web.Application):
     features.add(app, AMQPDataRelay(app))
     features.add(app, MQTTDataRelay(app))
-    features.add(app, MQTTRetainedRelay(app))
     app.router.add_routes(routes)
 
 
@@ -272,7 +217,3 @@ def amqp_relay(app: web.Application):
 
 def mqtt_relay(app: web.Application):
     return features.get(app, MQTTDataRelay)
-
-
-def retained_relay(app: web.Application):
-    return features.get(app, MQTTRetainedRelay)
