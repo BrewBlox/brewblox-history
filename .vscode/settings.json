@@ -4,12 +4,12 @@
     "python.terminal.activateEnvironment": true,
     "python.linting.flake8Enabled": true,
     "python.linting.pylintEnabled": false,
-    "python.jediEnabled": false,
     "python.testing.pytestArgs": [
         "--no-cov",
         "."
     ],
     "python.testing.unittestEnabled": false,
     "python.testing.nosetestsEnabled": false,
-    "python.testing.pytestEnabled": true
+    "python.testing.pytestEnabled": true,
+    "python.languageServer": "Pylance"
 }
