@@ -53,3 +53,34 @@ class DebugQuerySchema(Schema):
 class MQTTHistorySchema(Schema):
     key = fields.String(required=True)
     data = fields.Dict(required=True)
+
+
+class DatastoreValueSchema(Schema):
+    class Meta:
+        unknown = 'include'
+    id = fields.String(required=True)
+
+
+class DatastoreQuerySchema(Schema):
+    namespace = fields.String(required=True)
+
+
+class DatastoreKeyQuerySchema(DatastoreQuerySchema):
+    key = fields.String(required=True)
+
+
+class DatastoreKeyListQuerySchema(DatastoreQuerySchema):
+    keys = fields.List(fields.String(), required=True)
+
+
+class DatastoreKeyFilterQuerySchema(DatastoreQuerySchema):
+    keys = fields.List(fields.String(), required=False)
+    filter = fields.String(required=False)
+
+
+class DatastoreValueQuerySchema(DatastoreQuerySchema):
+    value = fields.Nested(DatastoreValueSchema(), required=True)
+
+
+class DatastoreValueListQuerySchema(DatastoreQuerySchema):
+    values = fields.Nested(DatastoreValueSchema(many=True), required=True)

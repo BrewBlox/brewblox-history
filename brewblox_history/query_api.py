@@ -4,7 +4,7 @@ REST endpoints for queries
 
 from aiohttp import web
 from aiohttp_apispec import docs, request_schema
-from brewblox_service import brewblox_logger, strex
+from brewblox_service import brewblox_logger
 
 from brewblox_history import influx, schemas
 from brewblox_history.queries import (configure_db, raw_query,
@@ -17,20 +17,10 @@ routes = web.RouteTableDef()
 
 def setup(app: web.Application):
     app.router.add_routes(routes)
-    app.middlewares.append(controller_error_middleware)
 
 
 def _client(request: web.Request) -> influx.QueryClient:
     return influx.get_client(request.app)
-
-
-@web.middleware
-async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
-    try:
-        return await handler(request)
-    except Exception as ex:
-        LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
-        return web.json_response({'error': strex(ex)}, status=500)
 
 
 @docs(

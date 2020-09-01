@@ -2,9 +2,11 @@
 Example of how to import and use the brewblox service
 """
 
-from brewblox_service import brewblox_logger, mqtt, scheduler, service
+from aiohttp import web
+from brewblox_service import brewblox_logger, mqtt, scheduler, service, strex
 
-from brewblox_history import amqp, influx, query_api, relays, sse
+from brewblox_history import (amqp, datastore_api, influx, query_api, redis,
+                              relays, sse)
 
 LOGGER = brewblox_logger(__name__)
 OLD_EXCHANGE = 'brewcast'
@@ -26,6 +28,15 @@ def create_parser(default_name='history'):
     return parser
 
 
+@web.middleware
+async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
+    try:
+        return await handler(request)
+    except Exception as ex:
+        LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
+        return web.json_response({'error': strex(ex)}, status=500)
+
+
 def main():
     app = service.create_app(parser=create_parser())
 
@@ -34,8 +45,12 @@ def main():
     mqtt.setup(app)
     influx.setup(app)
     query_api.setup(app)
+    redis.setup(app)
+    datastore_api.setup(app)
     sse.setup(app)
     relays.setup(app)
+
+    app.middlewares.append(controller_error_middleware)
 
     service.furnish(app)
     service.run(app)
