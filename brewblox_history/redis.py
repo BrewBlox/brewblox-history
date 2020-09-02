@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Optional
 
 import aioredis
 from aiohttp import web
@@ -38,53 +38,55 @@ class RedisClient(features.ServiceFeature):
             self._redis.close()
             await self._redis.wait_closed()
 
-    async def ping(self):
-        return {'ping': await self._redis.ping()}
+    async def _mkeys(self, namespace: str, ids: Optional[List[str]], filter: Optional[str]) -> List[str]:
+        keys = [keycat(namespace, key) for key in (ids or [])]
+        if filter is not None:
+            keys += [key.decode()
+                     for key in await self._redis.keys(keycat(namespace, filter))]
+        return keys
 
-    async def get(self, namespace: str, key: str) -> dict:
-        v = await self._redis.get(keycat(namespace, key))
+    async def ping(self):
+        await self._redis.ping()
+        return {'ping': 'pong'}
+
+    async def get(self, namespace: str, id: str) -> dict:
+        v = await self._redis.get(keycat(namespace, id))
         return json.loads(v)
 
-    async def mget(self, namespace: str, keys: List[str] = None, filter: str = None) -> List[dict]:
-        keys = keys or []
-        fkeys = []
-        if filter is not None:
-            fkeys = await self._redis.keys(keycat(namespace, filter))
+    async def mget(self, namespace: str, ids: List[str] = None, filter: str = None) -> List[dict]:
+        keys = await self._mkeys(namespace, ids, filter)
+        values = []
+        if keys:
+            values = await self._redis.mget(*keys)
 
-        if keys or fkeys:
-            values = await self._redis.mget(*[keycat(namespace, key) for key in keys], *fkeys)
-        else:
-            values = []
         return [json.loads(v) for v in values]
 
-    async def set(self, namespace: str, value: dict) -> dict:
-        key = value['id']
-        await self._redis.set(keycat(namespace, key), json.dumps(value))
-        await mqtt.publish(self.app, f'{TOPIC}/{namespace}', {'changed': [value]})
+    async def set(self, value: dict) -> dict:
+        id = value['id']
+        namespace = value['namespace']
+        await self._redis.set(keycat(namespace, id), json.dumps(value))
+        await mqtt.publish(self.app, TOPIC, {'changed': [value]})
         return value
 
-    async def mset(self, namespace: str, values: List[dict]) -> List[dict]:
-        args = flatten([[keycat(namespace, v['id']), json.dumps(v)] for v in values])
-        await self._redis.mset(*args)
-        await mqtt.publish(self.app, f'{TOPIC}/{namespace}', {'changed': values})
+    async def mset(self, values: List[dict]) -> List[dict]:
+        if values:
+            args = flatten([[keycat(v['namespace'], v['id']), json.dumps(v)] for v in values])
+            await self._redis.mset(*args)
+            await mqtt.publish(self.app, TOPIC, {'changed': values})
         return values
 
-    async def delete(self, namespace: str, key: str) -> int:
-        count = await self._redis.delete(keycat(namespace, key))
-        await mqtt.publish(self.app, f'{TOPIC}/{namespace}', {'deleted': [key]})
+    async def delete(self, namespace: str, id: str) -> int:
+        key = keycat(namespace, id)
+        count = await self._redis.delete(key)
+        await mqtt.publish(self.app, TOPIC, {'deleted': [key]})
         return {'count': count}
 
-    async def mdelete(self, namespace: str, keys: List[str] = None, filter: str = None) -> int:
-        keys = [keycat(namespace, key) for key in (keys or [])]
-        if filter is not None:
-            keys += await self._redis.keys(keycat(namespace, filter))
-
+    async def mdelete(self, namespace: str, ids: List[str] = None, filter: str = None) -> int:
+        keys = await self._mkeys(namespace, ids, filter)
+        count = 0
         if keys:
             count = await self._redis.delete(*keys)
-            basekeys = [keystrip(namespace, k) for k in keys]
-            await mqtt.publish(self.app, f'{TOPIC}/{namespace}', {'deleted': basekeys})
-        else:
-            count = 0
+            await mqtt.publish(self.app, TOPIC, {'deleted': keys})
 
         return {'count': count}
 

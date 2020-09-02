@@ -32,8 +32,8 @@ async def ping(request: web.Request) -> web.Response:
     summary='Get single object from database / namespace',
 )
 @routes.post('/datastore/get')
-@request_schema(schemas.DatastoreKeyQuerySchema)
-@response_schema(schemas.DatastoreValueSchema)
+@request_schema(schemas.DatastoreSingleQuerySchema)
+@response_schema(schemas.DatastoreSingleValueSchema)
 async def get(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).get(**request['data'])
@@ -45,8 +45,8 @@ async def get(request: web.Request) -> web.Response:
     summary='Get multiple objects from database / namespace',
 )
 @routes.post('/datastore/mget')
-@request_schema(schemas.DatastoreKeyFilterQuerySchema)
-@response_schema(schemas.DatastoreValueSchema(many=True))
+@request_schema(schemas.DatastoreMultiQuerySchema)
+@response_schema(schemas.DatastoreMultiValueSchema)
 async def mget(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).mget(**request['data'])
@@ -58,8 +58,8 @@ async def mget(request: web.Request) -> web.Response:
     summary='Write object to datastore',
 )
 @routes.post('/datastore/set')
-@request_schema(schemas.DatastoreValueQuerySchema)
-@response_schema(schemas.DatastoreValueSchema)
+@request_schema(schemas.DatastoreSingleValueSchema)
+@response_schema(schemas.DatastoreSingleValueSchema)
 async def set(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).set(**request['data'])
@@ -71,8 +71,8 @@ async def set(request: web.Request) -> web.Response:
     summary='Write multiple objects to datastore',
 )
 @routes.post('/datastore/mset')
-@request_schema(schemas.DatastoreValueListQuerySchema)
-@response_schema(schemas.DatastoreValueSchema(many=True))
+@request_schema(schemas.DatastoreMultiValueSchema)
+@response_schema(schemas.DatastoreMultiValueSchema)
 async def mset(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).mset(**request['data'])
@@ -84,7 +84,7 @@ async def mset(request: web.Request) -> web.Response:
     summary='Remove object from datastore',
 )
 @routes.post('/datastore/delete')
-@request_schema(schemas.DatastoreKeyQuerySchema)
+@request_schema(schemas.DatastoreSingleQuerySchema)
 async def delete(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).delete(**request['data'])
@@ -96,7 +96,7 @@ async def delete(request: web.Request) -> web.Response:
     summary='Remove object from datastore',
 )
 @routes.post('/datastore/mdelete')
-@request_schema(schemas.DatastoreKeyFilterQuerySchema)
+@request_schema(schemas.DatastoreMultiQuerySchema)
 async def mdelete(request: web.Request) -> web.Response:
     return web.json_response(
         await redis.get_redis(request.app).mdelete(**request['data'])

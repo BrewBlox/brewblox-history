@@ -59,28 +59,23 @@ class DatastoreValueSchema(Schema):
     class Meta:
         unknown = 'include'
     id = fields.String(required=True)
-
-
-class DatastoreQuerySchema(Schema):
     namespace = fields.String(required=True)
 
 
-class DatastoreKeyQuerySchema(DatastoreQuerySchema):
-    key = fields.String(required=True)
+class DatastoreSingleQuerySchema(Schema):
+    namespace = fields.String(required=True)
+    id = fields.String(required=True)
 
 
-class DatastoreKeyListQuerySchema(DatastoreQuerySchema):
-    keys = fields.List(fields.String(), required=True)
-
-
-class DatastoreKeyFilterQuerySchema(DatastoreQuerySchema):
-    keys = fields.List(fields.String(), required=False)
+class DatastoreMultiQuerySchema(Schema):
+    namespace = fields.String(required=True)
+    ids = fields.List(fields.String(), required=False)
     filter = fields.String(required=False)
 
 
-class DatastoreValueQuerySchema(DatastoreQuerySchema):
+class DatastoreSingleValueSchema(Schema):
     value = fields.Nested(DatastoreValueSchema(), required=True)
 
 
-class DatastoreValueListQuerySchema(DatastoreQuerySchema):
+class DatastoreMultiValueSchema(Schema):
     values = fields.Nested(DatastoreValueSchema(many=True), required=True)
