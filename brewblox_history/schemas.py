@@ -3,6 +3,7 @@ Schemas used in API endpoints
 """
 
 from marshmallow import Schema, fields, validate
+from marshmallow.utils import INCLUDE
 
 
 class ObjectsQuerySchema(Schema):
@@ -57,9 +58,10 @@ class MQTTHistorySchema(Schema):
 
 class DatastoreValueSchema(Schema):
     class Meta:
-        unknown = 'include'
-    id = fields.String(required=True)
+        unknown = INCLUDE
     namespace = fields.String(required=True)
+    id = fields.String(required=True,
+                       validate=validate.ContainsNoneOf(':'))
 
 
 class DatastoreSingleQuerySchema(Schema):
@@ -79,3 +81,7 @@ class DatastoreSingleValueSchema(Schema):
 
 class DatastoreMultiValueSchema(Schema):
     values = fields.Nested(DatastoreValueSchema(many=True), required=True)
+
+
+class DatastoreDeleteResponseSchema(Schema):
+    count = fields.Integer(required=True)

@@ -7,16 +7,12 @@ from brewblox_service import brewblox_logger, features, mqtt
 
 LOGGER = brewblox_logger(__name__)
 
-REDIS_HOST = 'redis'
+REDIS_URL = 'redis://redis'
 TOPIC = 'brewcast/datastore'
 
 
 def keycat(namespace: str, key: str) -> str:
-    return f'{namespace}:{key}'
-
-
-def keystrip(namespace: str, key: str) -> str:
-    return key[len(namespace)+1:]
+    return f'{namespace}:{key}' if namespace else key
 
 
 def flatten(data: List):
@@ -31,7 +27,7 @@ class RedisClient(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown(app)
-        self._redis = await aioredis.create_redis_pool(f'redis://{REDIS_HOST}')
+        self._redis = await aioredis.create_redis_pool(REDIS_URL)
 
     async def shutdown(self, app: web.Application):
         if self._redis:
@@ -45,20 +41,18 @@ class RedisClient(features.ServiceFeature):
                      for key in await self._redis.keys(keycat(namespace, filter))]
         return keys
 
-    async def ping(self):
-        await self._redis.ping()
-        return {'ping': 'pong'}
+    async def ping(self) -> str:
+        return (await self._redis.ping()).decode()
 
     async def get(self, namespace: str, id: str) -> dict:
-        v = await self._redis.get(keycat(namespace, id))
-        return json.loads(v)
+        resp = await self._redis.get(keycat(namespace, id))
+        return json.loads(resp) if resp else None
 
     async def mget(self, namespace: str, ids: List[str] = None, filter: str = None) -> List[dict]:
         keys = await self._mkeys(namespace, ids, filter)
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-
         return [json.loads(v) for v in values]
 
     async def set(self, value: dict) -> dict:
@@ -79,7 +73,7 @@ class RedisClient(features.ServiceFeature):
         key = keycat(namespace, id)
         count = await self._redis.delete(key)
         await mqtt.publish(self.app, TOPIC, {'deleted': [key]})
-        return {'count': count}
+        return count
 
     async def mdelete(self, namespace: str, ids: List[str] = None, filter: str = None) -> int:
         keys = await self._mkeys(namespace, ids, filter)
@@ -87,8 +81,7 @@ class RedisClient(features.ServiceFeature):
         if keys:
             count = await self._redis.delete(*keys)
             await mqtt.publish(self.app, TOPIC, {'deleted': keys})
-
-        return {'count': count}
+        return count
 
 
 def setup(app: web.Application):

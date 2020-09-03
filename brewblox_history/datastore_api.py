@@ -22,9 +22,9 @@ def setup(app: web.Application):
 )
 @routes.get('/datastore/ping')
 async def ping(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).ping()
-    )
+    return web.json_response({
+        'ping': await redis.get_redis(request.app).ping()
+    })
 
 
 @docs(
@@ -35,9 +35,9 @@ async def ping(request: web.Request) -> web.Response:
 @request_schema(schemas.DatastoreSingleQuerySchema)
 @response_schema(schemas.DatastoreSingleValueSchema)
 async def get(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).get(**request['data'])
-    )
+    return web.json_response({
+        'value': await redis.get_redis(request.app).get(**request['data'])
+    })
 
 
 @docs(
@@ -48,9 +48,9 @@ async def get(request: web.Request) -> web.Response:
 @request_schema(schemas.DatastoreMultiQuerySchema)
 @response_schema(schemas.DatastoreMultiValueSchema)
 async def mget(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).mget(**request['data'])
-    )
+    return web.json_response({
+        'values': await redis.get_redis(request.app).mget(**request['data'])
+    })
 
 
 @docs(
@@ -61,9 +61,9 @@ async def mget(request: web.Request) -> web.Response:
 @request_schema(schemas.DatastoreSingleValueSchema)
 @response_schema(schemas.DatastoreSingleValueSchema)
 async def set(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).set(**request['data'])
-    )
+    return web.json_response({
+        'value': await redis.get_redis(request.app).set(**request['data'])
+    })
 
 
 @docs(
@@ -74,9 +74,9 @@ async def set(request: web.Request) -> web.Response:
 @request_schema(schemas.DatastoreMultiValueSchema)
 @response_schema(schemas.DatastoreMultiValueSchema)
 async def mset(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).mset(**request['data'])
-    )
+    return web.json_response({
+        'values': await redis.get_redis(request.app).mset(**request['data'])
+    })
 
 
 @docs(
@@ -85,19 +85,21 @@ async def mset(request: web.Request) -> web.Response:
 )
 @routes.post('/datastore/delete')
 @request_schema(schemas.DatastoreSingleQuerySchema)
+@response_schema(schemas.DatastoreDeleteResponseSchema)
 async def delete(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).delete(**request['data'])
-    )
+    return web.json_response({
+        'count': await redis.get_redis(request.app).delete(**request['data'])
+    })
 
 
 @docs(
     tags=['Datastore'],
-    summary='Remove object from datastore',
+    summary='Remove multiple objects from datastore',
 )
 @routes.post('/datastore/mdelete')
 @request_schema(schemas.DatastoreMultiQuerySchema)
+@response_schema(schemas.DatastoreDeleteResponseSchema)
 async def mdelete(request: web.Request) -> web.Response:
-    return web.json_response(
-        await redis.get_redis(request.app).mdelete(**request['data'])
-    )
+    return web.json_response({
+        'count': await redis.get_redis(request.app).mdelete(**request['data'])
+    })
