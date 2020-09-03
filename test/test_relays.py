@@ -18,7 +18,6 @@ def m_write_soon(mocker):
 
 @pytest.fixture
 def m_prepare(mocker):
-    mocker.patch(TESTED + '.amqp.subscribe')
     mocker.patch(TESTED + '.mqtt.publish', AsyncMock())
     mocker.patch(TESTED + '.mqtt.subscribe', AsyncMock())
     mocker.patch(TESTED + '.mqtt.listen', AsyncMock())
@@ -36,51 +35,6 @@ def m_subscribe(mocker):
 async def app(app, mocker, m_write_soon, m_prepare):
     relays.setup(app)
     return app
-
-
-async def test_amqp_relay(app, client, m_write_soon):
-    relay = relays.amqp_relay(app)
-
-    data = {
-        'nest': {
-            'ed': {
-                'values': [
-                    'val',
-                    'var',
-                    True,
-                ]
-            }
-        }
-    }
-
-    nested_empty_data = {
-        'nest': {
-            'ed': {
-                'empty': {},
-                'data': [],
-            }
-        }
-    }
-
-    flat_data = {
-        'key/nest/ed/values/0': 'val',
-        'key/nest/ed/values/1': 'var',
-        'key/nest/ed/values/2': 1,
-    }
-
-    flat_value = {
-        'single/text': 'value',
-    }
-
-    await relay.on_event_message(None, 'route.key', data)
-    await relay.on_event_message(None, 'route.single', 'value')
-    await relay.on_event_message(None, 'route', nested_empty_data)
-
-    assert m_write_soon.call_args_list == [
-        call(app, 'route', flat_data),
-        call(app, 'route', flat_value),
-        call(app, 'route', {}),
-    ]
 
 
 async def test_mqtt_relay(app, client, m_write_soon):
