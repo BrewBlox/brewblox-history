@@ -5,18 +5,14 @@ Example of how to import and use the brewblox service
 from aiohttp import web
 from brewblox_service import brewblox_logger, mqtt, scheduler, service, strex
 
-from brewblox_history import (amqp, datastore_api, influx, query_api, redis,
-                              relays, sse)
+from brewblox_history import (datastore_api, influx, query_api, redis, relays,
+                              sse)
 
 LOGGER = brewblox_logger(__name__)
-OLD_EXCHANGE = 'brewcast'
 
 
 def create_parser(default_name='history'):
     parser = service.create_parser(default_name=default_name)
-    parser.add_argument('--broadcast-exchange',
-                        help='Eventbus exchange to which device services broadcast their state. [%(default)s]',
-                        default='brewcast.history')
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
                         default=5,
@@ -47,7 +43,6 @@ def main():
     app = service.create_app(parser=create_parser())
 
     scheduler.setup(app)
-    amqp.setup(app)
     mqtt.setup(app)
     influx.setup(app)
     query_api.setup(app)
