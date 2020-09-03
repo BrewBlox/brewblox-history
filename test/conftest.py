@@ -10,7 +10,8 @@ import pytest
 from brewblox_service import service
 
 from brewblox_history import influx
-from brewblox_history.__main__ import create_parser
+from brewblox_history.__main__ import (controller_error_middleware,
+                                       create_parser)
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -30,6 +31,8 @@ def app_config() -> dict:
         'broadcast_exchange': 'brewcast.history',
         'write_interval': 5,
         'poll_interval': 5,
+        'redis_url': 'redis://redis',
+        'datastore_topic': 'brewcast/datastore',
     }
 
 
@@ -43,6 +46,8 @@ def sys_args(app_config) -> list:
         '--broadcast-exchange', app_config['broadcast_exchange'],
         '--write-interval', app_config['write_interval'],
         '--poll-interval', app_config['poll_interval'],
+        '--redis-url', app_config['redis_url'],
+        '--datastore-topic', app_config['datastore_topic'],
         '--debug',
     ]]
 
@@ -58,6 +63,7 @@ def event_loop(loop):
 def app(sys_args):
     parser = create_parser('default')
     app = service.create_app(parser=parser, raw_args=sys_args[1:])
+    app.middlewares.append(controller_error_middleware)
     return app
 
 
