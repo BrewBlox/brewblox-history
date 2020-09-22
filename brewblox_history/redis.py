@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import List, Optional
 
@@ -6,6 +7,9 @@ from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
 LOGGER = brewblox_logger(__name__)
+
+
+INIT_RETRY_S = 2
 
 
 def keycat(namespace: str, key: str) -> str:
@@ -26,7 +30,12 @@ class RedisClient(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown(app)
-        self._redis = await aioredis.create_redis_pool(self.url)
+        try:
+            self._redis = await aioredis.create_redis_pool(self.url)
+        except aioredis.errors.ReplyError:  # pragma: no cover
+            LOGGER.info('Retrying Redis connection init...')
+            await asyncio.sleep(INIT_RETRY_S)
+            self._redis = await aioredis.create_redis_pool(self.url)
 
     async def shutdown(self, app: web.Application):
         if self._redis:
