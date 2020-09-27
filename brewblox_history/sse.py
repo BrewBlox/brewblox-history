@@ -4,13 +4,13 @@ Server-sent events implementation for relaying eventbus messages to front end
 
 import asyncio
 import json
-from collections import Counter
+from typing import List
+from urllib.parse import parse_qs
 
 from aiohttp import hdrs, web
 from aiohttp_apispec import docs, querystring_schema
 from aiohttp_sse import sse_response
 from brewblox_service import brewblox_logger, features, strex
-from multidict import MultiDict
 
 from brewblox_history import influx, queries, schemas
 
@@ -72,10 +72,11 @@ def _cors_headers(request):
     }
 
 
-def multi_to_dict(src: MultiDict) -> dict:
+# Manual parsing of query string params, due to an unexplained bug in some clients
+def qs_params(qs: str, list_keys: List[str]):
     return {
-        k: src.getall(k) if v > 1 else src.get(k)
-        for k, v in Counter(src.keys()).items()
+        k: v if k in list_keys else v[0]
+        for k, v in parse_qs(qs, strict_parsing=True).items()
     }
 
 
@@ -87,7 +88,9 @@ def multi_to_dict(src: MultiDict) -> dict:
 @querystring_schema(schemas.HistorySSEValuesSchema)
 async def subscribe_values(request: web.Request) -> web.Response:
     client = influx.get_client(request.app)
-    params = multi_to_dict(request.query)
+    LOGGER.info(f'qs == `{request.query_string}`')
+    params = qs_params(request.query_string, ['fields'])
+    LOGGER.info(f'params == {params}')
     params = await queries.configure_params(client, **params)
     open_ended = _check_open_ended(params)
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
@@ -137,7 +140,7 @@ async def subscribe_values(request: web.Request) -> web.Response:
 @querystring_schema(schemas.HistoryLastValuesSchema)
 async def subscribe_last_values(request: web.Request) -> web.Response:
     client = influx.get_client(request.app)
-    params = multi_to_dict(request.query)
+    params = qs_params(request.query_string, ['fields'])
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
     poll_interval = request.app['config']['poll_interval']
 
