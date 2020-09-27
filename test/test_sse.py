@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import pytest
 from brewblox_service import features
 from mock import AsyncMock
+from multidict import MultiDict
 
 from brewblox_history import sse
 
@@ -26,6 +27,19 @@ async def app(app, m_influx):
     app['config']['poll_interval'] = 0.001
     sse.setup(app)
     return app
+
+
+def test_multi_to_dict():
+    src = MultiDict([
+        ('a', 'a1'), ('a', 'a2'),
+        ('b', 'b'),
+        ('c', ['c1', 'c2'])
+    ])
+    assert sse.multi_to_dict(src) == {
+        'a': ['a1', 'a2'],
+        'b': 'b',
+        'c': ['c1', 'c2'],
+    }
 
 
 async def test_subscribe(app, client, m_influx, count_result, values_result):

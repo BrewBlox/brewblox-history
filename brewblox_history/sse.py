@@ -4,11 +4,13 @@ Server-sent events implementation for relaying eventbus messages to front end
 
 import asyncio
 import json
+from collections import Counter
 
 from aiohttp import hdrs, web
 from aiohttp_apispec import docs, querystring_schema
 from aiohttp_sse import sse_response
 from brewblox_service import brewblox_logger, features, strex
+from multidict import MultiDict
 
 from brewblox_history import influx, queries, schemas
 
@@ -70,6 +72,13 @@ def _cors_headers(request):
     }
 
 
+def multi_to_dict(src: MultiDict) -> dict:
+    return {
+        k: src.getall(k) if v > 1 else src.get(k)
+        for k, v in Counter(src.keys()).items()
+    }
+
+
 @docs(
     tags=['History'],
     summary='Open an SSE stream for Influx values'
@@ -78,7 +87,8 @@ def _cors_headers(request):
 @querystring_schema(schemas.HistorySSEValuesSchema)
 async def subscribe_values(request: web.Request) -> web.Response:
     client = influx.get_client(request.app)
-    params = await queries.configure_params(client, **request['querystring'])
+    params = multi_to_dict(request.query)
+    params = await queries.configure_params(client, **params)
     open_ended = _check_open_ended(params)
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
     poll_interval = request.app['config']['poll_interval']
@@ -127,7 +137,7 @@ async def subscribe_values(request: web.Request) -> web.Response:
 @querystring_schema(schemas.HistoryLastValuesSchema)
 async def subscribe_last_values(request: web.Request) -> web.Response:
     client = influx.get_client(request.app)
-    params = request['querystring']
+    params = multi_to_dict(request.query)
     alert: ShutdownAlert = features.get(request.app, ShutdownAlert)
     poll_interval = request.app['config']['poll_interval']
 
