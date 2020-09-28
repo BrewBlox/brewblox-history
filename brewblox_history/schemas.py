@@ -2,8 +2,16 @@
 Schemas used in API endpoints
 """
 
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, ValidationError, fields
 from marshmallow.utils import INCLUDE
+from marshmallow.validate import ContainsNoneOf, OneOf
+
+
+def validate(schema: Schema, data: dict):
+    errors = schema.validate(data)
+    if errors:
+        raise ValidationError(errors)
+    return data
 
 
 class ObjectsQuerySchema(Schema):
@@ -24,7 +32,7 @@ class HistoryQuerySchema(HistoryMeasurementSchema):
     approx_points = fields.Integer(required=False)
     policy = fields.String(required=False)
     epoch = fields.String(required=False,
-                          validate=validate.OneOf(['ns', 'u', 'µ', 'ms', 's', 'm', 'h']))
+                          validate=OneOf(['ns', 'u', 'µ', 'ms', 's', 'm', 'h']))
 
 
 class HistoryBoundedValuesSchema(HistoryQuerySchema):
@@ -61,7 +69,7 @@ class DatastoreValueSchema(Schema):
         unknown = INCLUDE
     namespace = fields.String(required=True)
     id = fields.String(required=True,
-                       validate=validate.ContainsNoneOf(':'))
+                       validate=ContainsNoneOf(':'))
 
 
 class DatastoreSingleQuerySchema(Schema):

@@ -8,10 +8,10 @@ from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
+import dateutil.parser as date_parser
 import dpath.util as dpath
 from aioinflux import InfluxDBError
 from brewblox_service import brewblox_logger
-from dateutil import parser as date_parser
 from pytimeparse import parse as parse_duration
 
 from brewblox_history import influx
