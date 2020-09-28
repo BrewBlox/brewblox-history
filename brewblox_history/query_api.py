@@ -5,9 +5,9 @@ REST endpoints for queries
 import asyncio
 
 from aiohttp import web
+from aiohttp.web_ws import WebSocketResponse
 from aiohttp_apispec import docs, request_schema
-from brewblox_service import brewblox_logger, features, strex
-from marshmallow import ValidationError
+from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import influx, schemas
 from brewblox_history.queries import (build_query, configure_db,
@@ -30,23 +30,11 @@ NS_MULT = {
 }
 
 
-class ShutdownAlert(features.ServiceFeature):
-    def __init__(self, app: web.Application):
-        super().__init__(app)
-        self._signal: asyncio.Event = None
-
-    @property
-    def shutdown_signal(self) -> asyncio.Event:
-        return self._signal
-
-    async def startup(self, _):
-        self._signal = asyncio.Event()
-
-    async def before_shutdown(self, _):
-        self._signal.set()
-
-    async def shutdown(self, _):
-        pass
+async def ws_receive(ws: WebSocketResponse):
+    # We're ignoring all incoming messages for now
+    # We still need to keep listening, to catch ping/close messages
+    async for msg in ws:
+        pass  # pragma: no cover
 
 
 def _check_open_ended(params: dict) -> bool:
@@ -60,11 +48,6 @@ def _check_open_ended(params: dict) -> bool:
 
 def _client(request: web.Request) -> influx.QueryClient:
     return influx.get_client(request.app)
-
-
-async def check_shutdown(app: web.Application):
-    if features.get(app, ShutdownAlert).shutdown_signal.is_set():
-        raise asyncio.CancelledError()
 
 
 @docs(
@@ -91,6 +74,17 @@ async def ping(request: web.Request) -> web.Response:
 
 @docs(
     tags=['History'],
+    summary='Configure database',
+)
+@routes.post('/query/configure')
+async def configure_db_query(request: web.Request) -> web.Response:
+    return web.json_response(
+        await configure_db(_client(request), verbose=False)
+    )
+
+
+@docs(
+    tags=['History'],
     summary='List available measurements and fields in the database',
 )
 @routes.post('/query/objects')
@@ -113,54 +107,6 @@ async def values_query(request: web.Request) -> web.Response:
     )
 
 
-@routes.get('/query/stream/values')
-async def stream_values(request: web.Request) -> web.Response:
-    client = _client(request)
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
-
-    async for msg in ws:
-        params = msg.json()
-        errors = schemas.HistorySSEValuesSchema().validate(params)
-        if errors:
-            LOGGER.error(f'Invalid values request: {errors}')
-            raise ValidationError(errors)
-
-        params = await configure_params(client, **params)
-        open_ended = _check_open_ended(params)
-        poll_interval = request.app['config']['poll_interval']
-
-        while True:
-            try:
-                await check_shutdown(request.app)
-                query = build_query(params)
-                data = await run_query(client, query, params)
-
-                if data.get('values'):
-                    await ws.send_json(data)
-                    # to get data updates we adjust the start parameter to result 'time' + 1
-                    # 'start' param when given in numbers must always be in ns
-                    mult = int(NS_MULT[params.get('epoch') or 'ns'])
-                    params['start'] = int(data['values'][-1][0] + 1) * mult
-                    params.pop('duration', None)
-
-                if not open_ended:
-                    break
-
-                await check_shutdown(request.app)
-                await asyncio.sleep(poll_interval)
-
-            except asyncio.CancelledError:
-                return ws
-
-            except Exception as ex:
-                msg = f'Exiting values stream with error: {strex(ex)}'
-                LOGGER.error(msg)
-                raise ex
-
-    return ws
-
-
 @docs(
     tags=['History'],
     summary='Get last values from database for each field',
@@ -173,52 +119,91 @@ async def last_values_query(request: web.Request) -> web.Response:
     )
 
 
-@routes.get('/query/stream/last_values')
-async def stream_last_values(request: web.Request) -> web.Response:
+@docs(
+    tags=['History'],
+    summary='Open a WebSocket to stream values from database as they are added',
+)
+@routes.get('/query/stream/values')
+async def stream_values(request: web.Request) -> web.Response:
     client = _client(request)
+    schema = schemas.HistorySSEValuesSchema()
     ws = web.WebSocketResponse()
-    await ws.prepare(request)
 
-    async for msg in ws:
-        params = msg.json()
-        errors = schemas.HistoryLastValuesSchema().validate(params)
-        if errors:
-            LOGGER.error(f'Invalid values request: {errors}')
-            raise ValidationError(errors)
-
+    try:
+        await ws.prepare(request)
+        params = await ws.receive_json(timeout=10)
+        params = schemas.validate(schema, params)
+        params = await configure_params(client, **params)
         poll_interval = request.app['config']['poll_interval']
+        open_ended = _check_open_ended(params)
+        recv_task = asyncio.create_task(ws_receive(ws))
 
-        while True:
-            try:
-                await check_shutdown(request.app)
-                data = await select_last_values(client, **params)
+        while not ws.closed:
+            query = build_query(params)
+            data = await run_query(client, query, params)
+
+            if data.get('values'):
                 await ws.send_json(data)
+                # to get data updates we adjust the start parameter to result 'time' + 1
+                # 'start' param when given in numbers must always be in ns
+                mult = int(NS_MULT[params.get('epoch') or 'ns'])
+                params['start'] = int(data['values'][-1][0] + 1) * mult
+                params.pop('duration', None)
 
-                await check_shutdown(request.app)
-                await asyncio.sleep(poll_interval)
+            if not open_ended:
+                break
 
-            except asyncio.CancelledError:
-                return ws
+            # Sleep for the poll interval,
+            # but wake up early if the websocket is closed
+            await asyncio.wait([recv_task], timeout=poll_interval)
 
-            except Exception as ex:
-                msg = f'Exiting last_values stream with error: {strex(ex)}'
-                LOGGER.error(msg)
-                raise ex
+    except asyncio.CancelledError:  # pragma: no cover
+        raise
+
+    except Exception as ex:
+        msg = f'Exiting values stream with error: {strex(ex)}'
+        LOGGER.error(msg)
+        raise ex
 
     return ws
 
 
 @docs(
     tags=['History'],
-    summary='Configure database',
+    summary='Open a WebSocket to periodically get last values for each field',
 )
-@routes.post('/query/configure')
-async def configure_db_query(request: web.Request) -> web.Response:
-    return web.json_response(
-        await configure_db(_client(request), verbose=False)
-    )
+@routes.get('/query/stream/last_values')
+async def stream_last_values(request: web.Request) -> web.Response:
+    client = _client(request)
+    schema = schemas.HistoryLastValuesSchema()
+    ws = web.WebSocketResponse()
+
+    try:
+        await ws.prepare(request)
+
+        params = await ws.receive_json(timeout=10)
+        params = schemas.validate(schema, params)
+        poll_interval = request.app['config']['poll_interval']
+        recv_task = asyncio.create_task(ws_receive(ws))
+
+        while not ws.closed:
+            data = await select_last_values(client, **params)
+            await ws.send_json(data)
+
+            # Sleep for the poll interval,
+            # but wake up early if the websocket is closed
+            await asyncio.wait([recv_task], timeout=poll_interval)
+
+    except asyncio.CancelledError:  # pragma: no cover
+        raise
+
+    except Exception as ex:
+        msg = f'Exiting last_values stream with error: {strex(ex)}'
+        LOGGER.error(msg)
+        raise ex
+
+    return ws
 
 
 def setup(app: web.Application):
-    features.add(app, ShutdownAlert(app))
     app.router.add_routes(routes)
