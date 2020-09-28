@@ -6,7 +6,7 @@ import json
 
 import pytest
 from brewblox_service.testing import response
-from mock import AsyncMock
+from mock import AsyncMock, Mock
 
 from brewblox_history import datastore_api, redis
 
@@ -16,6 +16,7 @@ TESTED = redis.__name__
 @pytest.fixture
 def m_redis(mocker):
     m = AsyncMock()
+    m.close = Mock()  # not a coroutine
     mocker.patch(TESTED + '.aioredis.create_redis_pool', AsyncMock(return_value=m))
     return m
 
