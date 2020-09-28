@@ -46,7 +46,7 @@ class HistoryValuesSchema(HistoryBoundedValuesSchema):
     order_by = fields.String(required=False)
 
 
-class HistorySSEValuesSchema(HistoryBoundedValuesSchema):
+class HistoryStreamedValuesSchema(HistoryBoundedValuesSchema):
     pass
 
 

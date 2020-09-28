@@ -32,17 +32,6 @@ webargs = "<6.0"
 
 [[package]]
 category = "main"
-description = "Server-sent events  support for aiohttp."
-name = "aiohttp-sse"
-optional = false
-python-versions = "*"
-version = "2.0.0"
-
-[package.dependencies]
-aiohttp = ">=3.0"
-
-[[package]]
-category = "main"
 description = "Asynchronous Python client for InfluxDB"
 name = "aioinflux"
 optional = false
@@ -598,7 +587,7 @@ docs = ["sphinx", "jaraco.packaging (>=3.2)", "rst.linker (>=1.9)"]
 testing = ["jaraco.itertools", "func-timeout"]
 
 [metadata]
-content-hash = "6506c851c6f129c95792695f704f7c454a2ceb961d74e051b17aace1ba537dcb"
+content-hash = "21bd7ec101092bd711e75053d03127b424d9622ebc38633f157dda60eafdd33f"
 python-versions = ">=3.7"
 
 [metadata.files]
@@ -618,10 +607,6 @@ aiohttp = [
 ]
 aiohttp-apispec = [
     {file = "aiohttp-apispec-2.2.1.tar.gz", hash = "sha256:557c8787ffe84165b89f581ce753795b8459d6f5d0776d3f32af0f5607ac1442"},
-]
-aiohttp-sse = [
-    {file = "aiohttp-sse-2.0.0.tar.gz", hash = "sha256:547e1eaa129749f090d02b31956215edbcde74ce99721f5f0ac902a9ccb1202e"},
-    {file = "aiohttp_sse-2.0.0-py3-none-any.whl", hash = "sha256:d0c6fbe655f590ab70800714121fa1f80f7a88a74ca8fbd0140a7dfb0b327fe2"},
 ]
 aioinflux = [
     {file = "aioinflux-0.9.0-py3-none-any.whl", hash = "sha256:f812d2814492164282c28cbe867d32cce3e8d256e116c6cf4675e896fe804953"},

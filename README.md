@@ -25,17 +25,9 @@ Changes are broadcast to the `--datastore-topic` topic.
 
 ## REST API
 
-### subscribe ([influx.py](./brewblox_history/influx.py))
-
-Adds another broadcast subscription. All data received with this subscription is written to InfluxDB.
-
 ### queries ([query_api.py](./brewblox_history/query_api.py))
 
-Public query API for external clients. Input is sanitized before being passed on to InfluxDB.
-
-### sse ([sse.py](./brewblox_history/sse.py))
-
-Subscribe to regular updates of database values. The endpoint arguments are comparable to the ones used to get values from `queries`. It will periodically yield newly received data as SSE data.
+REST API for the InfluxDB database. Also offers WebSocket endpoints for streamed values.
 
 ### datastore ([datastore_api](./brewblox_history/datastore_api.py))
 

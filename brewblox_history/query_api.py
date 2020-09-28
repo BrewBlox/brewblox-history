@@ -126,7 +126,7 @@ async def last_values_query(request: web.Request) -> web.Response:
 @routes.get('/query/stream/values')
 async def stream_values(request: web.Request) -> web.Response:
     client = _client(request)
-    schema = schemas.HistorySSEValuesSchema()
+    schema = schemas.HistoryStreamedValuesSchema()
     ws = web.WebSocketResponse()
 
     try:
