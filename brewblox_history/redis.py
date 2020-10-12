@@ -107,5 +107,5 @@ def setup(app: web.Application):
     features.add(app, RedisClient(app))
 
 
-def get_redis(app: web.Application) -> RedisClient:
+def fget(app: web.Application) -> RedisClient:
     return features.get(app, RedisClient)

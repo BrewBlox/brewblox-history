@@ -47,7 +47,7 @@ def _check_open_ended(params: dict) -> bool:
 
 
 def _client(request: web.Request) -> influx.QueryClient:
-    return influx.get_client(request.app)
+    return influx.fget_client(request.app)
 
 
 @docs(

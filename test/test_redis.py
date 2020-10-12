@@ -36,7 +36,7 @@ async def app(app, m_redis):
 
 @pytest.fixture
 async def rclient(app, client):
-    return redis.get_redis(app)
+    return redis.fget(app)
 
 
 async def test_ping(m_redis, client, rclient: redis.RedisClient):

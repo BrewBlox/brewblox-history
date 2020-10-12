@@ -12,10 +12,6 @@ LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
 
-def setup(app: web.Application):
-    app.router.add_routes(routes)
-
-
 @docs(
     tags=['Datastore'],
     summary='Ping datastore, checking availability',
@@ -23,7 +19,7 @@ def setup(app: web.Application):
 @routes.get('/datastore/ping')
 async def ping(request: web.Request) -> web.Response:
     return web.json_response({
-        'ping': await redis.get_redis(request.app).ping()
+        'ping': await redis.fget(request.app).ping()
     })
 
 
@@ -36,7 +32,7 @@ async def ping(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreSingleValueSchema)
 async def get(request: web.Request) -> web.Response:
     return web.json_response({
-        'value': await redis.get_redis(request.app).get(**request['data'])
+        'value': await redis.fget(request.app).get(**request['data'])
     })
 
 
@@ -49,7 +45,7 @@ async def get(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreMultiValueSchema)
 async def mget(request: web.Request) -> web.Response:
     return web.json_response({
-        'values': await redis.get_redis(request.app).mget(**request['data'])
+        'values': await redis.fget(request.app).mget(**request['data'])
     })
 
 
@@ -62,7 +58,7 @@ async def mget(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreSingleValueSchema)
 async def set(request: web.Request) -> web.Response:
     return web.json_response({
-        'value': await redis.get_redis(request.app).set(**request['data'])
+        'value': await redis.fget(request.app).set(**request['data'])
     })
 
 
@@ -75,7 +71,7 @@ async def set(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreMultiValueSchema)
 async def mset(request: web.Request) -> web.Response:
     return web.json_response({
-        'values': await redis.get_redis(request.app).mset(**request['data'])
+        'values': await redis.fget(request.app).mset(**request['data'])
     })
 
 
@@ -88,7 +84,7 @@ async def mset(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreDeleteResponseSchema)
 async def delete(request: web.Request) -> web.Response:
     return web.json_response({
-        'count': await redis.get_redis(request.app).delete(**request['data'])
+        'count': await redis.fget(request.app).delete(**request['data'])
     })
 
 
@@ -101,5 +97,9 @@ async def delete(request: web.Request) -> web.Response:
 @response_schema(schemas.DatastoreDeleteResponseSchema)
 async def mdelete(request: web.Request) -> web.Response:
     return web.json_response({
-        'count': await redis.get_redis(request.app).mdelete(**request['data'])
+        'count': await redis.fget(request.app).mdelete(**request['data'])
     })
+
+
+def setup(app: web.Application):
+    app.router.add_routes(routes)
