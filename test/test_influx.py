@@ -57,8 +57,8 @@ async def app(app, mocker, influx_mock, reduced_sleep):
 
 
 async def test_setup(app, client):
-    assert influx.get_data_writer(app)
-    assert influx.get_client(app)
+    assert influx.fget_writer(app)
+    assert influx.fget_client(app)
 
 
 async def test_runtime_construction(app, client):
@@ -76,7 +76,7 @@ async def test_runtime_construction(app, client):
 
 
 async def test_query_client(app, client, influx_mock):
-    query_client = influx.get_client(app)
+    query_client = influx.fget_client(app)
     retval = dict(key='val')
     influx_mock.query.return_value = retval
 
@@ -86,11 +86,11 @@ async def test_query_client(app, client, influx_mock):
 
 
 async def test_ping(app, client, influx_mock):
-    await influx.get_client(app).ping()
+    await influx.fget_client(app).ping()
 
 
 async def test_running_writer(influx_mock, app, client, mocker):
-    writer = influx.get_data_writer(app)
+    writer = influx.fget_writer(app)
 
     writer.write_soon(
         measurement='measurement',
@@ -122,7 +122,7 @@ async def test_running_writer(influx_mock, app, client, mocker):
 
 
 async def test_run_error(influx_mock, app, client, mocker):
-    data_writer = influx.get_data_writer(app)
+    data_writer = influx.fget_writer(app)
     influx_mock.ping.side_effect = RuntimeError
 
     await asyncio.sleep(0.1)
@@ -131,7 +131,7 @@ async def test_run_error(influx_mock, app, client, mocker):
 
 
 async def test_retry_generate_connection(influx_mock, app, client):
-    writer = influx.get_data_writer(app)
+    writer = influx.fget_writer(app)
     await writer.shutdown(app)
 
     influx_mock.ping.reset_mock()
@@ -149,7 +149,7 @@ async def test_retry_generate_connection(influx_mock, app, client):
 
 
 async def test_reconnect(influx_mock, app, client):
-    writer = influx.get_data_writer(app)
+    writer = influx.fget_writer(app)
 
     influx_mock.create_database.side_effect = ClientConnectionError
 
@@ -177,7 +177,7 @@ async def test_reconnect(influx_mock, app, client):
 async def test_avoid_overflow(influx_mock, app, client, fewer_max_points):
     influx_mock.create_database.side_effect = ClientConnectionError
 
-    writer = influx.get_data_writer(app)
+    writer = influx.fget_writer(app)
     await writer.shutdown(app)
     await writer.startup(app)
 
@@ -197,7 +197,7 @@ async def test_avoid_overflow(influx_mock, app, client, fewer_max_points):
 
 async def test_write_error(influx_mock, app, client):
     influx_mock.write.side_effect = influx.InfluxDBWriteError(Mock())
-    writer = influx.get_data_writer(app)
+    writer = influx.fget_writer(app)
 
     influx.write_soon(
         app,

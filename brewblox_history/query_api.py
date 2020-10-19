@@ -47,7 +47,7 @@ def _check_open_ended(params: dict) -> bool:
 
 
 def _client(request: web.Request) -> influx.QueryClient:
-    return influx.get_client(request.app)
+    return influx.fget_client(request.app)
 
 
 @docs(
@@ -69,7 +69,9 @@ async def custom_query(request: web.Request) -> web.Response:
 @routes.get('/ping')
 async def ping(request: web.Request) -> web.Response:
     await _client(request).ping()
-    return web.json_response({'ok': True})
+    return web.json_response(
+        data={'ok': True},
+        headers={'Cache-Control': 'private, no-store, max-age=0'})
 
 
 @docs(

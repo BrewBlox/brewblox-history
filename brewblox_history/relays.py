@@ -122,5 +122,5 @@ def setup(app: web.Application):
     app.router.add_routes(routes)
 
 
-def mqtt_relay(app: web.Application):
+def fget(app: web.Application):
     return features.get(app, MQTTDataRelay)

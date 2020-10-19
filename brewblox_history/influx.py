@@ -178,11 +178,11 @@ def setup(app):
     features.add(app, InfluxWriter(app, database=DEFAULT_DATABASE))
 
 
-def get_client(app: web.Application) -> QueryClient:
+def fget_client(app: web.Application) -> QueryClient:
     return features.get(app, QueryClient)
 
 
-def get_data_writer(app: web.Application) -> InfluxWriter:
+def fget_writer(app: web.Application) -> InfluxWriter:
     return features.get(app, InfluxWriter)
 
 
@@ -191,4 +191,4 @@ def write_soon(app: web.Application,
                fields: dict,
                *args,
                **kwargs):
-    get_data_writer(app).write_soon(measurement, fields, *args, **kwargs)
+    fget_writer(app).write_soon(measurement, fields, *args, **kwargs)

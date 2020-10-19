@@ -14,7 +14,7 @@ TESTED = query_api.__name__
 
 @pytest.fixture
 def influx_mock(mocker):
-    m = mocker.patch(TESTED + '.influx.get_client').return_value
+    m = mocker.patch(TESTED + '.influx.fget_client').return_value
     return m
 
 

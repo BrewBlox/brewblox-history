@@ -38,7 +38,7 @@ async def app(app, mocker, m_write_soon, m_prepare):
 
 
 async def test_mqtt_relay(app, client, m_write_soon):
-    relay = relays.mqtt_relay(app)
+    relay = relays.fget(app)
 
     data = {
         'nest': {
