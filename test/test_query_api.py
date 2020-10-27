@@ -2,8 +2,11 @@
 Tests history.query_api
 """
 
+import asyncio
+
 import pytest
 from aiohttp import ClientWebSocketResponse, WSMsgType
+from brewblox_service import features
 from brewblox_service.testing import response
 from mock import AsyncMock, call
 
@@ -77,6 +80,7 @@ def field_keys_result():
 async def test_ping(app, client, influx_mock):
     influx_mock.ping = AsyncMock()
     await response(client.get('/ping'))
+    await response(client.get('/query/ping'))
 
 
 async def test_custom_query(app, client, query_mock):
@@ -487,64 +491,115 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
     }), 500)
 
 
+async def test_stream_noop(app, client, query_mock):
+    async with client.ws_connect('/query/stream') as ws:
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+
+
 async def test_stream_values_once(app, client, query_mock, count_result, values_result):
     query_mock.side_effect = [count_result, values_result]
 
-    async with client.ws_connect('/query/stream/values') as ws:
+    async with client.ws_connect('/query/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
-            'end': '2018-10-10T12:00:00.000+02:00',
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+                'end': '2018-10-10T12:00:00.000+02:00',
+            },
         })
-        resp = await ws.receive_json()
-        assert resp['columns']
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.CLOSE
+        resp = await ws.receive_json(timeout=2)
+        print(resp)
+        assert resp['data']['columns']
 
 
 async def test_stream_values(app, client, query_mock, count_result, values_result):
     query_mock.side_effect = [count_result] + [{'results': []}] + [values_result]*100
 
-    async with client.ws_connect('/query/stream/values') as ws:
+    async with client.ws_connect('/query/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
         })
-        await ws.send_json({'ignored': True})
-        resp1 = await ws.receive_json()
-        resp2 = await ws.receive_json()
+        resp1 = await ws.receive_json(timeout=2)
+        resp2 = await ws.receive_json(timeout=2)
+        print(resp1)
+        assert resp1['data']['initial'] is True
+        assert resp2['data']['initial'] is False
+        # Otherwise same
+        resp1['data']['initial'] = False
         assert resp1 == resp2
 
 
-async def test_stream_values_invalid(app, client):
-    async with client.ws_connect('/query/stream/values') as ws:
+async def test_stream_invalid(app, client):
+    async with client.ws_connect('/query/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({'empty': True})
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.ERROR
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
+
+        await ws.send_str('{not a json obj')
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
+
+        await ws.send_bytes(b'0')
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
 
 
 async def test_stream_last_values(app, client, query_mock, last_values_result):
     query_mock.side_effect = lambda **kwargs: last_values_result
 
-    async with client.ws_connect('/query/stream/last_values') as ws:
+    async with client.ws_connect('/query/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
+            'id': 'test',
+            'command': 'last_values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
         })
-        await ws.send_json({'ignored': True})
-        resp1 = await ws.receive_json()
-        resp2 = await ws.receive_json()
-        assert resp1[0]['field']
+        resp1 = await ws.receive_json(timeout=5)
+        resp2 = await ws.receive_json(timeout=5)
+        await ws.send_json({
+            'id': 'test',
+            'command': 'stop',
+        })
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+        assert resp1['data'][0]['field']
         assert resp1 == resp2
 
 
-async def test_stream_last_values_invalid(app, client):
-    async with client.ws_connect('/query/stream/last_values') as ws:
+async def test_stream_error(app, client, query_mock):
+    query_mock.side_effect = lambda **kwargs: RuntimeError()
+    async with client.ws_connect('/query/stream') as ws:
+        await ws.send_json({
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
+        })
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+
+
+async def test_close_sockets(app, client):
+    async with client.ws_connect('/query/stream') as ws:
         ws: ClientWebSocketResponse
-        await ws.send_json({'empty': True})
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.ERROR
+        closer = features.get(app, query_api.SocketCloser)
+        await closer.before_shutdown(app)
+        msg = await ws.receive(1)
+        assert msg.type != WSMsgType.TEXT
+    await asyncio.sleep(0.1)

@@ -71,8 +71,8 @@ def _find_time_frame(start: Optional[str], duration: Optional[str], end: Optiona
     elif end:
         clause = ' WHERE time <= {end}'
 
+    # This path should never be reached
     else:  # pragma: no cover
-        # This path should never be reached
         raise RuntimeError('Unexpected code path while determining time frame!')
 
     return clause
@@ -100,6 +100,7 @@ def nanosecond_date(dt):
 
 async def configure_params(client: influx.QueryClient,
                            measurement: str,
+                           streamed: bool = False,
                            fields: Optional[List[str]] = ['*'],
                            database: Optional[str] = influx.DEFAULT_DATABASE,
                            start: Optional[str] = None,
@@ -115,6 +116,10 @@ async def configure_params(client: influx.QueryClient,
     start = nanosecond_date(start)
     duration = duration if not duration else duration.replace(' ', '')
     end = nanosecond_date(end)
+
+    if streamed:
+        limit = None
+        order_by = None
 
     approx_points = int(approx_points)
     select_params = _prune(locals(), ['measurement', 'database', 'policy',
@@ -318,6 +323,7 @@ async def select_last_values(client: influx.QueryClient,
                              duration: str = None,
                              policy: str = None,
                              epoch: str = None,
+                             **_
                              ) -> List[dict]:
     """
     Selects the most recent value from all chosen fields.

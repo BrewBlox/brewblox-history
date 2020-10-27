@@ -23,7 +23,7 @@ async def ping(request: web.Request) -> web.Response:
         headers={
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
-            'Expires': '0'
+            'Expires': '0',
         })
 
 
