@@ -5,7 +5,7 @@ Example of how to import and use the brewblox service
 from aiohttp import web
 from brewblox_service import brewblox_logger, mqtt, scheduler, service, strex
 
-from brewblox_history import datastore_api, influx, query_api, redis, relays
+from brewblox_history import datastore_api, history_api, influx, redis, relays
 
 LOGGER = brewblox_logger(__name__)
 
@@ -44,7 +44,7 @@ def main():
     scheduler.setup(app)
     mqtt.setup(app)
     influx.setup(app)
-    query_api.setup(app)
+    history_api.setup(app)
     redis.setup(app)
     datastore_api.setup(app)
     relays.setup(app)
