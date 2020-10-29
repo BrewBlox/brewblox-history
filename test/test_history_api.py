@@ -1,15 +1,18 @@
 """
-Tests history.query_api
+Tests history.history_api
 """
+
+import asyncio
 
 import pytest
 from aiohttp import ClientWebSocketResponse, WSMsgType
+from brewblox_service import features
 from brewblox_service.testing import response
 from mock import AsyncMock, call
 
-from brewblox_history import influx, queries, query_api
+from brewblox_history import history_api, influx, queries
 
-TESTED = query_api.__name__
+TESTED = history_api.__name__
 
 
 @pytest.fixture
@@ -27,7 +30,7 @@ def query_mock(influx_mock):
 @pytest.fixture
 async def app(app, mocker, query_mock):
     app['config']['poll_interval'] = 0.05
-    query_api.setup(app)
+    history_api.setup(app)
     return app
 
 
@@ -76,7 +79,8 @@ def field_keys_result():
 
 async def test_ping(app, client, influx_mock):
     influx_mock.ping = AsyncMock()
-    await response(client.get('/ping'))
+    await response(client.get('/history/ping'))
+    await response(client.get('/query/ping'))
 
 
 async def test_custom_query(app, client, query_mock):
@@ -92,7 +96,7 @@ async def test_custom_query(app, client, query_mock):
 async def test_list_objects(app, client, query_mock, field_keys_result):
     query_mock.side_effect = lambda **kwargs: field_keys_result
 
-    resp_content = await response(client.post('/query/objects', json={}))
+    resp_content = await response(client.post('/history/objects', json={}))
 
     assert resp_content == {
         'average_temperature': [
@@ -104,8 +108,8 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
         ]
     }
 
-    await response(client.post('/query/objects', json={'measurement': 'measy', 'injection': 'drop tables'}))
-    await response(client.post('/query/objects', json={'database': 'the_internet'}))
+    await response(client.post('/history/objects', json={'measurement': 'measy', 'injection': 'drop tables'}))
+    await response(client.post('/history/objects', json={'database': 'the_internet'}))
 
     assert query_mock.mock_calls == [
         call(query='SHOW FIELD KEYS'),
@@ -118,7 +122,7 @@ async def test_single_key(app, client, query_mock, values_result):
     """Asserts that ['single'] is split to 'single', and not 's,i,n,g,l,e'"""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    await response(client.post('/query/values', json={'measurement': 'm', 'fields': ['single'], 'approx_points': 0}))
+    await response(client.post('/history/values', json={'measurement': 'm', 'fields': ['single'], 'approx_points': 0}))
 
     query_mock.assert_called_once_with(
         query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
@@ -134,7 +138,7 @@ async def test_quote_fields(app, client, query_mock, values_result):
     """field keys must be quoted with double quotes. '*' is an exception."""
     query_mock.side_effect = lambda **kwargs: values_result
 
-    await response(client.post('/query/values', json={
+    await response(client.post('/history/values', json={
         'measurement': 'm',
         'fields': ['first', 'second'],
         'approx_points': 0,
@@ -153,7 +157,7 @@ async def test_quote_fields(app, client, query_mock, values_result):
 async def test_value_data_format(app, client, query_mock, values_result):
     query_mock.side_effect = lambda **kwargs: values_result
 
-    data = await response(client.post('/query/values', json={'measurement': 'm', 'approx_points': 0}))
+    data = await response(client.post('/history/values', json={'measurement': 'm', 'approx_points': 0}))
 
     assert data['name'] == 'average_temperature'
     assert len(data['values']) == 10
@@ -243,12 +247,12 @@ async def test_get_values(input_args, query_str, app, client, influx_mock, query
     quoted_keys = [f'"{k}"' for k in input_args.get('fields', [])] or ['*']
     call_args['fields'] = ','.join(quoted_keys)
 
-    await response(client.post('/query/values', json=input_args))
+    await response(client.post('/history/values', json=input_args))
     query_mock.assert_called_once_with(**call_args)
 
 
 async def test_invalid_time_frame(app, client):
-    res = await response(client.post('/query/values', json={
+    res = await response(client.post('/history/values', json={
         'measurement': 'm',
         'start': '2018-10-10T12:00:00.000+02:00',
         'duration': '1m',
@@ -258,7 +262,7 @@ async def test_invalid_time_frame(app, client):
 
 
 async def test_unparsable_timeframe(app, client):
-    res = await response(client.post('/query/values',
+    res = await response(client.post('/history/values',
                                      json={'measurement': 'm', 'start': 'x'}),
                          500)
     assert 'Error' in res['error']
@@ -267,13 +271,13 @@ async def test_unparsable_timeframe(app, client):
 async def test_no_values_found(app, client, query_mock):
     query_mock.side_effect = {'results': []}
 
-    res = await response(client.post('/query/values', json={'measurement': 'm', 'approx_points': 0}))
+    res = await response(client.post('/history/values', json={'measurement': 'm', 'approx_points': 0}))
     assert 'values' not in res
 
 
 async def test_error_response(app, client, query_mock):
     query_mock.side_effect = RuntimeError('Whoops.')
-    resp = await response(client.post('/query/objects', json={}), 500)
+    resp = await response(client.post('/history/objects', json={}), 500)
     assert 'Whoops.' in resp['error']
 
 
@@ -301,7 +305,7 @@ async def test_select_policy(
         values_result):
     query_mock.side_effect = [count_result, values_result]
 
-    await response(client.post('/query/values', json={
+    await response(client.post('/history/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2', used_prefix + 'v'],
         'approx_points': approx_points
@@ -341,7 +345,7 @@ async def test_select_sparse_policy(app, client, query_mock, count_result, value
     count_result['results'][0]['series'][0]['values'][0][1] = 180  # was 600
     query_mock.side_effect = [count_result, values_result]
 
-    await response(client.post('/query/values', json={
+    await response(client.post('/history/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
         'approx_points': 300
@@ -375,7 +379,7 @@ async def test_empty_downsampling(app, client, query_mock, values_result):
     Default to highest resolution (autogen) when no rows are found in database
     """
     query_mock.side_effect = [{'results': [{'statement_id': id} for i in range(5)]}, values_result]
-    await response(client.post('/query/values', json={
+    await response(client.post('/history/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
         'approx_points': 100
@@ -410,7 +414,7 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
     del count_result['results'][0]
     query_mock.side_effect = [count_result, values_result]
 
-    await response(client.post('/query/values', json={
+    await response(client.post('/history/values', json={
         'measurement': 'm',
         'fields': ['k1', 'k2'],
         'approx_points': 300,
@@ -445,20 +449,20 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
 
 async def test_configure(app, client, query_mock):
     query_mock.side_effect = lambda *args, **kwargs: {'configure': True}
-    await response(client.post('/query/configure'))
+    await response(client.post('/history/configure'))
     # 5 * create / alter policy
     # 5 * drop / create continuous query
     assert query_mock.call_count == (5 * 2) + (4 * 2)
 
 
 async def test_invalid_data(app, client, query_mock):
-    await response(client.post('/query/last_values'), 422)
+    await response(client.post('/history/last_values'), 422)
 
 
 async def test_select_last_values(app, client, query_mock, last_values_result):
     query_mock.side_effect = lambda **kwargs: last_values_result
 
-    resp = await response(client.post('/query/last_values', json={
+    resp = await response(client.post('/history/last_values', json={
         'measurement': 'sparkey',
         'fields': ['val1', 'val2', 'val_none'],
     }))
@@ -480,71 +484,122 @@ async def test_select_last_values(app, client, query_mock, last_values_result):
         },
     ]
 
-    await response(client.post('/query/last_values', json={
+    await response(client.post('/history/last_values', json={
         'measurement': 'sparkey',
         'fields': ['val1', 'val2', 'val_none'],
         'policy': 'economic'
     }), 500)
 
 
+async def test_stream_noop(app, client, query_mock):
+    async with client.ws_connect('/history/stream') as ws:
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+
+
 async def test_stream_values_once(app, client, query_mock, count_result, values_result):
     query_mock.side_effect = [count_result, values_result]
 
-    async with client.ws_connect('/query/stream/values') as ws:
+    async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
-            'end': '2018-10-10T12:00:00.000+02:00',
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+                'end': '2018-10-10T12:00:00.000+02:00',
+            },
         })
-        resp = await ws.receive_json()
-        assert resp['columns']
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.CLOSE
+        resp = await ws.receive_json(timeout=2)
+        print(resp)
+        assert resp['data']['columns']
 
 
 async def test_stream_values(app, client, query_mock, count_result, values_result):
     query_mock.side_effect = [count_result] + [{'results': []}] + [values_result]*100
 
-    async with client.ws_connect('/query/stream/values') as ws:
+    async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
         })
-        await ws.send_json({'ignored': True})
-        resp1 = await ws.receive_json()
-        resp2 = await ws.receive_json()
+        resp1 = await ws.receive_json(timeout=2)
+        resp2 = await ws.receive_json(timeout=2)
+        print(resp1)
+        assert resp1['data']['initial'] is True
+        assert resp2['data']['initial'] is False
+        # Otherwise same
+        resp1['data']['initial'] = False
         assert resp1 == resp2
 
 
-async def test_stream_values_invalid(app, client):
-    async with client.ws_connect('/query/stream/values') as ws:
+async def test_stream_invalid(app, client):
+    async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({'empty': True})
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.ERROR
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
+
+        await ws.send_str('{not a json obj')
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
+
+        await ws.send_bytes(b'0')
+        resp = await ws.receive_json(timeout=2)
+        assert resp['error']
 
 
 async def test_stream_last_values(app, client, query_mock, last_values_result):
     query_mock.side_effect = lambda **kwargs: last_values_result
 
-    async with client.ws_connect('/query/stream/last_values') as ws:
+    async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
         await ws.send_json({
-            'measurement': 'm',
-            'fields': ['k1', 'k2'],
+            'id': 'test',
+            'command': 'last_values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
         })
-        await ws.send_json({'ignored': True})
-        resp1 = await ws.receive_json()
-        resp2 = await ws.receive_json()
-        assert resp1[0]['field']
+        resp1 = await ws.receive_json(timeout=5)
+        resp2 = await ws.receive_json(timeout=5)
+        await ws.send_json({
+            'id': 'test',
+            'command': 'stop',
+        })
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+        assert resp1['data'][0]['field']
         assert resp1 == resp2
 
 
-async def test_stream_last_values_invalid(app, client):
-    async with client.ws_connect('/query/stream/last_values') as ws:
+async def test_stream_error(app, client, query_mock):
+    query_mock.side_effect = lambda **kwargs: RuntimeError()
+    async with client.ws_connect('/history/stream') as ws:
+        await ws.send_json({
+            'id': 'test',
+            'command': 'values',
+            'query': {
+                'measurement': 'm',
+                'fields': ['k1', 'k2'],
+            },
+        })
+        with pytest.raises(asyncio.TimeoutError):
+            await ws.receive_json(timeout=0.1)
+
+
+async def test_close_sockets(app, client):
+    async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
-        await ws.send_json({'empty': True})
-        resp = await ws.receive()
-        assert resp.type == WSMsgType.ERROR
+        closer = features.get(app, history_api.SocketCloser)
+        await closer.before_shutdown(app)
+        msg = await ws.receive(1)
+        assert msg.type != WSMsgType.TEXT
+    await asyncio.sleep(0.1)

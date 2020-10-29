@@ -20,7 +20,11 @@ routes = web.RouteTableDef()
 async def ping(request: web.Request) -> web.Response:
     return web.json_response(
         data={'ping': await redis.fget(request.app).ping()},
-        headers={'Cache-Control': 'private, no-store, max-age=0'})
+        headers={
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+        })
 
 
 @docs(
