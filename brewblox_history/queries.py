@@ -2,7 +2,6 @@
 Builds Influx queries
 """
 
-import json
 import re
 import time
 from contextlib import suppress

@@ -91,7 +91,7 @@ async def custom_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Ping the database',
 )
-@routes.get('/history/ping')
+@routes.get(r'/{prefix:(history|query)}/ping')
 async def ping_query(request: web.Request) -> web.Response:
     await _client(request).ping()
     return web.json_response(
@@ -107,7 +107,7 @@ async def ping_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Configure database',
 )
-@routes.post('/history/configure')
+@routes.post(r'/{prefix:(history|query)}/configure')
 async def configure_db_query(request: web.Request) -> web.Response:
     return web.json_response(
         await configure_db(_client(request), verbose=False)
@@ -118,7 +118,7 @@ async def configure_db_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='List available measurements and fields in the database',
 )
-@routes.post('/history/fields')
+@routes.post(r'/{prefix:(history|query)}/fields')
 @request_schema(schemas.FieldsQuerySchema)
 async def fields_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -130,7 +130,7 @@ async def fields_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Get values from database',
 )
-@routes.post('/history/values')
+@routes.post(r'/{prefix:(history|query)}/values')
 @request_schema(schemas.HistoryQuerySchema)
 async def values_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -142,7 +142,7 @@ async def values_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Get last values from database for each field',
 )
-@routes.post('/history/last_values')
+@routes.post(r'/{prefix:(history|query)}/last_values')
 @request_schema(schemas.HistoryQuerySchema)
 async def last_values_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -199,7 +199,7 @@ async def _last_values(app: web.Application, ws: web.WebSocketResponse, id: str,
     tags=['History'],
     summary='Open a WebSocket to stream values from database as they are added',
 )
-@routes.get('/history/stream')
+@routes.get(r'/{prefix:(history|query)}/stream')
 async def stream(request: web.Request) -> web.Response:
     app = request.app
     ws = web.WebSocketResponse()
