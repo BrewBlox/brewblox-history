@@ -318,7 +318,6 @@ async def show_all_fields(client: influx.QueryClient,
         measurements = [measurement]
     else:
         response = await client.query('SHOW MEASUREMENTS')
-        LOGGER.info(json.dumps(response))
         measurements = dpath.get(response, 'results/0/series/0/values')
         measurements = [m[0] for m in measurements]  # values were str[][]
 
