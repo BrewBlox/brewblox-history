@@ -27,6 +27,7 @@ def app_config() -> dict:
         'debug': True,
         'write_interval': 5,
         'poll_interval': 5,
+        'influx_host': 'influx',
         'redis_url': 'redis://redis',
         'datastore_topic': 'brewcast/datastore',
     }
@@ -38,6 +39,7 @@ def sys_args(app_config) -> list:
         'app_name',
         '--write-interval', app_config['write_interval'],
         '--poll-interval', app_config['poll_interval'],
+        '--influx-host', app_config['influx_host'],
         '--redis-url', app_config['redis_url'],
         '--datastore-topic', app_config['datastore_topic'],
         '--debug',
@@ -66,6 +68,192 @@ async def client(app, aiohttp_client, loop):
     Any tests wishing to add custom behavior to app can override the fixture
     """
     return await aiohttp_client(app)
+
+
+@pytest.fixture
+def field_keys_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'average_temperature',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'degrees',
+                                'float'
+                            ]
+                        ]
+                    },
+                    {
+                        'name': 'h2o_feet',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'level description',
+                                'string'
+                            ],
+                            [
+                                'water_level',
+                                'float'
+                            ]
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def measurements_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'measurements',
+                        'columns': ['name'],
+                        'values': [
+                            ['iSpindel000'],
+                            ['ispindel'],
+                            ['plaato'],
+                            ['spark-one'],
+                            ['sparkey'],
+                            ['spock'],
+                            ['testface'],
+                            ['vasi-raw']
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def all_field_keys_result():
+    return {
+        'results': [
+            {
+                'statement_id': 0,
+                'series': [
+                    {
+                        'name': 'iSpindel000',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'm_ Combined Influx points',
+                                'integer'
+                            ],
+                            [
+                                'm_angle',
+                                'float'
+                            ],
+                            [
+                                'm_battery',
+                                'float'
+                            ]
+                        ]
+                    }
+                ]
+            },
+            {
+                'statement_id': 1,
+                'series': [
+                    {
+                        'name': 'ispindel',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'm_ Combined Influx points',
+                                'integer'
+                            ],
+                            [
+                                'm_angle',
+                                'float'
+                            ],
+                            [
+                                'm_battery',
+                                'float'
+                            ]
+                        ]
+                    }
+                ]
+            },
+            {
+                'statement_id': 2,
+                'series': [
+                    {
+                        'name': 'plaato',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'm_ Combined Influx points',
+                                'integer'
+                            ],
+                            [
+                                'm_abv',
+                                'float'
+                            ],
+                            [
+                                'm_bpm',
+                                'float'
+                            ]
+                        ]
+                    }
+                ]
+            },
+            {
+                'statement_id': 3,
+                'series': [
+                    {
+                        'name': 'spark-one',
+                        'columns': [
+                            'fieldKey',
+                            'fieldType'
+                        ],
+                        'values': [
+                            [
+                                'm_ Combined Influx points',
+                                'integer'
+                            ],
+                            [
+                                'm_ActiveGroups/active/0',
+                                'float'
+                            ],
+                            [
+                                'm_ActiveGroups/active/1',
+                                'float'
+                            ],
+                            [
+                                'm_Case Temp Sensor/value[degC]',
+                                'float'
+                            ]
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
 
 
 @pytest.fixture
