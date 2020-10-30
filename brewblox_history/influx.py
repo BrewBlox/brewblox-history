@@ -11,11 +11,10 @@ from brewblox_service import brewblox_logger, features, repeater, strex
 LOGGER = brewblox_logger(__name__)
 
 
-INFLUX_HOST = 'influx'
 RECONNECT_INTERVAL_S = 5
 MAX_PENDING_POINTS = 5000
 
-DEFAULT_DATABASE = 'brewblox'
+DATABASE = 'brewblox'
 DEFAULT_POLICY = 'autogen'
 DEFAULT_EPOCH = 'ns'
 COMBINED_POINTS_FIELD = ' Combined Influx points'
@@ -34,7 +33,8 @@ class QueryClient(features.ServiceFeature):
 
     async def startup(self, app: web.Application):
         await self.shutdown()
-        self._client = InfluxDBClient(host=INFLUX_HOST, db=DEFAULT_DATABASE)
+        host = app['config']['influx_host']
+        self._client = InfluxDBClient(host=host, db=DATABASE)
 
     async def shutdown(self, *_):
         if self._client:
@@ -46,10 +46,9 @@ class QueryClient(features.ServiceFeature):
 
     async def query(self,
                     query: str,
-                    database=DEFAULT_DATABASE,
                     epoch=DEFAULT_EPOCH,
                     **kwargs):
-        return await self._client.query(query.format(database=database, **kwargs), db=database, epoch=epoch)
+        return await self._client.query(query.format(**kwargs), epoch=epoch)
 
 
 class InfluxWriter(repeater.RepeaterFeature):
@@ -64,18 +63,15 @@ class InfluxWriter(repeater.RepeaterFeature):
     Offers optional downsampling for all measurements in the database.
     """
 
-    def __init__(self,
-                 app: web.Application,
-                 database: str = None):
+    def __init__(self, app: web.Application):
         super().__init__(app)
 
         self._last_err = 'init'
         self._pending = []
-        self._database = database or DEFAULT_DATABASE
         self._policies = []
 
     def __str__(self):
-        return f'<{type(self).__name__} db={self._database}>'
+        return f'<{type(self).__name__} db={DATABASE}>'
 
     async def prepare(self):
         """Overrides RepeaterFeature.prepare()"""
@@ -95,10 +91,11 @@ class InfluxWriter(repeater.RepeaterFeature):
         If an InfluxDBWriteError is raised, written points are removed from the buffer.
         """
         write_interval = self.app['config']['write_interval']
+        host = self.app['config']['influx_host']
         try:
-            async with InfluxDBClient(host=INFLUX_HOST, db=self._database) as client:
+            async with InfluxDBClient(host=host, db=DATABASE) as client:
                 await client.ping()
-                await client.create_database(db=self._database)
+                await client.create_database(db=DATABASE)
 
                 while True:
                     await asyncio.sleep(write_interval)
@@ -175,7 +172,7 @@ class InfluxWriter(repeater.RepeaterFeature):
 
 def setup(app):
     features.add(app, QueryClient(app))
-    features.add(app, InfluxWriter(app, database=DEFAULT_DATABASE))
+    features.add(app, InfluxWriter(app))
 
 
 def fget_client(app: web.Application) -> QueryClient:

@@ -34,58 +34,13 @@ async def app(app, mocker, query_mock):
     return app
 
 
-@pytest.fixture
-def field_keys_result():
-    return {
-        'results': [
-            {
-                'statement_id': 0,
-                'series': [
-                    {
-                        'name': 'average_temperature',
-                        'columns': [
-                            'fieldKey',
-                            'fieldType'
-                        ],
-                        'values': [
-                            [
-                                'degrees',
-                                'float'
-                            ]
-                        ]
-                    },
-                    {
-                        'name': 'h2o_feet',
-                        'columns': [
-                            'fieldKey',
-                            'fieldType'
-                        ],
-                        'values': [
-                            [
-                                'level description',
-                                'string'
-                            ],
-                            [
-                                'water_level',
-                                'float'
-                            ]
-                        ]
-                    }
-                ]
-            }
-        ]
-    }
-
-
 async def test_ping(app, client, influx_mock):
     influx_mock.ping = AsyncMock()
     await response(client.get('/history/ping'))
-    await response(client.get('/query/ping'))
 
 
 async def test_custom_query(app, client, query_mock):
     content = {
-        'database': 'brewblox',
         'query': 'select * from controller'
     }
 
@@ -93,10 +48,10 @@ async def test_custom_query(app, client, query_mock):
     query_mock.assert_called_once_with(**content)
 
 
-async def test_list_objects(app, client, query_mock, field_keys_result):
+async def test_show_fields(app, client, query_mock, field_keys_result):
     query_mock.side_effect = lambda **kwargs: field_keys_result
 
-    resp_content = await response(client.post('/history/objects', json={}))
+    resp_content = await response(client.post('/history/fields', json={}))
 
     assert resp_content == {
         'average_temperature': [
@@ -108,14 +63,37 @@ async def test_list_objects(app, client, query_mock, field_keys_result):
         ]
     }
 
-    await response(client.post('/history/objects', json={'measurement': 'measy', 'injection': 'drop tables'}))
-    await response(client.post('/history/objects', json={'database': 'the_internet'}))
+    await response(client.post('/history/fields', json={'measurement': 'measy', 'injection': 'drop tables'}))
 
     assert query_mock.mock_calls == [
         call(query='SHOW FIELD KEYS'),
         call(query='SHOW FIELD KEYS FROM "{measurement}"', measurement='measy'),
-        call(database='the_internet', query='SHOW FIELD KEYS')
     ]
+
+
+async def test_show_all_fields(app, client, query_mock, measurements_result, all_field_keys_result):
+    query_mock.side_effect = [measurements_result, all_field_keys_result, all_field_keys_result]
+    resp_content = await response(client.post('/history/fields', json={'include_stale': True}))
+
+    assert resp_content == {
+        'iSpindel000': [' Combined Influx points', 'angle', 'battery'],
+        'ispindel': [' Combined Influx points', 'angle', 'battery'],
+        'plaato': [' Combined Influx points', 'abv', 'bpm'],
+        'spark-one': [
+            ' Combined Influx points',
+            'ActiveGroups/active/0',
+            'ActiveGroups/active/1',
+            'Case Temp Sensor/value[degC]'
+        ]
+    }
+
+    resp_content_single = await response(client.post('/history/fields', json={
+        'include_stale': True,
+        'measurement': 'sparkey'
+    }))
+    assert resp_content_single == resp_content
+
+    assert query_mock.call_count == 3
 
 
 async def test_single_key(app, client, query_mock, values_result):
@@ -125,9 +103,8 @@ async def test_single_key(app, client, query_mock, values_result):
     await response(client.post('/history/values', json={'measurement': 'm', 'fields': ['single'], 'approx_points': 0}))
 
     query_mock.assert_called_once_with(
-        query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+        query='SELECT {fields} FROM "{policy}"."{measurement}"',
         fields='"single"',
-        database=influx.DEFAULT_DATABASE,
         policy=influx.DEFAULT_POLICY,
         measurement='m',
         prefix='',
@@ -145,9 +122,8 @@ async def test_quote_fields(app, client, query_mock, values_result):
     }))
 
     query_mock.assert_called_once_with(
-        query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
+        query='SELECT {fields} FROM "{policy}"."{measurement}"',
         fields='"first","second"',
-        database=influx.DEFAULT_DATABASE,
         policy=influx.DEFAULT_POLICY,
         measurement='m',
         prefix='',
@@ -167,64 +143,64 @@ async def test_value_data_format(app, client, query_mock, values_result):
 @pytest.mark.parametrize('input_args, query_str', [
     (
         {},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
+        'SELECT {fields} FROM "{policy}"."{measurement}"'
     ),
     (
         {'fields': ['you']},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
+        'SELECT {fields} FROM "{policy}"."{measurement}"'
     ),
     (
         {'fields': ['key1', 'key2']},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
+        'SELECT {fields} FROM "{policy}"."{measurement}"'
     ),
     (
         {'database': 'db'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
+        'SELECT {fields} FROM "{policy}"."{measurement}"'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= {start}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'duration': 'some time'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= {start} AND time <= {start} + {duration}'
     ),
     (
         {'start': '2018-10-10T12:00:00.000+02:00', 'end': '2018-10-10T12:00:00.000+02:00'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= {start} AND time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time <= {end}'
     ),
     (
         {'end': '2018-10-10T12:00:00.000+02:00', 'duration': 'bright side'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= {end} - {duration} AND time <= {end}'
     ),
     (
         {'duration': 'eternal'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= now() - {duration}'
     ),
     (
         {'fields': ['key1', 'key2'], 'order_by': 'time desc', 'limit': 1},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'ORDER BY {order_by} LIMIT {limit}'
     ),
     (
         {'duration': 'eternal', 'limit': 1, 'epoch': 'ms'},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= now() - {duration} LIMIT {limit}'
     ),
     (
         {'database': 'db', 'fields': ['something', 'else'],
             'start': '2018-10-10T12:00:00.000+02:00', 'duration': '1d', 'limit': 5},
-        'SELECT {fields} FROM "{database}"."{policy}"."{measurement}" ' +
+        'SELECT {fields} FROM "{policy}"."{measurement}" ' +
         'WHERE time >= {start} AND time <= {start} + {duration} LIMIT {limit}'
     )
 ])
@@ -277,7 +253,7 @@ async def test_no_values_found(app, client, query_mock):
 
 async def test_error_response(app, client, query_mock):
     query_mock.side_effect = RuntimeError('Whoops.')
-    resp = await response(client.post('/history/objects', json={}), 500)
+    resp = await response(client.post('/history/fields', json={}), 500)
     assert 'Whoops.' in resp['error']
 
 
@@ -314,7 +290,7 @@ async def test_select_policy(
 
     assert query_mock.call_args_list == [
         call(';'.join([
-            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "{policy}"."m"'
             for policy in [
                 'autogen',
                 'downsample_1m',
@@ -324,8 +300,7 @@ async def test_select_policy(
             ]
         ])),
         call(
-            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            database='brewblox',
+            query='SELECT {fields} FROM "{policy}"."{measurement}"',
             policy=used_policy,
             measurement='m',
             fields=f'"{used_prefix}k1","{used_prefix}k2","{used_prefix}{used_prefix}v"',
@@ -354,7 +329,7 @@ async def test_select_sparse_policy(app, client, query_mock, count_result, value
 
     assert query_mock.call_args_list == [
         call(';'.join([
-            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "{policy}"."m"'
             for policy in [
                 'autogen',
                 'downsample_1m',
@@ -364,8 +339,7 @@ async def test_select_sparse_policy(app, client, query_mock, count_result, value
             ]
         ])),
         call(
-            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            database='brewblox',
+            query='SELECT {fields} FROM "{policy}"."{measurement}"',
             policy='downsample_1m',
             measurement='m',
             fields='"m_k1","m_k2"',
@@ -387,7 +361,7 @@ async def test_empty_downsampling(app, client, query_mock, values_result):
 
     assert query_mock.call_args_list == [
         call(';'.join([
-            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+            f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "{policy}"."m"'
             for policy in [
                 'autogen',
                 'downsample_1m',
@@ -397,8 +371,7 @@ async def test_empty_downsampling(app, client, query_mock, values_result):
             ]
         ])),
         call(
-            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}"',
-            database=influx.DEFAULT_DATABASE,
+            query='SELECT {fields} FROM "{policy}"."{measurement}"',
             policy=influx.DEFAULT_POLICY,
             measurement='m',
             fields='"k1","k2"',
@@ -425,7 +398,7 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
     assert query_mock.call_args_list == [
         call(
             ';'.join([
-                (f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "brewblox"."{policy}"."m"'
+                (f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) FROM "{policy}"."m"'
                  + ' WHERE time >= now() - {duration}')
                 for policy in [
                     'downsample_1m',
@@ -436,8 +409,7 @@ async def test_exclude_autogen(app, client, query_mock, count_result, values_res
             ]),
             duration='30h'),
         call(
-            query='SELECT {fields} FROM "{database}"."{policy}"."{measurement}" WHERE time >= now() - {duration}',
-            database='brewblox',
+            query='SELECT {fields} FROM "{policy}"."{measurement}" WHERE time >= now() - {duration}',
             policy='downsample_1m',
             measurement='m',
             fields='"m_k1","m_k2"',

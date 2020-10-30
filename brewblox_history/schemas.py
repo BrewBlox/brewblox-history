@@ -14,13 +14,12 @@ def validate(schema: Schema, data: dict):
     return data
 
 
-class ObjectsQuerySchema(Schema):
-    database = fields.String(required=False)
+class FieldsQuerySchema(Schema):
     measurement = fields.String(required=False)
+    include_stale = fields.Boolean(required=False, default=False)
 
 
 class HistoryQuerySchema(Schema):
-    database = fields.String(required=False)
     measurement = fields.String(required=True)
     fields_ = fields.List(fields.String(),
                           data_key='fields',
@@ -40,7 +39,6 @@ class HistoryQuerySchema(Schema):
 
 
 class HistoryDebugQuerySchema(Schema):
-    database = fields.String(required=False)
     query = fields.String(required=True)
 
 
