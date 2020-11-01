@@ -395,23 +395,29 @@ async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
         with suppress(InfluxDBError):
             await client.query(f' \
                 CREATE RETENTION POLICY {name} \
+                ON {influx.DATABASE} \
                 DURATION {duration} \
                 REPLICATION 1 \
                 SHARD DURATION {shard_duration}')
 
         await client.query(f' \
             ALTER RETENTION POLICY {name} \
+            ON {influx.DATABASE} \
             DURATION {duration} \
             REPLICATION 1 \
             SHARD DURATION {shard_duration}')
 
     async def create_cquery(period: str, source: str):
         with suppress(InfluxDBError):
-            await client.query(
-                f'DROP CONTINUOUS QUERY cq_downsample_{period}')
+            await client.query(f' \
+                DROP CONTINUOUS QUERY \
+                cq_downsample_{period} \
+                ON {influx.DATABASE}')
 
         await client.query(f' \
-            CREATE CONTINUOUS QUERY cq_downsample_{period} \
+            CREATE CONTINUOUS QUERY \
+            cq_downsample_{period} \
+            ON {influx.DATABASE} \
             BEGIN \
                 SELECT mean(*) AS m, sum(/(m_)*{influx.COMBINED_POINTS_FIELD}/) as m \
                 INTO downsample_{period}.:MEASUREMENT \
