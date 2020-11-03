@@ -20,6 +20,9 @@ def create_parser(default_name='history'):
                         help='Interval (sec) between queries in live SSE requests. [%(default)s]',
                         default=5,
                         type=float)
+    parser.add_argument('--influx-host',
+                        help='Influx database host',
+                        default='influx')
     parser.add_argument('--redis-url',
                         help='URL for the Redis database',
                         default='redis://redis')

@@ -15,7 +15,7 @@ from brewblox_history import influx, schemas
 from brewblox_history.queries import (build_query, configure_db,
                                       configure_params, raw_query, run_query,
                                       select_last_values, select_values,
-                                      show_keys)
+                                      show_fields)
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -118,11 +118,11 @@ async def configure_db_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='List available measurements and fields in the database',
 )
-@routes.post(r'/{prefix:(history|query)}/objects')
-@request_schema(schemas.ObjectsQuerySchema)
-async def objects_query(request: web.Request) -> web.Response:
+@routes.post(r'/{prefix:(history|query)}/fields')
+@request_schema(schemas.FieldsQuerySchema)
+async def fields_query(request: web.Request) -> web.Response:
     return web.json_response(
-        await show_keys(_client(request), **request['data'])
+        await show_fields(_client(request), **request['data'])
     )
 
 

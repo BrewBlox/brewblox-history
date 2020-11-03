@@ -102,7 +102,6 @@ async def configure_params(client: influx.QueryClient,
                            measurement: str,
                            streamed: bool = False,
                            fields: Optional[List[str]] = ['*'],
-                           database: Optional[str] = influx.DEFAULT_DATABASE,
                            start: Optional[str] = None,
                            duration: Optional[str] = None,
                            end: Optional[str] = None,
@@ -122,7 +121,7 @@ async def configure_params(client: influx.QueryClient,
         order_by = None
 
     approx_points = int(approx_points)
-    select_params = _prune(locals(), ['measurement', 'database', 'policy',
+    select_params = _prune(locals(), ['measurement',  'policy',
                                       'approx_points', 'start', 'duration', 'end'])
     policy, prefix = await select_downsampling_policy(client, **select_params)
 
@@ -130,12 +129,12 @@ async def configure_params(client: influx.QueryClient,
     # The continuous query that fills the downsampled database inserts "key" as "m_key"
     fields = format_fields(fields, prefix)
 
-    return _prune(locals(), ['query', 'database', 'policy', 'measurement', 'fields',
+    return _prune(locals(), ['query',  'policy', 'measurement', 'fields',
                              'start', 'duration', 'end', 'order_by', 'limit', 'prefix', 'epoch'])
 
 
 def build_query(params: dict):
-    query = 'SELECT {fields} FROM "{database}"."{policy}"."{measurement}"'
+    query = 'SELECT {fields} FROM "{policy}"."{measurement}"'
 
     query += _find_time_frame(
         params.get('start'),
@@ -167,7 +166,6 @@ async def run_query(client: influx.QueryClient, query: str, params: dict):
         # Nothing found
         response = dict()
 
-    response['database'] = params.get('database') or influx.DEFAULT_DATABASE
     response['policy'] = params.get('policy') or influx.DEFAULT_POLICY
     response['epoch'] = params.get('epoch') or influx.DEFAULT_EPOCH
     return response
@@ -194,7 +192,6 @@ def valid_policies(start: Optional[str] = None,
 
 async def select_downsampling_policy(client: influx.QueryClient,
                                      measurement: str,
-                                     database: str,
                                      policy: Optional[str] = None,
                                      approx_points: Optional[int] = None,
                                      start: Optional[str] = None,
@@ -231,7 +228,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
 
     queries = [
         f'SELECT count(/(m_)*{influx.COMBINED_POINTS_FIELD}/) ' +
-        f'FROM "{database}"."{policy_opt}"."{measurement}"{time_frame}'
+        f'FROM "{policy_opt}"."{measurement}"{time_frame}'
         for policy_opt in used_policies
     ]
     query = ';'.join(queries)
@@ -259,7 +256,7 @@ async def select_downsampling_policy(client: influx.QueryClient,
             best_count = count
 
     LOGGER.info(', '.join([
-        f'Selected {database}.{best_result[0]}.{measurement}',
+        f'Selected {best_result[0]}.{measurement}',
         f'policy={policy}',
         f'autogen_valid={"autogen" in used_policies}',
         f'target={approx_points}',
@@ -271,30 +268,30 @@ async def select_downsampling_policy(client: influx.QueryClient,
 ########################################################################################################
 
 
-async def raw_query(client: influx.QueryClient,
-                    database: Optional[str] = influx.DEFAULT_DATABASE,
-                    query: Optional[str] = 'show databases'
-                    ) -> dict:
+async def raw_query(client: influx.QueryClient, query: str) -> dict:
     """Runs an arbitrary user-defined query
 
     Note: this is supported only for debugging reasons.
     Production code should never assume this function/endpoint is available.
     """
-    return await client.query(query=query, database=database)
+    return await client.query(query=query)
 
 
-async def show_keys(client: influx.QueryClient,
-                    database: Optional[str] = None,
-                    measurement: Optional[str] = None,
-                    **_  # allow, but discard all other kwargs
-                    ) -> dict:
-    """Selects available keys (without data) from Influx."""
+async def show_fields(client: influx.QueryClient,
+                      measurement: Optional[str] = None,
+                      include_stale: Optional[bool] = None,
+                      **_  # allow, but discard all other kwargs
+                      ) -> dict:
+    """Selects available fields (without data) from Influx."""
+    if include_stale:
+        return await show_all_fields(client, measurement)
+
     query = 'SHOW FIELD KEYS'
 
     if measurement:
         query += ' FROM "{measurement}"'
 
-    params = _prune(locals(), ['query', 'database', 'measurement'])
+    params = _prune(locals(), ['query', 'measurement'])
     query_response = await client.query(**params)
 
     response = dict()
@@ -309,6 +306,39 @@ async def show_keys(client: influx.QueryClient,
     return response
 
 
+async def show_all_fields(client: influx.QueryClient,
+                          measurement: Optional[str] = None,
+                          **_) -> dict:
+    """Selects available fields from Influx.
+    This includes stale fields (no published data last 24h)
+    """
+    measurements: List[str]
+    if measurement:
+        measurements = [measurement]
+    else:
+        response = await client.query('SHOW MEASUREMENTS')
+        measurements = dpath.get(response, 'results/0/series/0/values')
+        measurements = [m[0] for m in measurements]  # values were str[][]
+
+    queries = [
+        f'SHOW FIELD KEYS FROM downsample_1m."{m}"'
+        for m in measurements
+    ]
+    query = ';'.join(queries)
+    response = await client.query(query)
+
+    output = {}
+    for result in response['results']:
+        series = result['series'][0]
+        name = series['name']
+        # value is [field, type] -> get first value from tuple
+        # downsample_1m is prefixed with 'm_' -> strip first two characters
+        fields = [v[0][2:] for v in series['values']]
+        output[name] = fields
+
+    return output
+
+
 async def select_values(client: influx.QueryClient, **kwargs) -> dict:
     """Selects data from Influx."""
     params = await configure_params(client, **kwargs)
@@ -319,7 +349,6 @@ async def select_values(client: influx.QueryClient, **kwargs) -> dict:
 async def select_last_values(client: influx.QueryClient,
                              measurement: str,
                              fields: List[str],
-                             database: str = None,
                              duration: str = None,
                              policy: str = None,
                              epoch: str = None,
@@ -332,7 +361,6 @@ async def select_last_values(client: influx.QueryClient,
         - time
         - value
     """
-    database = database or influx.DEFAULT_DATABASE
     duration = duration or '30d'
     policy = policy or influx.DEFAULT_POLICY
 
@@ -342,7 +370,7 @@ async def select_last_values(client: influx.QueryClient,
     prefix = 'm_' * POLICIES.index(policy)
 
     queries = [
-        f'SELECT last("{prefix}{field}") FROM "{database}"."{policy}"."{measurement}" WHERE time > now() - {duration}'
+        f'SELECT last("{prefix}{field}") FROM "{policy}"."{measurement}" WHERE time > now() - {duration}'
         for field in fields
     ]
     query_response = await client.query(query=';'.join(queries), epoch=epoch)
@@ -367,29 +395,33 @@ async def configure_db(client: influx.QueryClient, verbose: bool) -> dict:
         with suppress(InfluxDBError):
             await client.query(f' \
                 CREATE RETENTION POLICY {name} \
-                ON {influx.DEFAULT_DATABASE} \
+                ON {influx.DATABASE} \
                 DURATION {duration} \
                 REPLICATION 1 \
                 SHARD DURATION {shard_duration}')
 
         await client.query(f' \
             ALTER RETENTION POLICY {name} \
-            ON {influx.DEFAULT_DATABASE} \
+            ON {influx.DATABASE} \
             DURATION {duration} \
             REPLICATION 1 \
             SHARD DURATION {shard_duration}')
 
     async def create_cquery(period: str, source: str):
         with suppress(InfluxDBError):
-            await client.query(
-                f'DROP CONTINUOUS QUERY cq_downsample_{period} ON {influx.DEFAULT_DATABASE}')
+            await client.query(f' \
+                DROP CONTINUOUS QUERY \
+                cq_downsample_{period} \
+                ON {influx.DATABASE}')
 
         await client.query(f' \
-            CREATE CONTINUOUS QUERY cq_downsample_{period} ON {influx.DEFAULT_DATABASE} \
+            CREATE CONTINUOUS QUERY \
+            cq_downsample_{period} \
+            ON {influx.DATABASE} \
             BEGIN \
                 SELECT mean(*) AS m, sum(/(m_)*{influx.COMBINED_POINTS_FIELD}/) as m \
-                INTO {influx.DEFAULT_DATABASE}.downsample_{period}.:MEASUREMENT \
-                FROM {influx.DEFAULT_DATABASE}.{source}./.*/ \
+                INTO downsample_{period}.:MEASUREMENT \
+                FROM {source}./.*/ \
                 GROUP BY time({period}),* \
             END;')
 
