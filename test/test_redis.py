@@ -106,7 +106,7 @@ async def test_set(app, m_redis, m_publish, client, rclient: redis.RedisClient):
     value = {'namespace': 'n', 'id': 'x', 'happy': True}
     assert await rclient.set(value) == value
     m_redis.set.assert_awaited_with('n:x', json.dumps(value))
-    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'changed': [value]})
+    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'changed': [value]}, err=False)
 
     assert await response(client.post('/datastore/set', json={
         'value': value
@@ -126,7 +126,7 @@ async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient)
 
     assert await rclient.mset(values) == values
     m_redis.mset.assert_awaited_with('n:x', json.dumps(values[0]), 'n2:x2', json.dumps(values[1]))
-    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'changed': values})
+    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'changed': values}, err=False)
 
     assert await response(client.post('/datastore/mset', json={
         'values': values
@@ -142,7 +142,7 @@ async def test_delete(app, m_redis, m_publish, client, rclient: redis.RedisClien
     m_redis.delete.return_value = 1
     assert await rclient.delete('n', 'x') == 1
     m_redis.delete.assert_awaited_with('n:x')
-    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x']})
+    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x']}, err=False)
 
     assert await response(client.post('/datastore/delete', json={
         'namespace': 'n',
@@ -162,10 +162,10 @@ async def test_mdelete(app, m_redis, m_publish, client, rclient: redis.RedisClie
     assert m_redis.delete.await_count == 0
 
     assert await rclient.mdelete('n', ['x', 'y:z']) == 2
-    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x', 'n:y:z']})
+    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x', 'n:y:z']}, err=False)
 
     assert await rclient.mdelete('n', ['x'], '*') == 3
-    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x', 'n1:k1', 'n2:k2']})
+    m_publish.assert_awaited_with(app, 'brewcast/datastore', {'deleted': ['n:x', 'n1:k1', 'n2:k2']}, err=False)
 
     assert await response(client.post('/datastore/mdelete', json={
         'namespace': 'n',

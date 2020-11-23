@@ -75,7 +75,7 @@ class RedisClient(features.ServiceFeature):
         id = value['id']
         namespace = value['namespace']
         await self._redis.set(keycat(namespace, id), json.dumps(value))
-        await mqtt.publish(self.app, self.topic, {'changed': [value]})
+        await mqtt.publish(self.app, self.topic, {'changed': [value]}, err=False)
         return value
 
     @autoconnect
@@ -83,14 +83,14 @@ class RedisClient(features.ServiceFeature):
         if values:
             args = flatten([[keycat(v['namespace'], v['id']), json.dumps(v)] for v in values])
             await self._redis.mset(*args)
-            await mqtt.publish(self.app, self.topic, {'changed': values})
+            await mqtt.publish(self.app, self.topic, {'changed': values}, err=False)
         return values
 
     @autoconnect
     async def delete(self, namespace: str, id: str) -> int:
         key = keycat(namespace, id)
         count = await self._redis.delete(key)
-        await mqtt.publish(self.app, self.topic, {'deleted': [key]})
+        await mqtt.publish(self.app, self.topic, {'deleted': [key]}, err=False)
         return count
 
     @autoconnect
@@ -99,7 +99,7 @@ class RedisClient(features.ServiceFeature):
         count = 0
         if keys:
             count = await self._redis.delete(*keys)
-            await mqtt.publish(self.app, self.topic, {'deleted': keys})
+            await mqtt.publish(self.app, self.topic, {'deleted': keys}, err=False)
         return count
 
 
