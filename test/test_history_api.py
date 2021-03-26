@@ -10,7 +10,7 @@ from brewblox_service import features
 from brewblox_service.testing import response
 from mock import AsyncMock, call
 
-from brewblox_history import history_api, influx, queries
+from brewblox_history import history_api, influx, queries, utils
 
 TESTED = history_api.__name__
 
@@ -570,7 +570,7 @@ async def test_stream_error(app, client, query_mock):
 async def test_close_sockets(app, client):
     async with client.ws_connect('/history/stream') as ws:
         ws: ClientWebSocketResponse
-        closer = features.get(app, history_api.SocketCloser)
+        closer = features.get(app, utils.SocketCloser)
         await closer.before_shutdown(app)
         msg = await ws.receive(1)
         assert msg.type != WSMsgType.TEXT

@@ -5,13 +5,12 @@ REST endpoints for queries
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from weakref import WeakSet
 
-from aiohttp import WSCloseCode, web
+from aiohttp import web
 from aiohttp_apispec import docs, request_schema
 from brewblox_service import brewblox_logger, features, strex
 
-from brewblox_history import influx, schemas
+from brewblox_history import influx, schemas, utils
 from brewblox_history.queries import (build_query, configure_db,
                                       configure_params, raw_query, run_query,
                                       select_last_values, select_values,
@@ -19,6 +18,8 @@ from brewblox_history.queries import (build_query, configure_db,
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
+
+LOGGER.addFilter(utils.DuplicateFilter())
 
 
 NS_MULT = {
@@ -54,25 +55,7 @@ async def protected(desc: str):
         raise
 
     except Exception as ex:
-        LOGGER.debug(f'{desc} error {strex(ex)}')
-
-
-class SocketCloser(features.ServiceFeature):
-
-    def __init__(self, app: web.Application) -> None:
-        super().__init__(app)
-        app['websockets'] = WeakSet()
-
-    async def startup(self, app: web.Application):
-        pass
-
-    async def before_shutdown(self, app: web.Application):
-        for ws in set(app['websockets']):
-            await ws.close(code=WSCloseCode.GOING_AWAY,
-                           message='Server shutdown')
-
-    async def shutdown(self, app: web.Application):
-        pass
+        LOGGER.error(f'{desc} error {strex(ex)}')
 
 
 @docs(
@@ -242,7 +225,7 @@ async def stream(request: web.Request) -> web.Response:
                 raise
 
             except Exception as ex:
-                LOGGER.debug(f'Stream read error {strex(ex)}')
+                LOGGER.error(f'Stream read error {strex(ex)}')
                 await ws.send_json({
                     'error': strex(ex),
                     'message': msg,
@@ -259,4 +242,4 @@ async def stream(request: web.Request) -> web.Response:
 
 def setup(app: web.Application):
     app.router.add_routes(routes)
-    features.add(app, SocketCloser(app))
+    features.add(app, utils.SocketCloser(app))
