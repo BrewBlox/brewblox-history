@@ -63,7 +63,7 @@ class DatastoreValueSchema(Schema):
     class Meta:
         unknown = INCLUDE
     namespace = fields.String(required=True,
-                              validate=Regexp(r'^[\w\-\:]+$'))
+                              validate=Regexp(r'^[\w\-\:]*$'))
     id = fields.String(required=True,
                        validate=ContainsNoneOf(':'))
 
