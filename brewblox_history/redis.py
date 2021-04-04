@@ -1,5 +1,4 @@
 import json
-import re
 from functools import wraps
 from itertools import groupby
 from typing import List, Optional
@@ -10,8 +9,6 @@ from brewblox_service import brewblox_logger, features, mqtt
 
 LOGGER = brewblox_logger(__name__)
 
-KEY_PATTERN = re.compile(r'^[\w\-\:]+$')
-
 
 def keycat(namespace: str, key: str) -> str:
     return f'{namespace}:{key}' if namespace else key
@@ -19,12 +16,6 @@ def keycat(namespace: str, key: str) -> str:
 
 def keycatobj(obj: dict) -> str:
     return keycat(obj['namespace'], obj['id'])
-
-
-def keycheck(key: str) -> str:
-    if not re.match(KEY_PATTERN, key):
-        raise AssertionError(f'Invalid key: "{key}". Database keys can only contain letters, numbers, - or _')
-    return key
 
 
 def flatten(data: List):
@@ -101,14 +92,14 @@ class RedisClient(features.ServiceFeature):
 
     @autoconnect
     async def set(self, value: dict) -> dict:
-        await self._redis.set(keycheck(keycatobj(value)), json.dumps(value))
+        await self._redis.set(keycatobj(value), json.dumps(value))
         await self._publish(changed=[value])
         return value
 
     @autoconnect
     async def mset(self, values: List[dict]) -> List[dict]:
         if values:
-            db_keys = [keycheck(keycatobj(v)) for v in values]
+            db_keys = [keycatobj(v) for v in values]
             db_values = [json.dumps(v) for v in values]
             await self._redis.mset(*flatten(zip(db_keys, db_values)))
             await self._publish(changed=values)

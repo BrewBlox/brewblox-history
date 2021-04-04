@@ -4,7 +4,7 @@ Schemas used in API endpoints
 
 from marshmallow import Schema, ValidationError, fields
 from marshmallow.utils import INCLUDE
-from marshmallow.validate import ContainsNoneOf, OneOf
+from marshmallow.validate import ContainsNoneOf, OneOf, Regexp
 
 
 def validate(schema: Schema, data: dict):
@@ -62,7 +62,8 @@ class MQTTHistorySchema(Schema):
 class DatastoreValueSchema(Schema):
     class Meta:
         unknown = INCLUDE
-    namespace = fields.String(required=True)
+    namespace = fields.String(required=True,
+                              validate=Regexp(r'^[\w\-\:]+$'))
     id = fields.String(required=True,
                        validate=ContainsNoneOf(':'))
 
