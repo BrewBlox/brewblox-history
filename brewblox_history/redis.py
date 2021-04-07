@@ -1,5 +1,6 @@
 import json
 from functools import wraps
+from itertools import groupby
 from typing import List, Optional
 
 import aioredis
@@ -9,11 +10,12 @@ from brewblox_service import brewblox_logger, features, mqtt
 LOGGER = brewblox_logger(__name__)
 
 
-INIT_RETRY_S = 2
-
-
 def keycat(namespace: str, key: str) -> str:
     return f'{namespace}:{key}' if namespace else key
+
+
+def keycatobj(obj: dict) -> str:
+    return keycat(obj['namespace'], obj['id'])
 
 
 def flatten(data: List):
@@ -53,6 +55,22 @@ class RedisClient(features.ServiceFeature):
                      for key in await self._redis.keys(keycat(namespace, filter))]
         return keys
 
+    async def _publish(self, changed: List[dict] = None, deleted: List[str] = None):
+        """Publish changes to documents.
+
+        Objects are grouped by top-level namespace, and then published
+        to a topic postfixed with the top-level namespace.
+        """
+        if changed:
+            changed = sorted(changed, key=keycatobj)
+            for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
+                await mqtt.publish(self.app, f'{self.topic}/{key}', {'changed': list(group)}, err=False)
+
+        if deleted:
+            deleted = sorted(deleted)
+            for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
+                await mqtt.publish(self.app, f'{self.topic}/{key}', {'deleted': list(group)}, err=False)
+
     @autoconnect
     async def ping(self) -> str:
         return (await self._redis.ping()).decode()
@@ -64,6 +82,8 @@ class RedisClient(features.ServiceFeature):
 
     @autoconnect
     async def mget(self, namespace: str, ids: List[str] = None, filter: str = None) -> List[dict]:
+        if ids is None and filter is None:
+            filter = '*'
         keys = await self._mkeys(namespace, ids, filter)
         values = []
         if keys:
@@ -72,25 +92,24 @@ class RedisClient(features.ServiceFeature):
 
     @autoconnect
     async def set(self, value: dict) -> dict:
-        id = value['id']
-        namespace = value['namespace']
-        await self._redis.set(keycat(namespace, id), json.dumps(value))
-        await mqtt.publish(self.app, self.topic, {'changed': [value]}, err=False)
+        await self._redis.set(keycatobj(value), json.dumps(value))
+        await self._publish(changed=[value])
         return value
 
     @autoconnect
     async def mset(self, values: List[dict]) -> List[dict]:
         if values:
-            args = flatten([[keycat(v['namespace'], v['id']), json.dumps(v)] for v in values])
-            await self._redis.mset(*args)
-            await mqtt.publish(self.app, self.topic, {'changed': values}, err=False)
+            db_keys = [keycatobj(v) for v in values]
+            db_values = [json.dumps(v) for v in values]
+            await self._redis.mset(*flatten(zip(db_keys, db_values)))
+            await self._publish(changed=values)
         return values
 
     @autoconnect
     async def delete(self, namespace: str, id: str) -> int:
         key = keycat(namespace, id)
         count = await self._redis.delete(key)
-        await mqtt.publish(self.app, self.topic, {'deleted': [key]}, err=False)
+        await self._publish(deleted=[key])
         return count
 
     @autoconnect
@@ -99,7 +118,7 @@ class RedisClient(features.ServiceFeature):
         count = 0
         if keys:
             count = await self._redis.delete(*keys)
-            await mqtt.publish(self.app, self.topic, {'deleted': keys}, err=False)
+            await self._publish(deleted=keys)
         return count
 
 

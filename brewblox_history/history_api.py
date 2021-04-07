@@ -5,13 +5,12 @@ REST endpoints for queries
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from weakref import WeakSet
 
-from aiohttp import WSCloseCode, web
+from aiohttp import web
 from aiohttp_apispec import docs, request_schema
 from brewblox_service import brewblox_logger, features, strex
 
-from brewblox_history import influx, schemas
+from brewblox_history import influx, schemas, utils
 from brewblox_history.queries import (build_query, configure_db,
                                       configure_params, raw_query, run_query,
                                       select_last_values, select_values,
@@ -19,6 +18,8 @@ from brewblox_history.queries import (build_query, configure_db,
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
+
+LOGGER.addFilter(utils.DuplicateFilter())
 
 
 NS_MULT = {
@@ -54,25 +55,7 @@ async def protected(desc: str):
         raise
 
     except Exception as ex:
-        LOGGER.debug(f'{desc} error {strex(ex)}')
-
-
-class SocketCloser(features.ServiceFeature):
-
-    def __init__(self, app: web.Application) -> None:
-        super().__init__(app)
-        app['websockets'] = WeakSet()
-
-    async def startup(self, app: web.Application):
-        pass
-
-    async def before_shutdown(self, app: web.Application):
-        for ws in set(app['websockets']):
-            await ws.close(code=WSCloseCode.GOING_AWAY,
-                           message='Server shutdown')
-
-    async def shutdown(self, app: web.Application):
-        pass
+        LOGGER.error(f'{desc} error {strex(ex)}')
 
 
 @docs(
@@ -91,7 +74,7 @@ async def custom_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Ping the database',
 )
-@routes.get(r'/{prefix:(history|query)}/ping')
+@routes.get('/history/ping')
 async def ping_query(request: web.Request) -> web.Response:
     await _client(request).ping()
     return web.json_response(
@@ -107,7 +90,7 @@ async def ping_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Configure database',
 )
-@routes.post(r'/{prefix:(history|query)}/configure')
+@routes.post('/history/configure')
 async def configure_db_query(request: web.Request) -> web.Response:
     return web.json_response(
         await configure_db(_client(request), verbose=False)
@@ -118,7 +101,7 @@ async def configure_db_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='List available measurements and fields in the database',
 )
-@routes.post(r'/{prefix:(history|query)}/fields')
+@routes.post('/history/fields')
 @request_schema(schemas.FieldsQuerySchema)
 async def fields_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -130,7 +113,7 @@ async def fields_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Get values from database',
 )
-@routes.post(r'/{prefix:(history|query)}/values')
+@routes.post('/history/values')
 @request_schema(schemas.HistoryQuerySchema)
 async def values_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -142,7 +125,7 @@ async def values_query(request: web.Request) -> web.Response:
     tags=['History'],
     summary='Get last values from database for each field',
 )
-@routes.post(r'/{prefix:(history|query)}/last_values')
+@routes.post('/history/last_values')
 @request_schema(schemas.HistoryQuerySchema)
 async def last_values_query(request: web.Request) -> web.Response:
     return web.json_response(
@@ -199,7 +182,7 @@ async def _last_values(app: web.Application, ws: web.WebSocketResponse, id: str,
     tags=['History'],
     summary='Open a WebSocket to stream values from database as they are added',
 )
-@routes.get(r'/{prefix:(history|query)}/stream')
+@routes.get('/history/stream')
 async def stream(request: web.Request) -> web.Response:
     app = request.app
     ws = web.WebSocketResponse()
@@ -242,7 +225,7 @@ async def stream(request: web.Request) -> web.Response:
                 raise
 
             except Exception as ex:
-                LOGGER.debug(f'Stream read error {strex(ex)}')
+                LOGGER.error(f'Stream read error {strex(ex)}')
                 await ws.send_json({
                     'error': strex(ex),
                     'message': msg,
@@ -259,4 +242,4 @@ async def stream(request: web.Request) -> web.Response:
 
 def setup(app: web.Application):
     app.router.add_routes(routes)
-    features.add(app, SocketCloser(app))
+    features.add(app, utils.SocketCloser(app))
