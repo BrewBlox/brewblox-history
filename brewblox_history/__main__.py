@@ -3,9 +3,11 @@ Example of how to import and use the brewblox service
 """
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, mqtt, scheduler, service, strex
+from brewblox_service import (brewblox_logger, http, mqtt, scheduler, service,
+                              strex)
 
-from brewblox_history import datastore_api, history_api, influx, redis, relays
+from brewblox_history import (datastore_api, history_api, influx, redis,
+                              relays, victoria)
 
 LOGGER = brewblox_logger(__name__)
 
@@ -45,8 +47,10 @@ def main():
     app = service.create_app(parser=create_parser())
 
     scheduler.setup(app)
+    http.setup(app)
     mqtt.setup(app)
     influx.setup(app)
+    victoria.setup(app)
     history_api.setup(app)
     redis.setup(app)
     datastore_api.setup(app)

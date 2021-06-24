@@ -8,7 +8,7 @@ from contextlib import suppress
 from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
-from brewblox_history import influx, schemas
+from brewblox_history import influx, schemas, victoria
 
 FLAT_SEPARATOR = '/'
 
@@ -115,6 +115,7 @@ class MQTTDataRelay(features.ServiceFeature):
 
         LOGGER.debug(f'MQTT: {measurement} = {str(data)[:30]}...')
         influx.write_soon(self.app, measurement, data)
+        victoria.write_soon(self.app, measurement, data)
 
 
 def setup(app: web.Application):
