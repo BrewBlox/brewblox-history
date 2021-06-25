@@ -78,10 +78,9 @@ class VictoriaWriter(repeater.RepeaterFeature):
         timestamp = ms_time()
         points = [
             {
-                'metric': k,
+                'metric': f'{service}/{k}',
                 'value': v,
                 'timestamp': timestamp,
-                'tags': {'service': service}
             }
             for k, v in fields.items()
         ]
