@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from aiohttp import web
 from aiohttp_apispec import docs, request_schema
-from brewblox_service import brewblox_logger, features, strex
+from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import influx, schemas, utils
 from brewblox_history.queries import (build_query, configure_db,
@@ -242,4 +242,3 @@ async def stream(request: web.Request) -> web.Response:
 
 def setup(app: web.Application):
     app.router.add_routes(routes)
-    features.add(app, utils.SocketCloser(app))

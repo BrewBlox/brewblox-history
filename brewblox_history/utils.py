@@ -1,4 +1,5 @@
 import logging
+import time
 from weakref import WeakSet
 
 from aiohttp import WSCloseCode, web
@@ -30,3 +31,19 @@ class SocketCloser(features.ServiceFeature):
 
     async def shutdown(self, app: web.Application):
         pass
+
+
+def ms_time():
+    return time.time_ns() // 1_000_000
+
+
+def try_float(v) -> bool:
+    try:
+        float(v)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def setup(app: web.Application):
+    features.add(app, SocketCloser(app))

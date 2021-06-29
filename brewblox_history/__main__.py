@@ -7,7 +7,7 @@ from brewblox_service import (brewblox_logger, http, mqtt, scheduler, service,
                               strex)
 
 from brewblox_history import (datastore_api, history_api, influx, redis,
-                              relays, victoria)
+                              relays, tsdb_api, utils, victoria)
 
 LOGGER = brewblox_logger(__name__)
 
@@ -28,6 +28,17 @@ def create_parser(default_name='history'):
     parser.add_argument('--redis-url',
                         help='URL for the Redis database',
                         default='redis://redis')
+    parser.add_argument('--victoria-host',
+                        help='Victoria Metrics database host',
+                        default='victoria')
+    parser.add_argument('--victoria-opentsdb-port',
+                        help='Victoria Metrics OpenTSDB port',
+                        type=int,
+                        default=4242)
+    parser.add_argument('--victoria-prometheus-port',
+                        help='Victoria Metrics Prometheus port',
+                        type=int,
+                        default=8428)
     parser.add_argument('--datastore-topic',
                         help='Synchronization topic for datastore updates',
                         default='brewcast/datastore')
@@ -49,8 +60,10 @@ def main():
     scheduler.setup(app)
     http.setup(app)
     mqtt.setup(app)
+    utils.setup(app)
     influx.setup(app)
     victoria.setup(app)
+    tsdb_api.setup(app)
     history_api.setup(app)
     redis.setup(app)
     datastore_api.setup(app)

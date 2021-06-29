@@ -89,3 +89,39 @@ class DatastoreMultiValueSchema(Schema):
 
 class DatastoreDeleteResponseSchema(Schema):
     count = fields.Integer(required=True)
+
+
+class TSDBFieldsQuerySchema(Schema):
+    start = fields.Raw(required=False)
+    end = fields.Raw(required=False)
+
+
+class TSDBRangesQuerySchema(Schema):
+    fields_ = fields.List(fields.String(),
+                          data_key='fields',
+                          attribute='fields',
+                          required=True)
+    start = fields.Raw(required=False)
+    end = fields.Raw(required=False)
+    duration = fields.String(required=False)
+    step = fields.Raw(required=False)
+    timeout = fields.Raw(required=False)
+
+
+class TSDBMetricsQuerySchema(Schema):
+    fields_ = fields.List(fields.String(),
+                          data_key='fields',
+                          attribute='fields',
+                          required=True)
+
+
+class TSDBStreamCommandSchema(Schema):
+    id = fields.String(required=True)
+    command = fields.String(required=True,
+                            validate=OneOf([
+                                'ranges',
+                                'metrics',
+                                'stop'
+                            ]))
+    query = fields.Dict(keys=fields.Str(),
+                        required=False)
