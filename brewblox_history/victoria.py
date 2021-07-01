@@ -59,14 +59,17 @@ class VictoriaClient(features.ServiceFeature):
 
     async def ranges(self,
                      fields: List[str],
-                     duration: str = '10m',
-                     step: str = '10s',
-                     end: str = '',
+                     start: str = None,
+                     duration: str = None,
+                     end: str = None,
+                     resolution: str = '10s',
                      ):
         url = f'{self._address}/api/v1/query'
         session = http.session(self.app)
+        duration, end = utils.select_timeframe(start, duration, end)
+        LOGGER.info(f'{duration} {end}')
         queries = [
-            f'query=avg_over_time({{__name__="{f}"}}[{step}])[{duration}]&step={step}&time={end}'
+            f'query=avg_over_time({{__name__="{f}"}}[{resolution}])[{duration}]&step={resolution}&time={end}'
             for f in fields
         ]
         return await asyncio.gather(*[self._query(q, url, session) for q in queries])
@@ -157,7 +160,6 @@ class VictoriaWriter(repeater.RepeaterFeature):
             for k, v in fields.items()
             if utils.try_float(v)
         ]
-        LOGGER.info(f'added {len(points)} points')
 
         self._pending.extend(points)
 
