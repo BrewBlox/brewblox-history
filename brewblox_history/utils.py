@@ -41,6 +41,10 @@ def ms_time():
     return time.time_ns() // 1_000_000
 
 
+def s_time():
+    return time.time()
+
+
 def parse_duration(value: str) -> timedelta:  # example: '5d3h2m1s'
     value = value.lower()
     total_seconds = Decimal('0')
@@ -79,10 +83,6 @@ def parse_datetime(value: Union[str, int, None]) -> Optional[datetime]:
         return None
 
 
-def format_datetime(dt: datetime):
-    return dt.timestamp()
-
-
 def select_timeframe(start=None, duration=None, end=None):
     params = {
         'duration': '10m',
@@ -99,7 +99,7 @@ def select_timeframe(start=None, duration=None, end=None):
         dt_end = parse_datetime(start) + parse_duration(duration)
         params.update({
             'duration': duration,
-            'end': format_datetime(dt_end),
+            'end': dt_end.timestamp(),
         })
 
     elif start and end:
@@ -107,14 +107,14 @@ def select_timeframe(start=None, duration=None, end=None):
         dt_end = parse_datetime(end)
         dt_duration: timedelta = dt_end - dt_start
         params.update({
-            'duration': f'{dt_duration.seconds}s',
-            'end': format_datetime(dt_end),
+            'duration': f'{dt_duration.total_seconds()}s',
+            'end': dt_end.timestamp(),
         })
 
     elif duration and end:
         params.update({
             'duration': duration,
-            'end': format_datetime(parse_datetime(end)),
+            'end': parse_datetime(end).timestamp(),
         })
 
     elif start:
@@ -122,7 +122,7 @@ def select_timeframe(start=None, duration=None, end=None):
         dt_end = datetime.now()
         dt_duration: timedelta = dt_end - dt_start
         params.update({
-            'duration': f'{dt_duration.seconds}s',
+            'duration': f'{dt_duration.total_seconds()}s',
         })
 
     elif duration:

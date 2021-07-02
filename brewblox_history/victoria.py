@@ -67,23 +67,36 @@ class VictoriaClient(features.ServiceFeature):
         url = f'{self._address}/api/v1/query'
         session = http.session(self.app)
         duration, end = utils.select_timeframe(start, duration, end)
-        LOGGER.info(f'{duration} {end}')
+
         queries = [
             f'query=avg_over_time({{__name__="{f}"}}[{resolution}])[{duration}]&step={resolution}&time={end}'
             for f in fields
         ]
-        return await asyncio.gather(*[self._query(q, url, session) for q in queries])
+
+        result = await asyncio.gather(*[self._query(q, url, session) for q in queries])
+
+        return [
+            v['data']['result'][0] for v in result
+            if v['data']['result']
+        ]
 
     async def metrics(self, fields: List[str]):
         url = f'{self._address}/api/v1/query'
         session = http.session(self.app)
+
         # Note: default stale duration for prometheus is 5m
         # Metrics older than this will not show up
         queries = [
             f'query={{__name__="{f}"}}'
             for f in fields
         ]
-        return await asyncio.gather(*[self._query(q, url, session) for q in queries])
+
+        result = await asyncio.gather(*[self._query(q, url, session) for q in queries])
+
+        return [
+            v['data']['result'][0] for v in result
+            if v['data']['result']
+        ]
 
 
 class VictoriaWriter(repeater.RepeaterFeature):

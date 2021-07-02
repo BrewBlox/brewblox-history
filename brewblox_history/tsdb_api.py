@@ -105,11 +105,6 @@ async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: st
         async with protected('ranges query'):
             result = await client.ranges(**params)
 
-            result = [
-                v['data']['result'][0] for v in result
-                if v['data']['result']
-            ]
-
             if result:
                 await ws.send_json({
                     'id': id,
@@ -119,12 +114,12 @@ async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: st
                     },
                 })
 
-                params['start'] = utils.ms_time()
+                params['start'] = utils.s_time()
                 params.pop('duration', None)
                 initial = False
 
-            if not open_ended:
-                break
+        if not open_ended:
+            break
 
         await asyncio.sleep(poll_interval)
 
@@ -136,11 +131,6 @@ async def _stream_metrics(app: web.Application, ws: web.WebSocketResponse, id: s
     while True:
         async with protected('metrics query'):
             result = await client.metrics(**params)
-
-            result = [
-                v['data']['result'][0] for v in result
-                if v['data']['result']
-            ]
 
             await ws.send_json({
                 'id': id,
@@ -165,9 +155,9 @@ async def stream(request: web.Request) -> web.Response:
     try:
         await ws.prepare(request)
         request.app['websockets'].add(ws)
-        cmd_schema = schemas.TSDBMetricsQuerySchema()
+        cmd_schema = schemas.TSDBStreamCommandSchema()
         ranges_schema = schemas.TSDBRangesQuerySchema()
-        metrics_schema = schemas.TSDBRangesQuerySchema()
+        metrics_schema = schemas.TSDBMetricsQuerySchema()
 
         async for msg in ws:
             try:
