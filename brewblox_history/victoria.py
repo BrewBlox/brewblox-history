@@ -7,7 +7,7 @@ from brewblox_service import brewblox_logger, features, http, repeater, strex
 
 from brewblox_history import utils
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = brewblox_logger(__name__, True)
 MAX_PENDING_POINTS = 10_000
 
 
@@ -141,9 +141,8 @@ class VictoriaWriter(repeater.RepeaterFeature):
 
             except Exception as ex:
                 msg = strex(ex)
-                if msg != self._last_err:
-                    LOGGER.warn(f'{self} {msg}')
-                    self._last_err = msg
+                LOGGER.warn(f'{self} {msg}')
+                self._last_err = msg
                 self._avoid_overflow()
 
     def _avoid_overflow(self):
