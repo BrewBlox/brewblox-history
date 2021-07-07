@@ -10,16 +10,14 @@ from aiohttp import web
 from aiohttp_apispec import docs, request_schema
 from brewblox_service import brewblox_logger, strex
 
-from brewblox_history import influx, schemas, utils
+from brewblox_history import influx, schemas
 from brewblox_history.queries import (build_query, configure_db,
                                       configure_params, raw_query, run_query,
                                       select_last_values, select_values,
                                       show_fields)
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = brewblox_logger(__name__, True)
 routes = web.RouteTableDef()
-
-LOGGER.addFilter(utils.DuplicateFilter())
 
 
 NS_MULT = {

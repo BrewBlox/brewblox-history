@@ -1,22 +1,18 @@
-import logging
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Optional, Union
+from typing import Any, Optional, Tuple, Union
 from weakref import WeakSet
 
 from aiohttp import WSCloseCode, web
-from brewblox_service import features
+from brewblox_service import brewblox_logger, features
 from dateutil import parser as dateparser
 
+DESIRED_POINTS = 1000
+DEFAULT_DURATION = timedelta(days=1)
+MINIMUM_STEP = timedelta(seconds=10)
 
-class DuplicateFilter(logging.Filter):
-    def filter(self, record):
-        current_log = (record.module, record.levelno, record.msg)
-        if current_log != getattr(self, 'last_log', None):
-            self.last_log = current_log
-            return True
-        return False
+LOGGER = brewblox_logger(__name__, True)
 
 
 class SocketCloser(features.ServiceFeature):
@@ -25,16 +21,10 @@ class SocketCloser(features.ServiceFeature):
         super().__init__(app)
         app['websockets'] = WeakSet()
 
-    async def startup(self, app: web.Application):
-        pass
-
     async def before_shutdown(self, app: web.Application):
         for ws in set(app['websockets']):
             await ws.close(code=WSCloseCode.GOING_AWAY,
                            message='Server shutdown')
-
-    async def shutdown(self, app: web.Application):
-        pass
 
 
 def ms_time():
@@ -67,8 +57,11 @@ def parse_duration(value: str) -> timedelta:  # example: '5d3h2m1s'
     return timedelta(seconds=float(total_seconds))
 
 
-def parse_datetime(value: Union[str, int, None]) -> Optional[datetime]:
-    if isinstance(value, str):
+def parse_datetime(value: Union[str, int, datetime, None]) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return value
+
+    elif isinstance(value, str):
         return dateparser.parse(value)
 
     elif isinstance(value, (int, float)):
@@ -83,69 +76,76 @@ def parse_datetime(value: Union[str, int, None]) -> Optional[datetime]:
         return None
 
 
-def select_timeframe(start=None, duration=None, end=None):
-    params = {
-        'duration': '10m',
-        'end': '',
-    }
+def timestamp_str(value: Union[str, int, datetime, None]) -> str:
+    dt = parse_datetime(value)
+    if dt:
+        return str(dt.timestamp())
+    else:
+        return ''
+
+
+def optformat(fmt: str, v: Optional[Any]) -> str:
+    if v:
+        return fmt.format(v)
+    else:
+        return ''
+
+
+def is_open_ended(start=None, duration=None, end=None, **_) -> bool:
+    return [bool(start), bool(duration), bool(end)] in [
+        [False, False, False],
+        [True, False, False],
+        [False, True, False],
+    ]
+
+
+def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str]:
+    """Calculate start, end, and step for given start, duration, and end"""
+    dt_start: Optional[datetime] = None
+    dt_end: Optional[datetime] = None
 
     if all([start, duration, end]):
         raise ValueError('At most two out of three duration arguments can be provided')
 
     elif not any([start, duration, end]):
-        pass
+        dt_start = datetime.now() - DEFAULT_DURATION
+        dt_end = None
 
     elif start and duration:
-        dt_end = parse_datetime(start) + parse_duration(duration)
-        params.update({
-            'duration': duration,
-            'end': dt_end.timestamp(),
-        })
+        dt_start = parse_datetime(start)
+        dt_end = dt_start + parse_duration(duration)
 
     elif start and end:
         dt_start = parse_datetime(start)
         dt_end = parse_datetime(end)
-        dt_duration: timedelta = dt_end - dt_start
-        params.update({
-            'duration': f'{dt_duration.total_seconds()}s',
-            'end': dt_end.timestamp(),
-        })
 
     elif duration and end:
-        params.update({
-            'duration': duration,
-            'end': parse_datetime(end).timestamp(),
-        })
+        dt_end = parse_datetime(end)
+        dt_start = dt_end - parse_duration(duration)
 
     elif start:
         dt_start = parse_datetime(start)
-        dt_end = datetime.now()
-        dt_duration: timedelta = dt_end - dt_start
-        params.update({
-            'duration': f'{dt_duration.total_seconds()}s',
-        })
+        dt_end = None
 
     elif duration:
-        params.update({
-            'duration': duration,
-        })
+        dt_start = datetime.now() - parse_duration(duration)
+        dt_end = None
 
     elif end:
-        pass
+        dt_end = parse_datetime(end)
+        dt_start = dt_end - DEFAULT_DURATION
 
     # This path should never be reached
     else:  # pragma: no cover
         raise RuntimeError('Unexpected code path while determining time frame!')
 
-    return params['duration'], params['end']
+    # Calculate optimal step interval
+    # We want a decent resolution without flooding the front-end with data
+    actual_duration: timedelta = (dt_end or datetime.now()) - dt_start
+    desired_step = actual_duration.total_seconds() // DESIRED_POINTS
+    step = max(desired_step, MINIMUM_STEP.total_seconds())
 
-
-def try_float(v) -> bool:
-    try:
-        float(v)
-        return True
-    except (ValueError, TypeError):
-        return False
+    return timestamp_str(dt_start), timestamp_str(dt_end), f'{step}s'
 
 
 def setup(app: web.Application):

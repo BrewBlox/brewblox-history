@@ -91,12 +91,11 @@ class DatastoreDeleteResponseSchema(Schema):
     count = fields.Integer(required=True)
 
 
-class TSDBFieldsQuerySchema(Schema):
+class TimeSeriesFieldsQuerySchema(Schema):
     start = fields.Raw(required=False)
-    end = fields.Raw(required=False)
 
 
-class TSDBRangesQuerySchema(Schema):
+class TimeSeriesRangesQuerySchema(Schema):
     fields_ = fields.List(fields.String(),
                           data_key='fields',
                           attribute='fields',
@@ -108,14 +107,14 @@ class TSDBRangesQuerySchema(Schema):
     timeout = fields.Raw(required=False)
 
 
-class TSDBMetricsQuerySchema(Schema):
+class TimeSeriesMetricsQuerySchema(Schema):
     fields_ = fields.List(fields.String(),
                           data_key='fields',
                           attribute='fields',
                           required=True)
 
 
-class TSDBStreamCommandSchema(Schema):
+class TimeSeriesStreamCommandSchema(Schema):
     id = fields.String(required=True)
     command = fields.String(required=True,
                             validate=OneOf([

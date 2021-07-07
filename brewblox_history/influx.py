@@ -73,10 +73,6 @@ class InfluxWriter(repeater.RepeaterFeature):
     def __str__(self):
         return f'<{type(self).__name__} db={DATABASE}>'
 
-    async def prepare(self):
-        """Overrides RepeaterFeature.prepare()"""
-        pass
-
     async def run(self):
         """Periodically flush points to the database.
 

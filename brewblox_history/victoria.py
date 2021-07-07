@@ -24,12 +24,6 @@ class VictoriaClient(features.ServiceFeature):
             'Content-Type': 'application/x-www-form-urlencoded'
         }
 
-    async def startup(self, app: web.Application):
-        pass
-
-    async def shutdown(self, app: web.Application):
-        pass
-
     async def ping(self):
         url = f'{self._address}/health'
         async with http.session(self.app).get(url) as resp:
@@ -43,42 +37,46 @@ class VictoriaClient(features.ServiceFeature):
                                 headers=self._headers) as resp:
             return await resp.json()
 
-    async def fields(self,
-                     start: str = '1d',
-                     end: str = '',
-                     ):
+    async def fields(self, start: str = '1d'):
         url = f'{self._address}/api/v1/series'
         session = http.session(self.app)
-        query = f'match[]={{__name__!=""}}&start={start}&end={end}'
+
+        query = f'match[]={{__name__!=""}}&start={start}'
         result = await self._query(query, url, session)
-        output = [
+        retv = [
             v['__name__']
             for v in result['data']
         ]
-        return output.sort()
+        retv.sort()
+
+        return retv
 
     async def ranges(self,
                      fields: List[str],
                      start: str = None,
-                     duration: str = None,
                      end: str = None,
-                     resolution: str = '10s',
+                     duration: str = None,
+                     step: str = '10s',
                      ):
-        url = f'{self._address}/api/v1/query'
+        url = f'{self._address}/api/v1/query_range'
         session = http.session(self.app)
-        duration, end = utils.select_timeframe(start, duration, end)
 
+        start, end, step = utils.select_timeframe(start, duration, end)
         queries = [
-            f'query=avg_over_time({{__name__="{f}"}}[{resolution}])[{duration}]&step={resolution}&time={end}'
+            f'query=avg_over_time({{__name__="{f}"}}[{step}])&step={step}&start={start}&end={end}'
             for f in fields
         ]
-
-        result = await asyncio.gather(*[self._query(q, url, session) for q in queries])
-
-        return [
-            v['data']['result'][0] for v in result
+        result = await asyncio.gather(*[
+            self._query(q, url, session)
+            for q in queries
+        ])
+        retv = [
+            v['data']['result'][0]
+            for v in result
             if v['data']['result']
         ]
+
+        return retv
 
     async def metrics(self, fields: List[str]):
         url = f'{self._address}/api/v1/query'
@@ -90,13 +88,17 @@ class VictoriaClient(features.ServiceFeature):
             f'query={{__name__="{f}"}}'
             for f in fields
         ]
-
-        result = await asyncio.gather(*[self._query(q, url, session) for q in queries])
-
-        return [
-            v['data']['result'][0] for v in result
+        result = await asyncio.gather(*[
+            self._query(q, url, session)
+            for q in queries
+        ])
+        retv = [
+            v['data']['result'][0]
+            for v in result
             if v['data']['result']
         ]
+
+        return retv
 
 
 class VictoriaWriter(repeater.RepeaterFeature):
@@ -111,13 +113,6 @@ class VictoriaWriter(repeater.RepeaterFeature):
         self._write_interval = config['write_interval']
         self._last_err = 'init'
         self._pending = []
-
-    def __str__(self):
-        return f'<{type(self).__name__}>'
-
-    async def prepare(self):
-        """Overrides RepeaterFeature.prepare()"""
-        pass
 
     async def run(self):
         session = http.session(self.app)
@@ -162,19 +157,17 @@ class VictoriaWriter(repeater.RepeaterFeature):
     def write_soon(self,
                    service: str,
                    fields: dict):
-
         timestamp = utils.ms_time()
-        points = [
-            {
-                'metric': f'{service}/{k}',
-                'value': float(v),
-                'timestamp': timestamp,
-            }
-            for k, v in fields.items()
-            if utils.try_float(v)
-        ]
 
-        self._pending.extend(points)
+        for k, v in fields.items():
+            try:
+                self._pending.append({
+                    'metric': f'{service}/{k}',
+                    'value': float(v),
+                    'timestamp': timestamp,
+                })
+            except (ValueError, TypeError):
+                pass  # Skip values that can't be converted to float
 
 
 def setup(app):

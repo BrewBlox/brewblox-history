@@ -1,5 +1,5 @@
 """
-REST endpoints for TSDB queries
+REST endpoints for TimeSeries queries
 """
 
 import asyncio
@@ -12,19 +12,8 @@ from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import schemas, utils, victoria
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = brewblox_logger(__name__, True)
 routes = web.RouteTableDef()
-
-LOGGER.addFilter(utils.DuplicateFilter())
-
-
-def _check_open_ended(params: dict) -> bool:
-    time_args = [bool(params.get(k)) for k in ('start', 'duration', 'end')]
-    return time_args in [
-        [False, False, False],
-        [True, False, False],
-        [False, True, False],
-    ]
 
 
 def _client(request: web.Request) -> victoria.VictoriaClient:
@@ -44,10 +33,10 @@ async def protected(desc: str):
 
 
 @docs(
-    tags=['TSDB'],
+    tags=['TimeSeries'],
     summary='Ping the database',
 )
-@routes.get('/tsdb/ping')
+@routes.get('/timeseries/ping')
 async def ping_endpoint(request: web.Request) -> web.Response:
     await _client(request).ping()
     return web.json_response(
@@ -60,11 +49,11 @@ async def ping_endpoint(request: web.Request) -> web.Response:
 
 
 @docs(
-    tags=['TSDB'],
+    tags=['TimeSeries'],
     summary='Get value ranges from database',
 )
-@routes.post('/tsdb/ranges')
-@request_schema(schemas.TSDBRangesQuerySchema)
+@routes.post('/timeseries/ranges')
+@request_schema(schemas.TimeSeriesRangesQuerySchema)
 async def ranges_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
         await _client(request).ranges(**request['data'])
@@ -72,11 +61,11 @@ async def ranges_endpoint(request: web.Request) -> web.Response:
 
 
 @docs(
-    tags=['TSDB'],
+    tags=['TimeSeries'],
     summary='Get single metrics from database',
 )
-@routes.post('/tsdb/metrics')
-@request_schema(schemas.TSDBMetricsQuerySchema)
+@routes.post('/timeseries/metrics')
+@request_schema(schemas.TimeSeriesMetricsQuerySchema)
 async def metrics_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
         await _client(request).metrics(**request['data'])
@@ -84,11 +73,11 @@ async def metrics_endpoint(request: web.Request) -> web.Response:
 
 
 @docs(
-    tags=['TSDB'],
+    tags=['TimeSeries'],
     summary='List available measurements and fields in the database',
 )
-@routes.post('/tsdb/fields')
-@request_schema(schemas.TSDBFieldsQuerySchema)
+@routes.post('/timeseries/fields')
+@request_schema(schemas.TimeSeriesFieldsQuerySchema)
 async def fields_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
         await _client(request).fields(**request['data'])
@@ -98,7 +87,7 @@ async def fields_endpoint(request: web.Request) -> web.Response:
 async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: str, params: dict):
     client = victoria.fget_client(app)
     poll_interval = app['config']['poll_interval']
-    open_ended = _check_open_ended(params)
+    open_ended = utils.is_open_ended(**params)
     initial = True
 
     while True:
@@ -143,10 +132,10 @@ async def _stream_metrics(app: web.Application, ws: web.WebSocketResponse, id: s
 
 
 @docs(
-    tags=['TSDB'],
+    tags=['TimeSeries'],
     summary='Open a WebSocket to stream values from database as they are added',
 )
-@routes.get('/tsdb/stream')
+@routes.get('/timeseries/stream')
 async def stream(request: web.Request) -> web.Response:
     app = request.app
     ws = web.WebSocketResponse()
@@ -155,9 +144,9 @@ async def stream(request: web.Request) -> web.Response:
     try:
         await ws.prepare(request)
         request.app['websockets'].add(ws)
-        cmd_schema = schemas.TSDBStreamCommandSchema()
-        ranges_schema = schemas.TSDBRangesQuerySchema()
-        metrics_schema = schemas.TSDBMetricsQuerySchema()
+        cmd_schema = schemas.TimeSeriesStreamCommandSchema()
+        ranges_schema = schemas.TimeSeriesRangesQuerySchema()
+        metrics_schema = schemas.TimeSeriesMetricsQuerySchema()
 
         async for msg in ws:
             try:

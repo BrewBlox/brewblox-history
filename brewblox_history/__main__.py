@@ -7,7 +7,7 @@ from brewblox_service import (brewblox_logger, http, mqtt, scheduler, service,
                               strex)
 
 from brewblox_history import (datastore_api, history_api, influx, redis,
-                              relays, tsdb_api, utils, victoria)
+                              relays, timeseries_api, utils, victoria)
 
 LOGGER = brewblox_logger(__name__)
 
@@ -16,11 +16,11 @@ def create_parser(default_name='history'):
     parser = service.create_parser(default_name=default_name)
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
-                        default=5,
+                        default=30,
                         type=float)
     parser.add_argument('--poll-interval',
                         help='Interval (sec) between queries in live SSE requests. [%(default)s]',
-                        default=5,
+                        default=30,
                         type=float)
     parser.add_argument('--influx-host',
                         help='Influx database host',
@@ -63,7 +63,7 @@ def main():
     utils.setup(app)
     influx.setup(app)
     victoria.setup(app)
-    tsdb_api.setup(app)
+    timeseries_api.setup(app)
     history_api.setup(app)
     redis.setup(app)
     datastore_api.setup(app)

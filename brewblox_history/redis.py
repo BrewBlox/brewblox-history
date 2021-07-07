@@ -40,9 +40,6 @@ class RedisClient(features.ServiceFeature):
         # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None
 
-    async def startup(self, app: web.Application):
-        await self.shutdown(app)
-
     async def shutdown(self, app: web.Application):
         if self._redis:
             self._redis.close()
