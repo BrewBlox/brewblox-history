@@ -92,7 +92,7 @@ class DatastoreDeleteResponseSchema(Schema):
 
 
 class TimeSeriesFieldsQuerySchema(Schema):
-    start = fields.Raw(required=False)
+    start = fields.String(required=False)
 
 
 class TimeSeriesRangesQuerySchema(Schema):
@@ -100,11 +100,10 @@ class TimeSeriesRangesQuerySchema(Schema):
                           data_key='fields',
                           attribute='fields',
                           required=True)
-    start = fields.Raw(required=False)
-    end = fields.Raw(required=False)
+    start = fields.String(required=False)
+    end = fields.String(required=False)
     duration = fields.String(required=False)
-    step = fields.Raw(required=False)
-    timeout = fields.Raw(required=False)
+    step = fields.String(required=False)
 
 
 class TimeSeriesMetricsQuerySchema(Schema):
