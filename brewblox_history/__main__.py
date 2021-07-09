@@ -19,8 +19,16 @@ def create_parser(default_name='history'):
                         default=30,
                         type=float)
     parser.add_argument('--poll-interval',
-                        help='Interval (sec) between queries in live SSE requests. [%(default)s]',
+                        help='Interval (sec) between queries in live queries. [%(default)s]',
+                        default=5,
+                        type=float)
+    parser.add_argument('--ranges-interval',
+                        help='Interval (sec) between updates in live ranges. [%(default)s]',
                         default=30,
+                        type=float)
+    parser.add_argument('--metrics-interval',
+                        help='Interval (sec) between updates in live metrics. [%(default)s]',
+                        default=5,
                         type=float)
     parser.add_argument('--influx-host',
                         help='Influx database host',

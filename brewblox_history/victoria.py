@@ -1,4 +1,5 @@
 import asyncio
+from asyncio.futures import CancelledError
 from typing import List
 
 from aiohttp import web
@@ -113,6 +114,7 @@ class VictoriaWriter(repeater.RepeaterFeature):
         self._write_interval = config['write_interval']
         self._last_err = 'init'
         self._pending = []
+        self.listeners = set()
 
     async def run(self):
         session = http.session(self.app)
@@ -153,6 +155,15 @@ class VictoriaWriter(repeater.RepeaterFeature):
             LOGGER.warn('Downsampling pending points...')
             self._pending = self._pending[::2]
 
+    def _notify_listeners(self, point: dict):
+        for f in self.listeners:
+            try:
+                f(point)
+            except Exception as ex:
+                LOGGER.warn(f'listener error: {strex(ex)}')
+            except CancelledError:
+                raise
+
     def write_soon(self,
                    service: str,
                    fields: dict):
@@ -160,11 +171,15 @@ class VictoriaWriter(repeater.RepeaterFeature):
 
         for k, v in fields.items():
             try:
-                self._pending.append({
+                point = {
                     'metric': f'{service}/{k}',
                     'value': float(v),
                     'timestamp': timestamp,
-                })
+                }
+
+                self._pending.append(point)
+                self._notify_listeners(point)
+
             except (ValueError, TypeError):
                 pass  # Skip values that can't be converted to float
 

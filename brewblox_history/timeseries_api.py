@@ -86,7 +86,7 @@ async def fields_endpoint(request: web.Request) -> web.Response:
 
 async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: str, params: dict):
     client = victoria.fget_client(app)
-    poll_interval = app['config']['poll_interval']
+    interval = app['config']['ranges_interval']
     open_ended = utils.is_open_ended(**params)
     initial = True
 
@@ -110,25 +110,34 @@ async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: st
         if not open_ended:
             break
 
-        await asyncio.sleep(poll_interval)
+        await asyncio.sleep(interval)
 
 
 async def _stream_metrics(app: web.Application, ws: web.WebSocketResponse, id: str, params: dict):
-    client = victoria.fget_client(app)
-    poll_interval = app['config']['poll_interval']
+    writer = victoria.fget_writer(app)
+    cache = {}
+    interval = app['config']['metrics_interval']
 
-    while True:
-        async with protected('metrics query'):
-            result = await client.metrics(**params)
+    def cb(point):
+        field = point['metric']
+        if field in params['fields']:
+            cache[field] = point
 
-            await ws.send_json({
-                'id': id,
-                'data': {
-                    'metrics': result,
-                },
-            })
+    try:
+        writer.listeners.add(cb)
 
-        await asyncio.sleep(poll_interval)
+        while True:
+            async with protected('metrics push'):
+                await asyncio.sleep(interval)
+                await ws.send_json({
+                    'id': id,
+                    'data': {
+                        'metrics': list(cache.values()),
+                    },
+                })
+
+    finally:
+        writer.listeners.remove(cb)
 
 
 @docs(

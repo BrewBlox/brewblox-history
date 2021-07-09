@@ -25,8 +25,8 @@ def log_enabled():
 def app_config() -> dict:
     return {
         'debug': True,
-        'write_interval': 5,
-        'poll_interval': 5,
+        'write_interval': 30,
+        'poll_interval': 30,
         'influx_host': 'influx',
         'redis_url': 'redis://redis',
         'datastore_topic': 'brewcast/datastore',
