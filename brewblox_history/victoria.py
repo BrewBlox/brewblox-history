@@ -1,5 +1,7 @@
 import asyncio
+import json
 from asyncio.futures import CancelledError
+from collections import deque
 from typing import List
 
 from aiohttp import web
@@ -22,7 +24,8 @@ class VictoriaClient(features.ServiceFeature):
         self._port = config['victoria_prometheus_port']
         self._address = f'http://{self._host}:{self._port}'
         self._headers = {
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept-Encoding': 'gzip',
         }
 
     async def ping(self):
@@ -57,7 +60,6 @@ class VictoriaClient(features.ServiceFeature):
                      start: str = None,
                      end: str = None,
                      duration: str = None,
-                     step: str = '10s',
                      ):
         url = f'{self._address}/api/v1/query_range'
         session = http.session(self.app)
@@ -78,6 +80,66 @@ class VictoriaClient(features.ServiceFeature):
         ]
 
         return retv
+
+    async def csv(self,
+                  fields: List[str],
+                  start: str = None,
+                  end: str = None,
+                  duration: str = None,
+                  precision: str = None,
+                  ):
+        url = f'{self._address}/api/v1/export'
+        session = http.session(self.app)
+        start, end, _ = utils.select_timeframe(start, duration, end)
+        matches = '&'.join([
+            f'match[]={{__name__="{f}"}}'
+            for f in fields
+        ])
+        query = f'{matches}&start={start}&end={end}&reduce_mem_usage=1'
+        cols = []
+
+        async with session.post(url,
+                                data=query,
+                                headers=self._headers) as resp:
+            # Objects are returned as newline-separated JSON objects
+            async for line in resp.content:
+                parsed = json.loads(line)
+                field = parsed['metric']['__name__']
+                cols.append({
+                    'metric': field,
+                    'idx': fields.index(field),
+                    'timestamps': deque(parsed['timestamps']),
+                    'values': deque(parsed['values']),
+                })
+
+        # CSV headers
+        yield ','.join(['time'] + fields)
+        LOGGER.info(precision)
+
+        # CSV values
+        # Scan for earliest timestamp
+        # Then collect all values with that timestamp
+        while cols:
+            # The database returned sorted lists of timestamps
+            # Find the earliest timestamp
+            timestamp = min((c['timestamps'][0] for c in cols))
+
+            # Pre-populate with formatted tiemstamp and empty strings
+            time = utils.format_csv_timestamp(timestamp, precision)
+            output = [time] + [''] * len(fields)
+
+            for col in cols:
+                # If timestamp matches, insert at the correct position in output
+                # Pop both value and timestamp so the next iteration can look
+                # for the next earliest timestamp
+                if col['timestamps'][0] == timestamp:
+                    col['timestamps'].popleft()
+                    output[col['idx'] + 1] = str(col['values'].popleft())
+
+            yield ','.join(output)
+
+            # The loop ends when all cols are exhausted
+            cols = [c for c in cols if c['timestamps']]
 
     async def metrics(self, fields: List[str]):
         url = f'{self._address}/api/v1/query'

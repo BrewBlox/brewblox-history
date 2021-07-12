@@ -84,6 +84,17 @@ def timestamp_str(value: Union[str, int, datetime, None]) -> str:
         return ''
 
 
+def format_csv_timestamp(ms: int, precision: Optional[str]) -> str:
+    if precision == 'ns':
+        return str(ms * 1e6)
+    elif precision == 's':
+        return str(ms / 1e3)
+    elif precision == 'ISO8601':
+        return datetime.fromtimestamp(ms / 1e3).isoformat(timespec='milliseconds') + 'Z'
+    else:
+        return str(ms)
+
+
 def optformat(fmt: str, v: Optional[Any]) -> str:
     if v:
         return fmt.format(v)

@@ -106,6 +106,11 @@ class TimeSeriesRangesQuerySchema(Schema):
     step = fields.String(required=False)
 
 
+class TimeSeriesCsvQuerySchema(TimeSeriesRangesQuerySchema):
+    precision = fields.String(required=False,
+                              validate=OneOf(['ns', 'ms', 's', 'ISO8601']))
+
+
 class TimeSeriesMetricsQuerySchema(Schema):
     fields_ = fields.List(fields.String(),
                           data_key='fields',

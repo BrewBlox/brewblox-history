@@ -74,6 +74,31 @@ async def metrics_endpoint(request: web.Request) -> web.Response:
 
 @docs(
     tags=['TimeSeries'],
+    summary='Get value ranges from database',
+)
+@routes.post('/timeseries/csv')
+@request_schema(schemas.TimeSeriesCsvQuerySchema)
+async def csv_endpoint(request: web.Request) -> web.Response:
+    response = web.StreamResponse(
+        status=200,
+        reason='OK',
+        headers={
+            'Content-Type': 'text/plain',
+            'Access-Control-Allow-Origin': '*',
+        }
+    )
+    await response.prepare(request)
+
+    async for line in _client(request).csv(**request['data']):
+        await response.write(line.encode())
+        await response.write('\n'.encode())
+
+    await response.write_eof()
+    return response
+
+
+@docs(
+    tags=['TimeSeries'],
     summary='List available measurements and fields in the database',
 )
 @routes.post('/timeseries/fields')
