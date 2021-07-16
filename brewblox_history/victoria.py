@@ -4,6 +4,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque, Dict, List
+from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.client import ClientSession
@@ -84,9 +85,10 @@ class VictoriaClient(repeater.RepeaterFeature):
 
         start, end, step = utils.select_timeframe(start, duration, end)
         queries = [
-            f'query=avg_over_time({{__name__="{f}"}}[{step}])&step={step}&start={start}&end={end}'
+            f'query=avg_over_time({{__name__="{quote(f)}"}}[{step}])&step={step}&start={start}&end={end}'
             for f in fields
         ]
+        LOGGER.debug(queries)
         result = await asyncio.gather(*[
             self._json_query(q, url, session)
             for q in queries
@@ -110,7 +112,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         session = http.session(self.app)
         start, end, _ = utils.select_timeframe(start, duration, end)
         matches = '&'.join([
-            f'match[]={{__name__="{f}"}}'
+            f'match[]={{__name__="{quote(f)}"}}'
             for f in fields
         ])
         query = f'{matches}&start={start}&end={end}&reduce_mem_usage=1'
