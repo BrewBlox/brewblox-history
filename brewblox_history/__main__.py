@@ -31,7 +31,7 @@ def create_parser(default_name='history'):
                         default='redis://redis')
     parser.add_argument('--victoria-url',
                         help='URL for the Victoria Metrics database',
-                        default='http://victoria:8428')
+                        default='http://victoria:8428/victoria')
     parser.add_argument('--datastore-topic',
                         help='Synchronization topic for datastore updates',
                         default='brewcast/datastore')

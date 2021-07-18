@@ -33,14 +33,14 @@ async def test_ping(app, client, aresponses: ResponsesMockServer):
     vic = victoria.fget(app)
 
     aresponses.add(
-        path_pattern='/health',
+        path_pattern='/victoria/health',
         method_pattern='GET',
         response='OK'
     )
     await vic.ping()
 
     aresponses.add(
-        path_pattern='/health',
+        path_pattern='/victoria/health',
         method_pattern='GET',
         response='NOK'
     )
@@ -52,7 +52,7 @@ async def test_fields(app, client, aresponses: ResponsesMockServer):
     vic = victoria.fget(app)
 
     aresponses.add(
-        path_pattern='/api/v1/series',
+        path_pattern='/victoria/api/v1/series',
         method_pattern='POST',
         response={
             'status': 'success',
@@ -127,7 +127,7 @@ async def test_ranges(app, client, aresponses: ResponsesMockServer):
     }
 
     aresponses.add(
-        path_pattern='/api/v1/query_range',
+        path_pattern='/victoria/api/v1/query_range',
         method_pattern='POST',
         repeat=3,
         response={
@@ -146,7 +146,7 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
     vic = victoria.fget(app)
 
     aresponses.add(
-        path_pattern='/api/v1/export',
+        path_pattern='/victoria/api/v1/export',
         method_pattern='POST',
         response='\n'.join([
             '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},' +
@@ -200,7 +200,7 @@ async def test_write_soon(app, mocker, m_write_interval, client, aresponses: Res
         return web.Response()
 
     aresponses.add(
-        path_pattern='/write',
+        path_pattern='/victoria/write',
         method_pattern='GET',
         repeat=aresponses.INFINITY,
         response=handler,
@@ -232,7 +232,7 @@ async def test_write_error(app, mocker, m_write_interval, client, aresponses: Re
     vic = victoria.fget(app)
 
     aresponses.add(
-        path_pattern='/write',
+        path_pattern='/victoria/write',
         method_pattern='GET',
         repeat=aresponses.INFINITY,
         response=web.Response(status=400),

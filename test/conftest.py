@@ -27,7 +27,7 @@ def app_config() -> dict:
         'write_interval': 30,
         'ranges_interval': 30,
         'metrics_interval': 5,
-        'victoria_url': 'http://victoria:8428',
+        'victoria_url': 'http://victoria:8428/victoria',
         'redis_url': 'redis://redis',
         'datastore_topic': 'brewcast/datastore',
     }
