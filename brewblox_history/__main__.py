@@ -43,7 +43,7 @@ async def controller_error_middleware(request: web.Request, handler: web.Request
     try:
         return await handler(request)
     except Exception as ex:
-        LOGGER.error(f'REST error: {strex(ex)}', exc_info=request.app['config']['debug'])
+        LOGGER.error(f'REST error for {request.path}: {strex(ex)}', exc_info=request.app['config']['debug'])
         return web.json_response({'error': strex(ex)}, status=500)
 
 
