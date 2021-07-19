@@ -54,11 +54,11 @@ class VictoriaClient(repeater.RepeaterFeature):
                                 headers=self._query_headers) as resp:
             return await resp.json()
 
-    async def fields(self, start: str = '1d'):
+    async def fields(self, duration: str):
         url = f'{self._url}/api/v1/series'
         session = http.session(self.app)
 
-        query = f'match[]={{__name__!=""}}&start={start}'
+        query = f'match[]={{__name__!=""}}&start={duration}'
         result = await self._json_query(query, url, session)
         retv = [
             v['__name__']

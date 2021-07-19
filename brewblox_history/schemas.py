@@ -55,7 +55,7 @@ class DatastoreDeleteResponseSchema(Schema):
 
 
 class TimeSeriesFieldsQuerySchema(Schema):
-    start = fields.String(required=False)
+    duration = fields.String(required=True)
 
 
 class TimeSeriesMetricsQuerySchema(Schema):
