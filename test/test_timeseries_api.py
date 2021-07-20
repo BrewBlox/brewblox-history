@@ -44,11 +44,11 @@ async def test_ping(app, client, m_victoria):
 async def test_fields(app, client, m_victoria):
     m_victoria.fields.return_value = {'retv': True}
     assert await response(
-        client.post('/timeseries/fields', json={'start': 'yesterday'})
+        client.post('/timeseries/fields', json={'duration': '1d'})
     ) == {'retv': True}
 
     await response(
-        client.post('/timeseries/fields', json={'start': 1}),
+        client.post('/timeseries/fields', json={'duration': 1}),
         status=422
     )
 
