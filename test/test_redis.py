@@ -39,6 +39,10 @@ async def rclient(app, client):
     return redis.fget(app)
 
 
+async def test_shutdown(app, m_redis, client, rclient):
+    await rclient.shutdown(app)
+
+
 async def test_ping(m_redis, client, rclient: redis.RedisClient):
     m_redis.ping.return_value = b'pong'
     assert await rclient.ping() == 'pong'
