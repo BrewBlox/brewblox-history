@@ -2,40 +2,15 @@
 Functionality for persisting eventbus messages to the database
 """
 
-import collections
 from contextlib import suppress
 
 from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
-from brewblox_history import influx, schemas
-
-FLAT_SEPARATOR = '/'
+from brewblox_history import schemas, utils, victoria
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
-
-
-def influx_formatted(d, parent_key='', sep='/'):
-    """Converts a (nested) JSON dict to a flat, influx-ready dict
-
-    - Nested values are flattened, using `sep` as path separator
-    - Boolean values are converted to a number (0 / 1)
-    """
-    items = []
-    for k, v in d.items():
-        new_key = f'{parent_key}{sep}{k}' if parent_key else str(k)
-
-        if isinstance(v, list):
-            v = {li: lv for li, lv in enumerate(v)}
-
-        if isinstance(v, collections.MutableMapping):
-            items.extend(influx_formatted(v, new_key, sep=sep).items())
-        elif isinstance(v, bool):
-            items.append((new_key, int(v)))
-        else:
-            items.append((new_key, v))
-    return dict(items)
 
 
 class MQTTDataRelay(features.ServiceFeature):
@@ -51,11 +26,8 @@ class MQTTDataRelay(features.ServiceFeature):
             'data': dict,
         }
 
-    'key' becomes the InfluxDB measurement name.
-    'data' is flattened into measurement fields.
-
-    Data in sub-dicts is flattened.
-    The key name will be the path to the sub-dict, separated by /.
+    The `data` dict is flattened.
+    The key name for each field will be a /-separated path to the nested value.
 
     If we'd received an event where:
 
@@ -76,7 +48,7 @@ class MQTTDataRelay(features.ServiceFeature):
             }
         }
 
-    Data would be flattened to:
+    `data` would be flattened to:
 
         {
             'block1/sensor1/settings/setting': 'setting',
@@ -110,11 +82,11 @@ class MQTTDataRelay(features.ServiceFeature):
             LOGGER.error(f'Invalid MQTT: {topic} {errors}')
             return
 
-        measurement = message['key']
-        data = influx_formatted(message['data'])
+        service = message['key']
+        points = utils.flatten(message['data'])
 
-        LOGGER.debug(f'MQTT: {measurement} = {str(data)[:30]}...')
-        influx.write_soon(self.app, measurement, data)
+        LOGGER.debug(f'MQTT: {service} = {str(points)[:30]}...')
+        victoria.fget(self.app).write_soon(service, points)
 
 
 def setup(app: web.Application):

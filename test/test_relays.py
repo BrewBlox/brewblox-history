@@ -11,8 +11,8 @@ TESTED = relays.__name__
 
 
 @pytest.fixture
-def m_write_soon(mocker):
-    m = mocker.patch(TESTED + '.influx.write_soon')
+def m_victoria(mocker):
+    m = mocker.patch(TESTED + '.victoria.fget').return_value
     return m
 
 
@@ -32,12 +32,12 @@ def m_subscribe(mocker):
 
 
 @pytest.fixture
-async def app(app, mocker, m_write_soon, m_prepare):
+async def app(app, mocker, m_victoria, m_prepare):
     relays.setup(app)
     return app
 
 
-async def test_mqtt_relay(app, client, m_write_soon):
+async def test_mqtt_relay(app, client, m_victoria):
     relay = relays.fget(app)
 
     data = {
@@ -64,7 +64,7 @@ async def test_mqtt_relay(app, client, m_write_soon):
     flat_data = {
         'nest/ed/values/0': 'val',
         'nest/ed/values/1': 'var',
-        'nest/ed/values/2': 1,
+        'nest/ed/values/2': True,
     }
 
     flat_value = {
@@ -78,8 +78,8 @@ async def test_mqtt_relay(app, client, m_write_soon):
     await relay.on_event_message(topic, {'pancakes': 'yummy'})
     await relay.on_event_message(topic, {'key': 'm', 'data': 'no'})
 
-    assert m_write_soon.call_args_list == [
-        call(app, 'm', flat_data),
-        call(app, 'm', flat_value),
-        call(app, 'm', {}),
+    assert m_victoria.write_soon.call_args_list == [
+        call('m', flat_data),
+        call('m', flat_value),
+        call('m', {}),
     ]
