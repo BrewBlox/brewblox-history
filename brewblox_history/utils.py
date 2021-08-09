@@ -86,7 +86,7 @@ def is_open_ended(start=None, duration=None, end=None, **_) -> bool:
 def now() -> datetime:  # pragma: no cover
     # You can't mock C extension functions
     # Add a wrapper here so we can mock it
-    return datetime.now()
+    return datetime.now(timezone.utc)
 
 
 def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str]:
