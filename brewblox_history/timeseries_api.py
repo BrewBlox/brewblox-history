@@ -5,7 +5,6 @@ REST endpoints for TimeSeries queries
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from datetime import datetime
 
 from aiohttp import web
 from aiohttp_apispec import docs, request_schema
@@ -126,7 +125,7 @@ async def _stream_ranges(app: web.Application, ws: web.WebSocketResponse, id: st
                 },
             })
 
-            params['start'] = datetime.now()
+            params['start'] = utils.now()
             params.pop('duration', None)
             initial = False
 
