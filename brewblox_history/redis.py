@@ -1,7 +1,7 @@
 import json
 from functools import wraps
 from itertools import groupby
-from typing import List, Optional
+from typing import Optional, TypedDict
 
 import aioredis
 from aiohttp import web
@@ -10,15 +10,23 @@ from brewblox_service import brewblox_logger, features, mqtt
 LOGGER = brewblox_logger(__name__)
 
 
+class DatastoreObj(TypedDict):
+    namespace: str
+    id: str
+    # Also includes arbitrary other fields
+    # This can't be expressed in a TypedDict
+    # https://github.com/python/mypy/issues/4617
+
+
 def keycat(namespace: str, key: str) -> str:
     return f'{namespace}:{key}' if namespace else key
 
 
-def keycatobj(obj: dict) -> str:
+def keycatobj(obj: DatastoreObj) -> str:
     return keycat(obj['namespace'], obj['id'])
 
 
-def flatten(data: List):
+def flatten(data: list):
     return [item for sublist in data for item in sublist]
 
 
@@ -45,14 +53,14 @@ class RedisClient(features.ServiceFeature):
             self._redis.close()
             await self._redis.wait_closed()
 
-    async def _mkeys(self, namespace: str, ids: Optional[List[str]], filter: Optional[str]) -> List[str]:
+    async def _mkeys(self, namespace: str, ids: Optional[list[str]], filter: Optional[str]) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
         if filter is not None:
             keys += [key.decode()
                      for key in await self._redis.keys(keycat(namespace, filter))]
         return keys
 
-    async def _publish(self, changed: List[dict] = None, deleted: List[str] = None):
+    async def _publish(self, changed: list[DatastoreObj] = None, deleted: list[str] = None):
         """Publish changes to documents.
 
         Objects are grouped by top-level namespace, and then published
@@ -78,7 +86,7 @@ class RedisClient(features.ServiceFeature):
         return json.loads(resp) if resp else None
 
     @autoconnect
-    async def mget(self, namespace: str, ids: List[str] = None, filter: str = None) -> List[dict]:
+    async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreObj]:
         if ids is None and filter is None:
             filter = '*'
         keys = await self._mkeys(namespace, ids, filter)
@@ -88,13 +96,13 @@ class RedisClient(features.ServiceFeature):
         return [json.loads(v) for v in values]
 
     @autoconnect
-    async def set(self, value: dict) -> dict:
+    async def set(self, value: DatastoreObj) -> DatastoreObj:
         await self._redis.set(keycatobj(value), json.dumps(value))
         await self._publish(changed=[value])
         return value
 
     @autoconnect
-    async def mset(self, values: List[dict]) -> List[dict]:
+    async def mset(self, values: list[DatastoreObj]) -> list[DatastoreObj]:
         if values:
             db_keys = [keycatobj(v) for v in values]
             db_values = [json.dumps(v) for v in values]
@@ -110,7 +118,7 @@ class RedisClient(features.ServiceFeature):
         return count
 
     @autoconnect
-    async def mdelete(self, namespace: str, ids: List[str] = None, filter: str = None) -> int:
+    async def mdelete(self, namespace: str, ids: list[str] = None, filter: str = None) -> int:
         keys = await self._mkeys(namespace, ids, filter)
         count = 0
         if keys:

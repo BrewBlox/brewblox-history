@@ -3,7 +3,7 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, List
+from typing import NamedTuple, TypedDict
 from urllib.parse import quote
 
 from aiohttp import web
@@ -20,8 +20,24 @@ MAX_PENDING_LINES = 5000
 class CsvColumn:
     metric: str
     idx: int
-    timestamps: Deque[float]
-    values: Deque[str]
+    timestamps: deque[float]
+    values: deque[str]
+
+
+class Metric(TypedDict):
+    metric: str
+    value: float
+    timestamp: int
+
+
+class RangeValue(NamedTuple):
+    timestamp: int
+    value: str
+
+
+class Range(TypedDict):
+    metric: dict[str, str]  # { __name__: string }
+    values: list[RangeValue]
 
 
 class VictoriaClient(repeater.RepeaterFeature):
@@ -38,8 +54,8 @@ class VictoriaClient(repeater.RepeaterFeature):
 
         self._write_interval = config['write_interval']
         self._last_err = 'init'
-        self._pending_lines: List[str] = []
-        self._cached_metrics: Dict[str, dict] = {}
+        self._pending_lines: list[str] = []
+        self._cached_metrics: dict[str, Metric] = {}
 
     async def ping(self):
         url = f'{self._url}/health'
@@ -54,7 +70,7 @@ class VictoriaClient(repeater.RepeaterFeature):
                                 headers=self._query_headers) as resp:
             return await resp.json()
 
-    async def fields(self, duration: str):
+    async def fields(self, duration: str) -> list[str]:
         url = f'{self._url}/api/v1/series'
         session = http.session(self.app)
 
@@ -68,18 +84,18 @@ class VictoriaClient(repeater.RepeaterFeature):
 
         return retv
 
-    async def metrics(self, fields: List[str]) -> List[dict]:
+    async def metrics(self, fields: list[str]) -> list[Metric]:
         return list((
             v for k, v in self._cached_metrics.items()
             if k in fields
         ))
 
     async def ranges(self,
-                     fields: List[str],
+                     fields: list[str],
                      start: str = None,
                      end: str = None,
                      duration: str = None,
-                     ):
+                     ) -> list[Range]:
         url = f'{self._url}/api/v1/query_range'
         session = http.session(self.app)
 
@@ -102,7 +118,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         return retv
 
     async def csv(self,
-                  fields: List[str],
+                  fields: list[str],
                   start: str = None,
                   end: str = None,
                   duration: str = None,
@@ -116,14 +132,14 @@ class VictoriaClient(repeater.RepeaterFeature):
             for f in fields
         ])
         query = f'{matches}&start={start}&end={end}&reduce_mem_usage=1'
-        cols: List[CsvColumn] = []
+        cols: list[CsvColumn] = []
 
         async with session.post(url,
                                 data=query,
                                 headers=self._query_headers) as resp:
             # Objects are returned as newline-separated JSON objects
             # Metrics may be returned in multiple chunks
-            async for line in resp.content:
+            async for line in resp.content:  # pragma: no branch
                 parsed = json.loads(line)
                 field = parsed['metric']['__name__']
                 cols.append(CsvColumn(
@@ -192,9 +208,6 @@ class VictoriaClient(repeater.RepeaterFeature):
                     LOGGER.info(f'{self} now active')
                     self._last_err = None
 
-            except asyncio.CancelledError:
-                raise
-
             except Exception as ex:
                 msg = strex(ex)
                 LOGGER.warning(f'{self} {msg}')
@@ -203,7 +216,7 @@ class VictoriaClient(repeater.RepeaterFeature):
 
     def write_soon(self,
                    service: str,
-                   points: dict):
+                   points: dict[str, float]):
         time_ns = time.time_ns()
         time_ms = time_ns // 1_000_000
         line_values = []
@@ -218,11 +231,11 @@ class VictoriaClient(repeater.RepeaterFeature):
                 line_values.append(f'{field}={value}')
 
                 # Local cache used for the metrics API
-                self._cached_metrics[metric] = {
-                    'metric': metric,
-                    'value': value,
-                    'timestamp': time_ms,
-                }
+                self._cached_metrics[metric] = Metric(
+                    metric=metric,
+                    value=value,
+                    timestamp=time_ms
+                )
 
             except (ValueError, TypeError):
                 pass  # Skip values that can't be converted to float

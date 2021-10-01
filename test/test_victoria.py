@@ -3,13 +3,13 @@ Tests brewblox_history.victoria
 """
 
 import asyncio
+from unittest.mock import ANY
 
 import ciso8601
 import pytest
 from aiohttp import web
 from aresponses import ResponsesMockServer
 from brewblox_service import http, scheduler
-from mock import ANY
 
 from brewblox_history import victoria
 

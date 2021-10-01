@@ -24,10 +24,6 @@ def _client(request: web.Request) -> victoria.VictoriaClient:
 async def protected(desc: str):
     try:
         yield
-
-    except asyncio.CancelledError:
-        raise
-
     except Exception as ex:
         LOGGER.error(f'{desc} error {strex(ex)}')
 
@@ -101,7 +97,7 @@ async def csv_endpoint(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    async for line in _client(request).csv(**request['data']):
+    async for line in _client(request).csv(**request['data']):  # pragma: no branch
         await response.write(line.encode())
         await response.write('\n'.encode())
 
@@ -169,7 +165,7 @@ async def stream(request: web.Request) -> web.Response:
         ranges_schema = schemas.TimeSeriesRangesQuerySchema()
         metrics_schema = schemas.TimeSeriesMetricsQuerySchema()
 
-        async for msg in ws:
+        async for msg in ws:  # pragma: no branch
             try:
                 msg = json.loads(msg.data)
                 schemas.validate(cmd_schema, msg)
@@ -195,9 +191,6 @@ async def stream(request: web.Request) -> web.Response:
                 # This path should never be reached
                 else:  # pragma: no cover
                     raise NotImplementedError('Unknown command')
-
-            except asyncio.CancelledError:
-                raise
 
             except Exception as ex:
                 LOGGER.error(f'Stream read error {strex(ex)}')
