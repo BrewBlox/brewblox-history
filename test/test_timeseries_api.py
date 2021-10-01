@@ -4,12 +4,12 @@ Tests brewblox_history.timeseries_api
 
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp import ClientWebSocketResponse
 from aiohttp.http_websocket import WSCloseCode
 from brewblox_service.testing import response
-from mock import AsyncMock
 
 from brewblox_history import socket_closer, timeseries_api
 
@@ -92,6 +92,16 @@ async def test_csv(app, client, m_victoria):
         client.post('/timeseries/csv', json={}),
         status=422
     )
+
+
+async def test_empty_csv(app, client, m_victoria):
+    async def csv_mock(fields, **kwargs):
+        yield ','.join(fields)
+
+    m_victoria.csv = csv_mock
+    assert await response(
+        client.post('/timeseries/csv', json={'fields': ['a', 'b', 'c'], 'precision': 's'})
+    ) == 'a,b,c\n'
 
 
 async def test_stream(app, client, m_victoria):
