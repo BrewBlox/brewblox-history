@@ -2,8 +2,9 @@
 Tests brewblox_history.relays
 """
 
+from unittest.mock import AsyncMock, call
+
 import pytest
-from mock import AsyncMock, call
 
 from brewblox_history import relays
 

@@ -3,10 +3,10 @@ Tests brewblox_history.redis.py
 """
 
 import json
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from brewblox_service.testing import response
-from mock import AsyncMock, Mock, call
 
 from brewblox_history import datastore_api, redis
 
