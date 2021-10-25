@@ -2,6 +2,9 @@
 Example of how to import and use the brewblox service
 """
 
+import json
+import traceback
+
 from aiohttp import web
 from brewblox_service import (brewblox_logger, http, mqtt, scheduler, service,
                               strex)
@@ -42,9 +45,23 @@ def create_parser(default_name='history'):
 async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
     try:
         return await handler(request)
+
+    except web.HTTPError:  # pragma: no cover
+        raise
+
     except Exception as ex:
-        LOGGER.error(f'REST error for {request.path}: {strex(ex)}', exc_info=request.app['config']['debug'])
-        return web.json_response({'error': strex(ex)}, status=500)
+        app = request.app
+        message = strex(ex)
+        debug = app['config']['debug']
+        LOGGER.error(f'[{request.url}] => {message}', exc_info=debug)
+
+        response = {
+            'error': message,
+            'traceback': traceback.format_tb(ex.__traceback__),
+        }
+
+        return web.HTTPInternalServerError(text=json.dumps(response),
+                                           content_type='application/json')
 
 
 def main():
