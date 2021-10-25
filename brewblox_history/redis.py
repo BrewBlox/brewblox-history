@@ -93,7 +93,7 @@ class RedisClient(features.ServiceFeature):
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-        return [json.loads(v) for v in values]
+        return [json.loads(v) for v in values if v is not None]
 
     @autoconnect
     async def set(self, value: DatastoreObj) -> DatastoreObj:
