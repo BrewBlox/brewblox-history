@@ -7,7 +7,7 @@ import json
 from contextlib import asynccontextmanager
 
 from aiohttp import web
-from aiohttp_apispec import docs, request_schema
+from aiohttp_apispec import docs, json_schema, response_schema
 from brewblox_service import brewblox_logger, strex
 
 from brewblox_history import schemas, socket_closer, utils, victoria
@@ -49,10 +49,10 @@ async def ping_endpoint(request: web.Request) -> web.Response:
     summary='List available measurements and fields in the database',
 )
 @routes.post('/timeseries/fields')
-@request_schema(schemas.TimeSeriesFieldsQuerySchema)
+@json_schema(schemas.TimeSeriesFieldsQuerySchema)
 async def fields_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
-        await _client(request).fields(**request['data'])
+        await _client(request).fields(**request['json'])
     )
 
 
@@ -61,10 +61,11 @@ async def fields_endpoint(request: web.Request) -> web.Response:
     summary='Get value ranges from database',
 )
 @routes.post('/timeseries/ranges')
-@request_schema(schemas.TimeSeriesRangesQuerySchema)
+@json_schema(schemas.TimeSeriesRangesQuerySchema)
+@response_schema(schemas.TimeSeriesRangeResponseSchema(many=True))
 async def ranges_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
-        await _client(request).ranges(**request['data'])
+        await _client(request).ranges(**request['json'])
     )
 
 
@@ -73,10 +74,11 @@ async def ranges_endpoint(request: web.Request) -> web.Response:
     summary='Get single metrics from database',
 )
 @routes.post('/timeseries/metrics')
-@request_schema(schemas.TimeSeriesMetricsQuerySchema)
+@json_schema(schemas.TimeSeriesMetricsQuerySchema)
+@response_schema(schemas.TimeSeriesMetricResponseSchema(many=True))
 async def metrics_endpoint(request: web.Request) -> web.Response:
     return web.json_response(
-        await _client(request).metrics(**request['data'])
+        await _client(request).metrics(**request['json'])
     )
 
 
@@ -85,7 +87,7 @@ async def metrics_endpoint(request: web.Request) -> web.Response:
     summary='Get value ranges from database',
 )
 @routes.post('/timeseries/csv')
-@request_schema(schemas.TimeSeriesCsvQuerySchema)
+@json_schema(schemas.TimeSeriesCsvQuerySchema)
 async def csv_endpoint(request: web.Request) -> web.Response:
     response = web.StreamResponse(
         status=200,
@@ -97,7 +99,7 @@ async def csv_endpoint(request: web.Request) -> web.Response:
     )
     await response.prepare(request)
 
-    async for line in _client(request).csv(**request['data']):  # pragma: no branch
+    async for line in _client(request).csv(**request['json']):  # pragma: no branch
         await response.write(line.encode())
         await response.write('\n'.encode())
 
@@ -151,6 +153,7 @@ async def _stream_metrics(app: web.Application, ws: web.WebSocketResponse, id: s
 @docs(
     tags=['TimeSeries'],
     summary='Open a WebSocket to stream values from database as they are added',
+    responses={101: {'description': 'WebSocket upgrade'}}
 )
 @routes.get('/timeseries/stream')
 async def stream(request: web.Request) -> web.Response:
