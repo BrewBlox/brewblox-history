@@ -65,6 +65,12 @@ class TimeSeriesMetricsQuerySchema(Schema):
                           required=True)
 
 
+class TimeSeriesMetricResponseSchema(Schema):
+    metric = fields.String(required=True)
+    value = fields.Float(required=True)
+    timestamp = fields.Int(required=True)
+
+
 class TimeSeriesRangesQuerySchema(Schema):
     fields_ = fields.List(fields.String(),
                           data_key='fields',
@@ -74,6 +80,22 @@ class TimeSeriesRangesQuerySchema(Schema):
     end = fields.String(required=False)
     duration = fields.String(required=False)
     step = fields.String(required=False)
+
+
+class TimeSeriesRangeMetricsSchema(Schema):
+    name_ = fields.String(data_key='__name__',
+                          attribute='__name__')
+
+
+class TimeSeriesRangeValueSchema(Schema):
+    timestamp = fields.Int(required=True)
+    value = fields.String(required=True)  # Number serialized as string
+
+
+class TimeSeriesRangeResponseSchema(Schema):
+    metric = fields.Nested(TimeSeriesRangeMetricsSchema(), required=True)
+    values = fields.Nested(TimeSeriesRangeValueSchema(),
+                           required=True)
 
 
 class TimeSeriesCsvQuerySchema(TimeSeriesRangesQuerySchema):
