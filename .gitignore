@@ -68,3 +68,10 @@ target/
 
 # pytest
 .pytest_cache/
+
+# local test
+victoria/*
+!victoria/.gitkeep
+
+redis/*
+!redis/.gitkeep
