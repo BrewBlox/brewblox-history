@@ -1,0 +1,35 @@
+version: "3.7"
+
+services:
+  eventbus:
+    image: brewblox/mosquitto:develop
+    labels:
+      - traefik.http.services.eventbus.loadbalancer.server.port=15675
+
+  victoria:
+    image: victoriametrics/victoria-metrics:v1.69.0
+    labels:
+      - traefik.http.services.victoria.loadbalancer.server.port=8428
+    volumes:
+      - type: bind
+        source: ./victoria
+        target: /victoria-metrics-data
+    command: >-
+      --retentionPeriod=100y
+      --influxMeasurementFieldSeparator=/
+      --http.pathPrefix=/victoria
+
+  redis:
+    image: redis:6.0
+    labels:
+      - traefik.enable=false
+    volumes:
+      - type: bind
+        source: ./redis
+        target: /data
+    command: --appendonly yes
+
+  history:
+    image: brewblox/brewblox-history:develop
+    ports:
+      - "5000:5000"
