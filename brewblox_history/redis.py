@@ -34,7 +34,7 @@ def autoconnect(func):
     @wraps(func)
     async def wrapper(self, *args, **kwargs):
         if not self._redis:
-            self._redis = await aioredis.create_redis_pool(self.url)
+            self._redis = await aioredis.from_url(self.url)
         return await func(self, *args, **kwargs)
     return wrapper
 
@@ -50,8 +50,7 @@ class RedisClient(features.ServiceFeature):
 
     async def shutdown(self, app: web.Application):
         if self._redis:
-            self._redis.close()
-            await self._redis.wait_closed()
+            await self._redis.close()
 
     async def _mkeys(self, namespace: str, ids: Optional[list[str]], filter: Optional[str]) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]

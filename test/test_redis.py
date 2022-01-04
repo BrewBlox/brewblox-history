@@ -3,7 +3,7 @@ Tests brewblox_history.redis.py
 """
 
 import json
-from unittest.mock import AsyncMock, Mock, call
+from unittest.mock import AsyncMock, call
 
 import pytest
 from brewblox_service.testing import response
@@ -16,8 +16,7 @@ TESTED = redis.__name__
 @pytest.fixture
 def m_redis(mocker):
     m = AsyncMock()
-    m.close = Mock()  # not a coroutine
-    mocker.patch(TESTED + '.aioredis.create_redis_pool', AsyncMock(return_value=m))
+    mocker.patch(TESTED + '.aioredis.from_url', AsyncMock(return_value=m))
     return m
 
 
