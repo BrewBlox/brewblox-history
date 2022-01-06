@@ -76,8 +76,8 @@ class RedisClient(features.ServiceFeature):
                 await mqtt.publish(self.app, f'{self.topic}/{key}', {'deleted': list(group)}, err=False)
 
     @autoconnect
-    async def ping(self) -> str:
-        return (await self._redis.ping()).decode()
+    async def ping(self):
+        await self._redis.ping()
 
     @autoconnect
     async def get(self, namespace: str, id: str) -> dict:

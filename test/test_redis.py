@@ -43,9 +43,7 @@ async def test_shutdown(app, m_redis, client, rclient):
 
 
 async def test_ping(m_redis, client, rclient: redis.RedisClient):
-    m_redis.ping.return_value = b'pong'
-    assert await rclient.ping() == 'pong'
-
+    await rclient.ping()
     assert await response(client.get('/datastore/ping')) == {'ping': 'pong'}
 
 

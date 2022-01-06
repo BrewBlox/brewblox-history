@@ -18,8 +18,9 @@ routes = web.RouteTableDef()
 )
 @routes.get('/datastore/ping')
 async def ping(request: web.Request) -> web.Response:
+    await redis.fget(request.app).ping()
     return web.json_response(
-        data={'ping': await redis.fget(request.app).ping()},
+        data={'ping': 'pong'},
         headers={
             'Cache-Control': 'no-cache',
             'Pragma': 'no-cache',
