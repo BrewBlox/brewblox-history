@@ -1,29 +1,22 @@
-import json
 from functools import wraps
 from itertools import groupby
-from typing import Optional, TypedDict
+from typing import Optional
 
 import aioredis
 from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
+from brewblox_history.models import DatastoreValue
+
 LOGGER = brewblox_logger(__name__)
-
-
-class DatastoreObj(TypedDict):
-    namespace: str
-    id: str
-    # Also includes arbitrary other fields
-    # This can't be expressed in a TypedDict
-    # https://github.com/python/mypy/issues/4617
 
 
 def keycat(namespace: str, key: str) -> str:
     return f'{namespace}:{key}' if namespace else key
 
 
-def keycatobj(obj: DatastoreObj) -> str:
-    return keycat(obj['namespace'], obj['id'])
+def keycatobj(obj: DatastoreValue) -> str:
+    return keycat(obj.namespace, obj.id)
 
 
 def flatten(data: list):
@@ -59,7 +52,7 @@ class RedisClient(features.ServiceFeature):
                      for key in await self._redis.keys(keycat(namespace, filter))]
         return keys
 
-    async def _publish(self, changed: list[DatastoreObj] = None, deleted: list[str] = None):
+    async def _publish(self, changed: list[DatastoreValue] = None, deleted: list[str] = None):
         """Publish changes to documents.
 
         Objects are grouped by top-level namespace, and then published
@@ -68,43 +61,51 @@ class RedisClient(features.ServiceFeature):
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                await mqtt.publish(self.app, f'{self.topic}/{key}', {'changed': list(group)}, err=False)
+                await mqtt.publish(self.app,
+                                   f'{self.topic}/{key}',
+                                   {'changed': list((v.dict() for v in group))},
+                                   err=False)
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                await mqtt.publish(self.app, f'{self.topic}/{key}', {'deleted': list(group)}, err=False)
+                await mqtt.publish(self.app,
+                                   f'{self.topic}/{key}',
+                                   {'deleted': list(group)},
+                                   err=False)
 
     @autoconnect
     async def ping(self):
         await self._redis.ping()
 
     @autoconnect
-    async def get(self, namespace: str, id: str) -> dict:
+    async def get(self, namespace: str, id: str) -> Optional[DatastoreValue]:
         resp = await self._redis.get(keycat(namespace, id))
-        return json.loads(resp) if resp else None
+        return DatastoreValue.parse_raw(resp) if resp else None
 
     @autoconnect
-    async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreObj]:
+    async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreValue]:
         if ids is None and filter is None:
             filter = '*'
         keys = await self._mkeys(namespace, ids, filter)
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-        return [json.loads(v) for v in values if v is not None]
+        return [DatastoreValue.parse_raw(v)
+                for v in values
+                if v is not None]
 
     @autoconnect
-    async def set(self, value: DatastoreObj) -> DatastoreObj:
-        await self._redis.set(keycatobj(value), json.dumps(value))
+    async def set(self, value: DatastoreValue) -> DatastoreValue:
+        await self._redis.set(keycatobj(value), value.json())
         await self._publish(changed=[value])
         return value
 
     @autoconnect
-    async def mset(self, values: list[DatastoreObj]) -> list[DatastoreObj]:
+    async def mset(self, values: list[DatastoreValue]) -> list[DatastoreValue]:
         if values:
             db_keys = [keycatobj(v) for v in values]
-            db_values = [json.dumps(v) for v in values]
+            db_values = [v.json() for v in values]
             await self._redis.mset(*flatten(zip(db_keys, db_values)))
             await self._publish(changed=values)
         return values

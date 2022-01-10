@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, call
 import pytest
 
 from brewblox_history import relays
+from brewblox_history.models import HistoryEvent
 
 TESTED = relays.__name__
 
@@ -80,7 +81,7 @@ async def test_mqtt_relay(app, client, m_victoria):
     await relay.on_event_message(topic, {'key': 'm', 'data': 'no'})
 
     assert m_victoria.write_soon.call_args_list == [
-        call('m', flat_data),
-        call('m', flat_value),
-        call('m', {}),
+        call(HistoryEvent(key='m', data=flat_data)),
+        call(HistoryEvent(key='m', data=flat_value)),
+        call(HistoryEvent(key='m', data={})),
     ]

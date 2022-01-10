@@ -8,11 +8,10 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-brewblox-service = "^0.34.0"
+brewblox-service = ">=1.0.0"
 aioredis = "^2.0.1"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
-marshmallow = "^3.14.1"
 
 [tool.poetry.dev-dependencies]
 pytest-flake8 = "*"

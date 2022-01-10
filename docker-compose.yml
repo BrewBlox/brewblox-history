@@ -5,6 +5,8 @@ services:
     image: brewblox/mosquitto:develop
     labels:
       - traefik.http.services.eventbus.loadbalancer.server.port=15675
+    ports:
+      - "1883:1883"
 
   victoria:
     image: victoriametrics/victoria-metrics:v1.69.0
@@ -30,6 +32,10 @@ services:
     command: --appendonly yes
 
   history:
-    image: brewblox/brewblox-history:develop
+    image: brewblox/brewblox-history:local
+    volumes:
+      - type: bind
+        source: ./
+        target: /app
     ports:
       - "5000:5000"

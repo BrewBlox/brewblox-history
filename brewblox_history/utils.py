@@ -1,8 +1,10 @@
-import collections
+import json
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Optional, Tuple, Union
 
 import ciso8601
+from aiohttp import web
 from brewblox_service import brewblox_logger
 from pytimeparse.timeparse import timeparse
 
@@ -70,7 +72,18 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
         raise ValueError(f'Invalid precision: {precision}')
 
 
-def is_open_ended(start=None, duration=None, end=None, **_) -> bool:
+def json_serial(obj):
+    if isinstance(obj, datetime):
+        return int(obj.timestamp() * 1e3)  # ms precision
+    raise TypeError(f'{repr(obj)} is not serializable')
+
+
+# This extends the default JSON serializer to allow for datetime in JSON
+json_dumps = partial(json.dumps, default=json_serial)
+json_response = partial(web.json_response, dumps=json_dumps)
+
+
+def is_open_ended(start=None, duration=None, end=None) -> bool:
     """Checks whether given parameters should yield a live response.
 
     Parameters are considered open-ended if no end date is set:
@@ -101,7 +114,7 @@ def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str
     dt_end: Optional[datetime] = None
 
     if all([start, duration, end]):
-        raise ValueError('At most two out of three duration arguments can be provided')
+        raise ValueError('At most two out of three timeframe arguments can be provided')
 
     elif not any([start, duration, end]):
         dt_start = now() - DEFAULT_DURATION
@@ -146,22 +159,3 @@ def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str
         format_datetime(dt_end, 's'),
         f'{step}s'
     )
-
-
-def flatten(d, parent_key=''):
-    """Flattens given dict to have a depth of 1 with all values present.
-
-    Nested keys are converted to /-separated paths.
-    """
-    items = []
-    for k, v in d.items():
-        new_key = f'{parent_key}/{k}' if parent_key else str(k)
-
-        if isinstance(v, list):
-            v = {li: lv for li, lv in enumerate(v)}
-
-        if isinstance(v, collections.MutableMapping):
-            items.extend(flatten(v, new_key).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
