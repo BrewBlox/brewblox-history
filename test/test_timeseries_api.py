@@ -4,7 +4,7 @@ Tests brewblox_history.timeseries_api
 
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from time import time_ns
 from unittest.mock import ANY, AsyncMock
 
@@ -269,7 +269,7 @@ async def test_stream_error(app, client, m_victoria):
         TimeSeriesMetric(
             metric='a',
             value=1.2,
-            timestamp=datetime(2021, 7, 15, 19)
+            timestamp=datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
         ),
     ]
 
@@ -303,7 +303,7 @@ async def test_stream_error(app, client, m_victoria):
                 'metrics': [{
                     'metric': 'a',
                     'value': approx(1.2),
-                    'timestamp': 1626368400000,  # ms value for datetime above
+                    'timestamp': 1626375600000,  # ms value for datetime above
                 }],
             },
         }
