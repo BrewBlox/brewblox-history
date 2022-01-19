@@ -167,7 +167,10 @@ async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient)
     assert m_redis.mset.await_count == 0
 
     assert await rclient.mset(values) == values
-    m_redis.mset.assert_awaited_with('n:x', values[0].json(), 'n2:x2', values[1].json())
+    m_redis.mset.assert_awaited_with({
+        'n:x': values[0].json(),
+        'n2:x2': values[1].json()
+    })
     m_publish.assert_has_awaits([
         call(app, 'brewcast/datastore/n', {'changed': [values[0]]}, err=False),
         call(app, 'brewcast/datastore/n2', {'changed': [values[1]]}, err=False),
