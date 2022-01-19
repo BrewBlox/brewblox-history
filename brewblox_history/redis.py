@@ -19,10 +19,6 @@ def keycatobj(obj: DatastoreValue) -> str:
     return keycat(obj.namespace, obj.id)
 
 
-def flatten(data: list):
-    return [item for sublist in data for item in sublist]
-
-
 def autoconnect(func):
     @wraps(func)
     async def wrapper(self, *args, **kwargs):
@@ -106,7 +102,7 @@ class RedisClient(features.ServiceFeature):
         if values:
             db_keys = [keycatobj(v) for v in values]
             db_values = [v.json() for v in values]
-            await self._redis.mset(*flatten(zip(db_keys, db_values)))
+            await self._redis.mset(dict(zip(db_keys, db_values)))
             await self._publish(changed=values)
         return values
 
