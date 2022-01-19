@@ -5,9 +5,11 @@ Functionality for persisting eventbus messages to the database
 from contextlib import suppress
 
 from aiohttp import web
-from brewblox_service import brewblox_logger, features, mqtt
+from brewblox_service import brewblox_logger, features, mqtt, strex
+from pydantic import ValidationError
 
-from brewblox_history import schemas, utils, victoria
+from brewblox_history import victoria
+from brewblox_history.models import HistoryEvent
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
@@ -56,7 +58,6 @@ class MQTTDataRelay(features.ServiceFeature):
             'block1/sensor1/values/other': 1
         }
     """
-    schema = schemas.MQTTHistorySchema(unknown='exclude')
 
     def __init__(self, app):
         super().__init__(app)
@@ -76,17 +77,14 @@ class MQTTDataRelay(features.ServiceFeature):
         with suppress(ValueError):
             await mqtt.unlisten(app, self.topic, self.on_event_message)
 
-    async def on_event_message(self, topic: str, message: dict):
-        errors = self.schema.validate(message)
-        if errors:
-            LOGGER.error(f'Invalid MQTT: {topic} {errors}')
-            return
+    async def on_event_message(self, topic: str, raw: dict):
+        try:
+            evt = HistoryEvent(**raw)
+            victoria.fget(self.app).write_soon(evt)
+            LOGGER.debug(f'MQTT: {evt.key} = {str(evt.data)[:30]}...')
 
-        service = message['key']
-        points = utils.flatten(message['data'])
-
-        LOGGER.debug(f'MQTT: {service} = {str(points)[:30]}...')
-        victoria.fget(self.app).write_soon(service, points)
+        except ValidationError as ex:
+            LOGGER.error(f'Invalid history event: {topic} {strex(ex)}')
 
 
 def setup(app: web.Application):

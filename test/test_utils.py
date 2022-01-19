@@ -111,39 +111,7 @@ def test_select_timeframe(mocker):
     )
 
 
-def test_flatten():
-    nested_data = {
-        'nest': {
-            'ed': {
-                'values': [
-                    'val',
-                    'var',
-                    True,
-                ]
-            }
-        }
-    }
-
-    nested_empty_data = {
-        'nest': {
-            'ed': {
-                'empty': {},
-                'data': [],
-            }
-        }
-    }
-
-    flat_data = {
-        'nest/ed/values/0': 'val',
-        'nest/ed/values/1': 'var',
-        'nest/ed/values/2': True,
-    }
-
-    flat_value = {
-        'single/text': 'value',
-    }
-
-    assert utils.flatten(nested_data) == flat_data
-    assert utils.flatten(nested_empty_data) == {}
-    assert utils.flatten(flat_data) == flat_data
-    assert utils.flatten(flat_value) == flat_value
+def test_json_dumps():
+    assert utils.json_dumps({'dt': datetime(2021, 7, 15, 19, tzinfo=timezone.utc)}) == '{"dt": 1626375600000}'
+    with pytest.raises(TypeError):
+        utils.json_dumps({'fn': lambda x: x})
