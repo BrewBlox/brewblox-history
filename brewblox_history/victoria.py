@@ -3,7 +3,6 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import NamedTuple, TypedDict
 from urllib.parse import quote
 
 from aiohttp import web
@@ -11,6 +10,10 @@ from aiohttp.client import ClientSession
 from brewblox_service import brewblox_logger, features, http, repeater, strex
 
 from brewblox_history import utils
+from brewblox_history.models import (HistoryEvent, TimeSeriesCsvQuery,
+                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
+                                     TimeSeriesMetricsQuery, TimeSeriesRange,
+                                     TimeSeriesRangesQuery)
 
 LOGGER = brewblox_logger(__name__, True)
 MAX_PENDING_LINES = 5000
@@ -22,22 +25,6 @@ class CsvColumn:
     idx: int
     timestamps: deque[float]
     values: deque[str]
-
-
-class Metric(TypedDict):
-    metric: str
-    value: float
-    timestamp: int
-
-
-class RangeValue(NamedTuple):
-    timestamp: int
-    value: str
-
-
-class Range(TypedDict):
-    metric: dict[str, str]  # { __name__: string }
-    values: list[RangeValue]
 
 
 class VictoriaClient(repeater.RepeaterFeature):
@@ -55,7 +42,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         self._write_interval = config['write_interval']
         self._last_err = 'init'
         self._pending_lines: list[str] = []
-        self._cached_metrics: dict[str, Metric] = {}
+        self._cached_metrics: dict[str, TimeSeriesMetric] = {}
 
     async def ping(self):
         url = f'{self._url}/health'
@@ -70,11 +57,11 @@ class VictoriaClient(repeater.RepeaterFeature):
                                 headers=self._query_headers) as resp:
             return await resp.json()
 
-    async def fields(self, duration: str) -> list[str]:
+    async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
         url = f'{self._url}/api/v1/series'
         session = http.session(self.app)
 
-        query = f'match[]={{__name__!=""}}&start={duration}'
+        query = f'match[]={{__name__!=""}}&start={args.duration}'
         result = await self._json_query(query, url, session)
         retv = [
             v['__name__']
@@ -84,52 +71,41 @@ class VictoriaClient(repeater.RepeaterFeature):
 
         return retv
 
-    async def metrics(self, fields: list[str]) -> list[Metric]:
+    async def metrics(self, args: TimeSeriesMetricsQuery) -> list[TimeSeriesMetric]:
         return list((
             v for k, v in self._cached_metrics.items()
-            if k in fields
+            if k in args.fields
         ))
 
-    async def ranges(self,
-                     fields: list[str],
-                     start: str = None,
-                     end: str = None,
-                     duration: str = None,
-                     ) -> list[Range]:
+    async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
         url = f'{self._url}/api/v1/query_range'
         session = http.session(self.app)
 
-        start, end, step = utils.select_timeframe(start, duration, end)
+        start, end, step = utils.select_timeframe(args.start, args.duration, args.end)
         queries = [
             f'query=avg_over_time({{__name__="{quote(f)}"}}[{step}])&step={step}&start={start}&end={end}'
-            for f in fields
+            for f in args.fields
         ]
         LOGGER.debug(queries)
-        result = await asyncio.gather(*[
+        query_responses = await asyncio.gather(*[
             self._json_query(q, url, session)
             for q in queries
         ])
         retv = [
-            v['data']['result'][0]
-            for v in result
-            if v['data']['result']
+            TimeSeriesRange(**(resp['data']['result'][0]))
+            for resp in query_responses
+            if resp['data']['result']
         ]
 
         return retv
 
-    async def csv(self,
-                  fields: list[str],
-                  start: str = None,
-                  end: str = None,
-                  duration: str = None,
-                  precision: str = None,
-                  ):
+    async def csv(self, args: TimeSeriesCsvQuery):
         url = f'{self._url}/api/v1/export'
         session = http.session(self.app)
-        start, end, _ = utils.select_timeframe(start, duration, end)
+        start, end, _ = utils.select_timeframe(args.start, args.duration, args.end)
         matches = '&'.join([
             f'match[]={{__name__="{quote(f)}"}}'
-            for f in fields
+            for f in args.fields
         ])
         query = f'{matches}&start={start}&end={end}&reduce_mem_usage=1'
         cols: list[CsvColumn] = []
@@ -144,13 +120,13 @@ class VictoriaClient(repeater.RepeaterFeature):
                 field = parsed['metric']['__name__']
                 cols.append(CsvColumn(
                     metric=field,
-                    idx=fields.index(field),
+                    idx=args.fields.index(field),
                     timestamps=deque(parsed['timestamps']),
                     values=deque(parsed['values']),
                 ))
 
         # CSV headers
-        yield ','.join(['time'] + fields)
+        yield ','.join(['time'] + args.fields)
 
         # CSV values
         # Scan for earliest timestamp
@@ -161,8 +137,8 @@ class VictoriaClient(repeater.RepeaterFeature):
             timestamp = min((c.timestamps[0] for c in cols))
 
             # Pre-populate with formatted timestamp and empty strings
-            t = utils.format_datetime(timestamp, precision)
-            output = [t] + [''] * len(fields)
+            t = utils.format_datetime(timestamp, args.precision)
+            output = [t] + [''] * len(args.fields)
 
             for col in cols:
                 # If timestamp matches, insert at the correct position in output
@@ -214,16 +190,14 @@ class VictoriaClient(repeater.RepeaterFeature):
                 self._last_err = msg
                 self._avoid_overflow()
 
-    def write_soon(self,
-                   service: str,
-                   points: dict[str, float]):
+    def write_soon(self, evt: HistoryEvent):
         time_ns = time.time_ns()
         time_ms = time_ns // 1_000_000
         line_values = []
 
-        for field, raw_value in points.items():
+        for field, raw_value in evt.data.items():
             try:
-                metric = f'{service}/{field}'
+                metric = f'{evt.key}/{field}'
                 value = float(raw_value)
 
                 # Database writes are done using the Influx Line Protocol
@@ -231,7 +205,7 @@ class VictoriaClient(repeater.RepeaterFeature):
                 line_values.append(f'{field}={value}')
 
                 # Local cache used for the metrics API
-                self._cached_metrics[metric] = Metric(
+                self._cached_metrics[metric] = TimeSeriesMetric(
                     metric=metric,
                     value=value,
                     timestamp=time_ms
@@ -243,7 +217,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         # Append a line if `points` contained any valid values
         if line_values:
             formatted_values = ','.join(line_values).replace(' ', '\\ ')
-            self._pending_lines.append(f'{service} {formatted_values} {time_ns}')
+            self._pending_lines.append(f'{evt.key} {formatted_values} {time_ns}')
 
 
 def setup(app):

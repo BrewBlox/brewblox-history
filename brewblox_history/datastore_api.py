@@ -3,106 +3,128 @@ REST endpoints for datastore queries
 """
 
 from aiohttp import web
-from aiohttp_apispec import docs, json_schema, response_schema
+from aiohttp_pydantic import PydanticView
+from aiohttp_pydantic.oas.typing import r200
 from brewblox_service import brewblox_logger
 
-from brewblox_history import redis, schemas
+from brewblox_history import redis
+from brewblox_history.models import (DatastoreDeleteResponse,
+                                     DatastoreMultiQuery,
+                                     DatastoreMultiValueBox,
+                                     DatastoreOptSingleValueBox,
+                                     DatastoreSingleQuery,
+                                     DatastoreSingleValueBox)
 
 LOGGER = brewblox_logger(__name__)
 routes = web.RouteTableDef()
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Ping datastore, checking availability',
-)
-@routes.get('/datastore/ping')
-async def ping(request: web.Request) -> web.Response:
-    return web.json_response(
-        data={'ping': await redis.fget(request.app).ping()},
-        headers={
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-            'Expires': '0',
-        })
+class RedisView(PydanticView):
+    def __init__(self, request: web.Request) -> None:
+        super().__init__(request)
+        self.redis = redis.fget(request.app)
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Get single object from database / namespace',
-)
-@routes.post('/datastore/get')
-@json_schema(schemas.DatastoreSingleQuerySchema)
-@response_schema(schemas.DatastoreSingleValueSchema)
-async def get(request: web.Request) -> web.Response:
-    return web.json_response({
-        'value': await redis.fget(request.app).get(**request['json'])
-    })
+@routes.view('/datastore/ping')
+class PingView(RedisView):
+    async def get(self) -> r200[dict]:
+        """
+        Ping datastore, checking availability.
+
+        Tags: Datastore
+        """
+        await self.redis.ping()
+        return web.json_response(
+            data={'ping': 'pong'},
+            headers={
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+            })
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Get multiple objects from database / namespace',
-)
-@routes.post('/datastore/mget')
-@json_schema(schemas.DatastoreMultiQuerySchema)
-@response_schema(schemas.DatastoreMultiValueSchema)
-async def mget(request: web.Request) -> web.Response:
-    return web.json_response({
-        'values': await redis.fget(request.app).mget(**request['json'])
-    })
+@routes.view('/datastore/get')
+class GetView(RedisView):
+    async def post(self, args: DatastoreSingleQuery) -> r200[DatastoreOptSingleValueBox]:
+        """
+        Get specific object from the datastore.
+
+        Tags: Datastore
+        """
+        value = await self.redis.get(args.namespace, args.id)
+        return web.json_response(
+            DatastoreOptSingleValueBox(value=value).dict()
+        )
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Write object to datastore',
-)
-@routes.post('/datastore/set')
-@json_schema(schemas.DatastoreSingleValueSchema)
-@response_schema(schemas.DatastoreSingleValueSchema)
-async def set(request: web.Request) -> web.Response:
-    return web.json_response({
-        'value': await redis.fget(request.app).set(**request['json'])
-    })
+@routes.view('/datastore/mget')
+class MGetView(RedisView):
+    async def post(self, args: DatastoreMultiQuery) -> r200[DatastoreMultiValueBox]:
+        """
+        Get multiple objects from the datastore.
+
+        Tags: Datastore
+        """
+        values = await self.redis.mget(args.namespace, args.ids, args.filter)
+        return web.json_response(
+            DatastoreMultiValueBox(values=values).dict()
+        )
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Write multiple objects to datastore',
-)
-@routes.post('/datastore/mset')
-@json_schema(schemas.DatastoreMultiValueSchema)
-@response_schema(schemas.DatastoreMultiValueSchema)
-async def mset(request: web.Request) -> web.Response:
-    return web.json_response({
-        'values': await redis.fget(request.app).mset(**request['json'])
-    })
+@routes.view('/datastore/set')
+class SetView(RedisView):
+    async def post(self, args: DatastoreSingleValueBox) -> r200[DatastoreSingleValueBox]:
+        """
+        Create or update an object in the datastore.
+
+        Tags: Datastore
+        """
+        value = await self.redis.set(args.value)
+        return web.json_response(
+            DatastoreSingleValueBox(value=value).dict()
+        )
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Remove object from datastore',
-)
-@routes.post('/datastore/delete')
-@json_schema(schemas.DatastoreSingleQuerySchema)
-@response_schema(schemas.DatastoreDeleteResponseSchema)
-async def delete(request: web.Request) -> web.Response:
-    return web.json_response({
-        'count': await redis.fget(request.app).delete(**request['json'])
-    })
+@routes.view('/datastore/mset')
+class MSetView(RedisView):
+    async def post(self, args: DatastoreMultiValueBox) -> r200[DatastoreMultiValueBox]:
+        """
+        Create or update multiple objects in the datastore.
+
+        Tags: Datastore
+        """
+        values = await self.redis.mset(args.values)
+        return web.json_response(
+            DatastoreMultiValueBox(values=values).dict()
+        )
 
 
-@docs(
-    tags=['Datastore'],
-    summary='Remove multiple objects from datastore',
-)
-@routes.post('/datastore/mdelete')
-@json_schema(schemas.DatastoreMultiQuerySchema)
-@response_schema(schemas.DatastoreDeleteResponseSchema)
-async def mdelete(request: web.Request) -> web.Response:
-    return web.json_response({
-        'count': await redis.fget(request.app).mdelete(**request['json'])
-    })
+@routes.view('/datastore/delete')
+class DeleteView(RedisView):
+    async def post(self, args: DatastoreSingleQuery) -> r200[DatastoreDeleteResponse]:
+        """
+        Remove a single object from the datastore.
+
+        Tags: Datastore
+        """
+        count = await self.redis.delete(args.namespace, args.id)
+        return web.json_response(
+            DatastoreDeleteResponse(count=count).dict()
+        )
+
+
+@routes.view('/datastore/mdelete')
+class MDeleteView(RedisView):
+    async def post(self, args: DatastoreMultiQuery) -> r200[DatastoreDeleteResponse]:
+        """
+        Remove multiple objects from the datastore.
+
+        Tags: Datastore
+        """
+        count = await self.redis.mdelete(args.namespace, args.ids, args.filter)
+        return web.json_response(
+            DatastoreDeleteResponse(count=count).dict()
+        )
 
 
 def setup(app: web.Application):
