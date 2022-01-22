@@ -155,6 +155,10 @@ async def test_set(app, m_redis, m_publish, client, rclient: redis.RedisClient):
         'value': {'id': 'x'},  # no namespace
     }), 400)
 
+    await response(client.post('/datastore/set', json={
+        'value': {'namespace': 'n', 'id': '[x]'},  # invalid characters
+    }), 400)
+
 
 async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient):
     values = [

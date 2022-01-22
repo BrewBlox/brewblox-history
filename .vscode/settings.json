@@ -9,10 +9,11 @@
         "."
     ],
     "python.testing.unittestEnabled": false,
-    "python.testing.nosetestsEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.languageServer": "Pylance",
     "files.watcherExclude": {
-        "**/.venv/*/**": true
+        "**/.venv/*/**": true,
+        "victoria/**": true,
+        "redis/**": true
     }
 }

@@ -44,8 +44,8 @@ class DatastoreValue(BaseModel, extra=Extra.allow):
 
 
 class DatastoreCheckedValue(DatastoreValue):
-    namespace: str = Field(regex=r'^[\w\-\.\:~_]*$')
-    id: str = Field(regex=r'^[\w\-\.\:~_]*$')
+    namespace: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
+    id: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
 
 
 class DatastoreSingleQuery(BaseModel):
