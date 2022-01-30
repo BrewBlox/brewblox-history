@@ -107,7 +107,9 @@ class VictoriaClient(repeater.RepeaterFeature):
             f'match[]={{__name__="{quote(f)}"}}'
             for f in args.fields
         ])
-        query = f'{matches}&start={start}&end={end}&reduce_mem_usage=1'
+        query = f'{matches}&start={start}&end={end}'
+        query += '&reduce_mem_usage=1'
+        query += '&max_rows_per_line=1000'
         cols: list[CsvColumn] = []
 
         async with session.post(url,
@@ -115,7 +117,7 @@ class VictoriaClient(repeater.RepeaterFeature):
                                 headers=self._query_headers) as resp:
             # Objects are returned as newline-separated JSON objects
             # Metrics may be returned in multiple chunks
-            async for line in resp.content:  # pragma: no branch
+            while line := await resp.content.readline():
                 parsed = json.loads(line)
                 field = parsed['metric']['__name__']
                 cols.append(CsvColumn(

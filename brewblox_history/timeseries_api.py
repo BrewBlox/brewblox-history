@@ -122,6 +122,7 @@ class CsvView(VictoriaView):
             }
         )
         await response.prepare(self.request)
+        response.enable_chunked_encoding()
 
         async for line in self.victoria.csv(args):  # pragma: no branch
             await response.write(line.encode())
