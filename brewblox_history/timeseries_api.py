@@ -21,6 +21,8 @@ from brewblox_history.models import (TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
 LOGGER = brewblox_logger(__name__, True)
 routes = web.RouteTableDef()
 
+CSV_CHUNK_SIZE = pow(2, 15)
+
 
 @asynccontextmanager
 async def protected(desc: str):
@@ -124,10 +126,14 @@ class CsvView(VictoriaView):
         await response.prepare(self.request)
         response.enable_chunked_encoding()
 
+        buffer = ''
         async for line in self.victoria.csv(args):  # pragma: no branch
-            await response.write(line.encode())
-            await response.write('\n'.encode())
+            buffer = f'{buffer}{line}\n'
+            if len(buffer) >= CSV_CHUNK_SIZE:
+                await response.write(buffer.encode())
+                buffer = ''
 
+        await response.write(buffer.encode())  # flush remainder
         await response.write_eof()
         return response
 
