@@ -21,7 +21,7 @@ def flatten(d, parent_key=''):
         if isinstance(v, list):
             v = {li: lv for li, lv in enumerate(v)}
 
-        if isinstance(v, collections.MutableMapping):
+        if isinstance(v, collections.abc.MutableMapping):
             items.extend(flatten(v, new_key).items())
         else:
             items.append((new_key, v))

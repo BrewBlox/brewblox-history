@@ -12,6 +12,7 @@ brewblox-service = ">=1.0.0"
 aioredis = "^2.0.1"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
+llist = "^0.8"
 
 [tool.poetry.dev-dependencies]
 pytest-flake8 = "*"

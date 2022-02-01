@@ -158,18 +158,22 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
         method_pattern='POST',
         response='\n'.join([
             '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},' +
-            '"values":[0,0,0,0,0,0,0,0,0,0,0],' +
+            '"values":[0,0,0,0,0,0,0],' +
             '"timestamps":[1626368070381,1626368075435,1626368080487,1626368085534,' +
-            '1626368090630,1626368095687,1626368100749,1626368105840,1626368110891,1626368115940,1626368121034]}',
+            '1626368090630,1626368095687,1626368100749]}',
+
+            '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},' +
+            '"values":[0,0,0,0],' +
+            '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}',
 
             '{"metric":{"__name__":"spock/actuator-1/value"},' +
             '"values":[40,40,40,40,40,40,40,40,40,40,40],' +
-            '"timestamps":[1626368072988,1626368078080,1626368083130,1626368088178,' +
+            '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,' +
             '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
 
             '{"metric":{"__name__":"spock/pin-actuator-1/state"},' +
             '"values":[0,0,0,0,0,0,0,0,0,0,0],' +
-            '"timestamps":[1626368072988,1626368078080,1626368083130,1626368088178,' +
+            '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,' +
             '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
         ])
     )
@@ -188,15 +192,15 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
     assert len(result) == 23  # headers, 11 from sparkey, 11 from spock
     assert result[0] == ','.join(['time'] + args.fields)
 
-    # line 1: values from sparkey
+    # line 1: values from spock
     line = result[1].split(',')
     assert ciso8601.parse_datetime(line[0])
-    assert line[1:] == ['0', '', '']
+    assert line[1:] == ['', '0', '40']
 
-    # line 2: values from spock
+    # line 2: values from sparkey
     line = result[2].split(',')
     assert ciso8601.parse_datetime(line[0])
-    assert line[1:] == ['', '0', '40']
+    assert line[1:] == ['0', '', '']
 
 
 async def test_write_soon(app, mocker, m_write_interval, client, aresponses: ResponsesMockServer):
