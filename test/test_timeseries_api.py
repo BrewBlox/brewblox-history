@@ -130,7 +130,9 @@ async def test_metrics(app, client, m_victoria):
     )
 
 
-async def test_csv(app, client, m_victoria):
+async def test_csv(app, client, m_victoria, mocker):
+    mocker.patch(TESTED + '.CSV_CHUNK_SIZE', 10)
+
     async def csv_mock(args: TimeSeriesCsvQuery):
         yield ','.join(args.fields)
         yield 'line 1'
