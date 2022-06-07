@@ -11,7 +11,6 @@ from pytimeparse.timeparse import timeparse
 FLAT_SEPARATOR = '/'
 DESIRED_POINTS = 1000
 DEFAULT_DURATION = timedelta(days=1)
-MINIMUM_STEP = timedelta(seconds=10)
 
 LOGGER = brewblox_logger(__name__, True)
 
@@ -102,7 +101,7 @@ def now() -> datetime:  # pragma: no cover
     return datetime.now(timezone.utc)
 
 
-def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str]:
+def select_timeframe(start, duration, end, min_step) -> Tuple[str, str, str]:
     """Calculate start, end, and step for given start, duration, and end
 
     The returned `start` and `end` strings are either empty,
@@ -152,7 +151,7 @@ def select_timeframe(start=None, duration=None, end=None) -> Tuple[str, str, str
     # We want a decent resolution without flooding the front-end with data
     actual_duration: timedelta = (dt_end or now()) - dt_start
     desired_step = actual_duration.total_seconds() // DESIRED_POINTS
-    step = max(desired_step, MINIMUM_STEP.total_seconds())
+    step = max(desired_step, min_step.total_seconds())
 
     return (
         format_datetime(dt_start, 's'),

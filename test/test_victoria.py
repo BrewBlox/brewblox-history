@@ -3,6 +3,7 @@ Tests brewblox_history.victoria
 """
 
 import asyncio
+from datetime import timedelta
 from unittest.mock import ANY
 
 import ciso8601
@@ -30,7 +31,7 @@ async def app(app):
 
 @pytest.fixture
 async def m_write_interval(app):
-    victoria.fget(app)._write_interval = 0.001
+    victoria.fget(app)._write_interval = timedelta(seconds=0.001)
 
 
 async def test_ping(app, client, aresponses: ResponsesMockServer):

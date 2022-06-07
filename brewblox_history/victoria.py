@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from datetime import timedelta
 from urllib.parse import quote
 
 from aiohttp import web
@@ -30,7 +31,8 @@ class VictoriaClient(repeater.RepeaterFeature):
             'Accept-Encoding': 'gzip',
         }
 
-        self._write_interval = config['write_interval']
+        self._minimum_step = timedelta(seconds=config['minimum_step'])
+        self._write_interval = timedelta(seconds=config['write_interval'])
         self._last_err = 'init'
         self._pending_lines: list[str] = []
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
@@ -72,7 +74,10 @@ class VictoriaClient(repeater.RepeaterFeature):
         url = f'{self._url}/api/v1/query_range'
         session = http.session(self.app)
 
-        start, end, step = utils.select_timeframe(args.start, args.duration, args.end)
+        start, end, step = utils.select_timeframe(args.start,
+                                                  args.duration,
+                                                  args.end,
+                                                  self._minimum_step)
         queries = [
             f'query=avg_over_time({{__name__="{quote(f)}"}}[{step}])&step={step}&start={start}&end={end}'
             for f in args.fields
@@ -93,7 +98,10 @@ class VictoriaClient(repeater.RepeaterFeature):
     async def csv(self, args: TimeSeriesCsvQuery):
         url = f'{self._url}/api/v1/export'
         session = http.session(self.app)
-        start, end, _ = utils.select_timeframe(args.start, args.duration, args.end)
+        start, end, _ = utils.select_timeframe(args.start,
+                                               args.duration,
+                                               args.end,
+                                               self._minimum_step)
         matches = '&'.join([
             f'match[]={{__name__="{quote(f)}"}}'
             for f in args.fields
@@ -190,7 +198,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         url = f'{self._url}/write'
 
         while True:
-            await asyncio.sleep(self._write_interval)
+            await asyncio.sleep(self._write_interval.total_seconds())
 
             if not self._pending_lines:
                 continue
