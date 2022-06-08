@@ -38,6 +38,10 @@ def create_parser(default_name='history'):
     parser.add_argument('--datastore-topic',
                         help='Synchronization topic for datastore updates',
                         default='brewcast/datastore')
+    parser.add_argument('--minimum-step',
+                        help='Minimum period (sec) for range data downsampling',
+                        default=10,
+                        type=float)
     return parser
 
 
