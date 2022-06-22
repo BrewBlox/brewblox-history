@@ -19,11 +19,11 @@ def create_parser(default_name='history'):
     parser = service.create_parser(default_name=default_name)
     parser.add_argument('--write-interval',
                         help='Interval (sec) between writing batches of received data to Influx. [%(default)s]',
-                        default=30,
+                        default=1,
                         type=float)
     parser.add_argument('--ranges-interval',
                         help='Interval (sec) between updates in live ranges. [%(default)s]',
-                        default=30,
+                        default=10,
                         type=float)
     parser.add_argument('--metrics-interval',
                         help='Interval (sec) between updates in live metrics. [%(default)s]',
