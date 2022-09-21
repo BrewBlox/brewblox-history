@@ -94,7 +94,6 @@ class TimeSeriesRangesQuery(BaseModel):
     start: Optional[datetime] = Field(example='2020-01-01T20:00:00.000Z')
     end: Optional[datetime] = Field(example='2030-01-01T20:00:00.000Z')
     duration: Optional[str] = Field(example='1d')
-    step: Optional[str] = Field(example='1m')
 
 
 class TimeSeriesRangeValue(NamedTuple):

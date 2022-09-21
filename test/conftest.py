@@ -30,6 +30,7 @@ def app_config() -> dict:
         'victoria_url': 'http://victoria:8428/victoria',
         'redis_url': 'redis://redis',
         'datastore_topic': 'brewcast/datastore',
+        'minimum_step': 10,
     }
 
 
@@ -43,6 +44,7 @@ def sys_args(app_config) -> list:
         '--victoria-url', app_config['victoria_url'],
         '--redis-url', app_config['redis_url'],
         '--datastore-topic', app_config['datastore_topic'],
+        '--minimum-step', app_config['minimum_step'],
         '--debug',
     ]]
 
