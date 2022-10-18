@@ -151,7 +151,7 @@ def select_timeframe(start, duration, end, min_step) -> Tuple[str, str, str]:
     # We want a decent resolution without flooding the front-end with data
     actual_duration: timedelta = (dt_end or now()) - dt_start
     desired_step = actual_duration.total_seconds() // DESIRED_POINTS
-    step = max(desired_step, min_step.total_seconds())
+    step = int(max(desired_step, min_step.total_seconds()))
 
     return (
         format_datetime(dt_start, 's'),

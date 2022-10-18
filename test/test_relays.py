@@ -15,6 +15,7 @@ TESTED = relays.__name__
 @pytest.fixture
 def m_victoria(mocker):
     m = mocker.patch(TESTED + '.victoria.fget').return_value
+    m.write = AsyncMock()
     return m
 
 
@@ -80,7 +81,7 @@ async def test_mqtt_relay(app, client, m_victoria):
     await relay.on_event_message(topic, {'pancakes': 'yummy'})
     await relay.on_event_message(topic, {'key': 'm', 'data': 'no'})
 
-    assert m_victoria.write_soon.call_args_list == [
+    assert m_victoria.write.call_args_list == [
         call(HistoryEvent(key='m', data=flat_data)),
         call(HistoryEvent(key='m', data=flat_value)),
         call(HistoryEvent(key='m', data={})),

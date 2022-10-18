@@ -14,7 +14,7 @@ def flatten(d, parent_key=''):
 
     Nested keys are converted to /-separated paths.
     """
-    items = []
+    items: list[tuple[str, Any]] = []
     for k, v in d.items():
         new_key = f'{parent_key}/{k}' if parent_key else str(k)
 
@@ -25,7 +25,7 @@ def flatten(d, parent_key=''):
             items.extend(flatten(v, new_key).items())
         else:
             items.append((new_key, v))
-    return dict(items)
+    return dict(sorted(items, key=lambda pair: pair[0]))
 
 
 class HistoryEvent(BaseModel, extra=Extra.ignore):
