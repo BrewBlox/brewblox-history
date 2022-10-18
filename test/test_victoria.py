@@ -2,8 +2,7 @@
 Tests brewblox_history.victoria
 """
 
-import asyncio
-from datetime import timedelta
+from datetime import datetime
 from unittest.mock import ANY
 
 import ciso8601
@@ -27,11 +26,6 @@ async def app(app):
     http.setup(app)
     victoria.setup(app)
     return app
-
-
-@pytest.fixture
-async def m_write_interval(app):
-    victoria.fget(app)._write_interval = timedelta(seconds=0.001)
 
 
 async def test_ping(app, client, aresponses: ResponsesMockServer):
@@ -90,13 +84,12 @@ async def test_fields(app, client, aresponses: ResponsesMockServer):
 async def test_metrics(app, client):
     vic = victoria.fget(app)
     args = TimeSeriesMetricsQuery(fields=['service/f1', 'service/f2'])
-    await vic.end()  # We don't want to actually write values
 
     # No values cached yet
     assert await vic.metrics(args) == []
 
     # Don't return invalid values
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
+    await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     assert await vic.metrics(args) == [
         {
             'metric': 'service/f1',
@@ -106,7 +99,7 @@ async def test_metrics(app, client):
     ]
 
     # Only update new values
-    vic.write_soon(HistoryEvent(key='service', data={'f2': 2}))
+    await vic.write(HistoryEvent(key='service', data={'f2': 2}))
     assert await vic.metrics(args) == [
         {
             'metric': 'service/f1',
@@ -204,11 +197,13 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
     assert line[1:] == ['0', '', '']
 
 
-async def test_write_soon(app, mocker, m_write_interval, client, aresponses: ResponsesMockServer):
-    ns_time = int(1e9)
-    mocker.patch(TESTED + '.time.time_ns').return_value = ns_time
-    vic = victoria.fget(app)
+async def test_write(app, mocker, client, aresponses: ResponsesMockServer):
+    def now() -> datetime:
+        return datetime(2021, 7, 15, 19)
 
+    mocker.patch(TESTED + '.utils.now').side_effect = now
+
+    vic = victoria.fget(app)
     written = []
 
     async def handler(request):
@@ -217,17 +212,16 @@ async def test_write_soon(app, mocker, m_write_interval, client, aresponses: Res
 
     aresponses.add(
         path_pattern='/victoria/write',
-        method_pattern='GET',
+        method_pattern='POST',
         repeat=aresponses.INFINITY,
         response=handler,
     )
 
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
-    vic.write_soon(HistoryEvent(key='service', data={}))
+    await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
+    await vic.write(HistoryEvent(key='service', data={}))
 
-    await asyncio.sleep(0.1)
     assert written == [
-        f'service f1=1.0 {ns_time}'
+        'service f1=1.0'
     ]
 
     args = TimeSeriesMetricsQuery(fields=['service/f1'])
@@ -235,45 +229,12 @@ async def test_write_soon(app, mocker, m_write_interval, client, aresponses: Res
         TimeSeriesMetric(
             metric='service/f1',
             value=1.0,
-            timestamp=1000,
+            timestamp=now(),
         ),
     ]
 
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 2, 'f2': 3}))
-    await asyncio.sleep(0.1)
+    await vic.write(HistoryEvent(key='service', data={'f1': 2, 'f2': 3}))
     assert written == [
-        f'service f1=1.0 {ns_time}',
-        f'service f1=2.0,f2=3.0 {ns_time}',
+        'service f1=1.0',
+        'service f1=2.0,f2=3.0',
     ]
-
-
-async def test_write_error(app, mocker, m_write_interval, client, aresponses: ResponsesMockServer):
-    vic = victoria.fget(app)
-
-    aresponses.add(
-        path_pattern='/victoria/write',
-        method_pattern='GET',
-        repeat=aresponses.INFINITY,
-        response=web.Response(status=400),
-    )
-
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 2, 'f2': 'invalid'}))
-    vic.write_soon(HistoryEvent(key='service', data={'f1': 3, 'f2': 'invalid'}))
-    vic.write_soon(HistoryEvent(key='service', data={}))
-
-    await asyncio.sleep(0.1)
-
-    args = TimeSeriesMetricsQuery(fields=['service/f1'])
-    result = await vic.metrics(args)
-    assert [v.dict() for v in result] == [{
-        'metric': 'service/f1',
-        'value': 3.0,
-        'timestamp': ANY,
-    }]
-
-    assert len(vic._pending_lines) == 3
-
-    mocker.patch(TESTED + '.MAX_PENDING_LINES', 3)
-    await asyncio.sleep(0.1)
-    assert len(vic._pending_lines) == 2

@@ -80,7 +80,7 @@ class MQTTDataRelay(features.ServiceFeature):
     async def on_event_message(self, topic: str, raw: dict):
         try:
             evt = HistoryEvent(**raw)
-            victoria.fget(self.app).write_soon(evt)
+            await victoria.fget(self.app).write(evt)
             LOGGER.debug(f'MQTT: {evt.key} = {str(evt.data)[:30]}...')
 
         except ValidationError as ex:

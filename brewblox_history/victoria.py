@@ -1,12 +1,11 @@
 import asyncio
 import json
-import time
 from datetime import timedelta
 from urllib.parse import quote
 
 from aiohttp import web
 from aiohttp.client import ClientSession
-from brewblox_service import brewblox_logger, features, http, repeater, strex
+from brewblox_service import brewblox_logger, features, http, strex
 from llist import sllist
 
 from brewblox_history import utils
@@ -16,10 +15,9 @@ from brewblox_history.models import (HistoryEvent, TimeSeriesCsvQuery,
                                      TimeSeriesRangesQuery)
 
 LOGGER = brewblox_logger(__name__, True)
-MAX_PENDING_LINES = 5000
 
 
-class VictoriaClient(repeater.RepeaterFeature):
+class VictoriaClient(features.ServiceFeature):
 
     def __init__(self, app: web.Application):
         super().__init__(app)
@@ -32,9 +30,6 @@ class VictoriaClient(repeater.RepeaterFeature):
         }
 
         self._minimum_step = timedelta(seconds=config['minimum_step'])
-        self._write_interval = timedelta(seconds=config['write_interval'])
-        self._last_err = 'init'
-        self._pending_lines: list[str] = []
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
 
     async def ping(self):
@@ -55,6 +50,7 @@ class VictoriaClient(repeater.RepeaterFeature):
         session = http.session(self.app)
 
         query = f'match[]={{__name__!=""}}&start={args.duration}'
+        LOGGER.debug(query)
         result = await self._json_query(query, url, session)
         retv = [
             v['__name__']
@@ -185,71 +181,39 @@ class VictoriaClient(repeater.RepeaterFeature):
                 row[0] = str(utils.format_datetime(row[0], args.precision))
                 yield ','.join(row)
 
-    def _avoid_overflow(self):
-        # Ensure that a disconnected database does not cause this service to run out of memory
-        # To avoid large gaps, the data is downsampled: only every 2nd element is kept
-        # Note: using this approach, resolution decreases with age (downsampled more often)
-        if len(self._pending_lines) >= MAX_PENDING_LINES:
-            LOGGER.warn('Downsampling pending points...')
-            self._pending_lines = self._pending_lines[::2]
-
-    async def run(self):
-        session = http.session(self.app)
+    async def write(self, evt: HistoryEvent):
         url = f'{self._url}/write'
+        line_items = []
 
-        while True:
-            await asyncio.sleep(self._write_interval.total_seconds())
-
-            if not self._pending_lines:
-                continue
-
-            points = self._pending_lines.copy()
-            LOGGER.debug(f'Pushing {len(points)} lines to Victoria')
-
+        for field in sorted(evt.data.keys()):
             try:
-                await session.get(url, data='\n'.join(points))
-
-                # Make sure to keep points that were inserted during the write
-                self._pending_lines = self._pending_lines[len(points):]
-
-                if self._last_err:
-                    LOGGER.info(f'{self} now active')
-                    self._last_err = None
-
-            except Exception as ex:
-                msg = strex(ex)
-                LOGGER.warning(f'{self} {msg}')
-                self._last_err = msg
-                self._avoid_overflow()
-
-    def write_soon(self, evt: HistoryEvent):
-        time_ns = time.time_ns()
-        time_ms = time_ns // 1_000_000
-        line_values = []
-
-        for field, raw_value in evt.data.items():
-            try:
-                metric = f'{evt.key}/{field}'
-                value = float(raw_value)
+                value = float(evt.data[field])
+                line_key = field.replace(' ', '\\ ')
+                metrics_key = f'{evt.key}/{field}'
 
                 # Database writes are done using the Influx Line Protocol
                 # https://docs.influxdata.com/influxdb/v1.7/write_protocols/line_protocol_tutorial/
-                line_values.append(f'{field}={value}')
+                line_items.append(f'{line_key}={value}')
 
                 # Local cache used for the metrics API
-                self._cached_metrics[metric] = TimeSeriesMetric(
-                    metric=metric,
+                self._cached_metrics[metrics_key] = TimeSeriesMetric(
+                    metric=metrics_key,
                     value=value,
-                    timestamp=time_ms
+                    timestamp=utils.now(),
                 )
 
             except (ValueError, TypeError):
                 pass  # Skip values that can't be converted to float
 
-        # Append a line if `points` contained any valid values
-        if line_values:
-            formatted_values = ','.join(line_values).replace(' ', '\\ ')
-            self._pending_lines.append(f'{evt.key} {formatted_values} {time_ns}')
+        if line_items:
+            try:
+                line = f'{evt.key} {",".join(line_items)}'
+                LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
+                await http.session(self.app).post(url, data=line)
+
+            except Exception as ex:
+                msg = strex(ex)
+                LOGGER.warning(f'{self} {msg}')
 
 
 def setup(app):

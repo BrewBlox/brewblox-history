@@ -24,7 +24,6 @@ def log_enabled():
 def app_config() -> dict:
     return {
         'debug': True,
-        'write_interval': 30,
         'ranges_interval': 30,
         'metrics_interval': 5,
         'victoria_url': 'http://victoria:8428/victoria',
@@ -38,7 +37,6 @@ def app_config() -> dict:
 def sys_args(app_config) -> list:
     return [str(v) for v in [
         'app_name',
-        '--write-interval', app_config['write_interval'],
         '--ranges-interval', app_config['ranges_interval'],
         '--metrics-interval', app_config['metrics_interval'],
         '--victoria-url', app_config['victoria_url'],
