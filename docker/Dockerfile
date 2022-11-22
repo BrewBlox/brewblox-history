@@ -1,4 +1,4 @@
-FROM python:3.9-buster as base
+FROM python:3.9 as base
 
 COPY ./dist /app/dist
 COPY ./requirements.txt /app/requirements.txt
@@ -12,7 +12,7 @@ RUN set -ex \
     && pip3 wheel --wheel-dir=/wheeley -r /app/requirements.txt \
     && pip3 wheel --wheel-dir=/wheeley /app/dist/*
 
-FROM python:3.9-slim-buster
+FROM python:3.9-slim
 EXPOSE 5000
 WORKDIR /app
 
