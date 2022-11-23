@@ -7,10 +7,12 @@ Any fixtures declared here are available to all test functions in this directory
 import logging
 
 import pytest
-from brewblox_service import service
+from brewblox_service import brewblox_logger, features, service
 
 from brewblox_history.__main__ import (controller_error_middleware,
                                        create_parser)
+
+LOGGER = brewblox_logger(__name__)
 
 
 @pytest.fixture(scope='session', autouse=True)
@@ -24,7 +26,6 @@ def log_enabled():
 def app_config() -> dict:
     return {
         'debug': True,
-        'write_interval': 30,
         'ranges_interval': 30,
         'metrics_interval': 5,
         'victoria_url': 'http://victoria:8428/victoria',
@@ -38,7 +39,6 @@ def app_config() -> dict:
 def sys_args(app_config) -> list:
     return [str(v) for v in [
         'app_name',
-        '--write-interval', app_config['write_interval'],
         '--ranges-interval', app_config['ranges_interval'],
         '--metrics-interval', app_config['metrics_interval'],
         '--victoria-url', app_config['victoria_url'],
@@ -50,13 +50,6 @@ def sys_args(app_config) -> list:
 
 
 @pytest.fixture
-def event_loop(loop):
-    # aresponses uses the "event_loop" fixture
-    # this makes loop available under either name
-    yield loop
-
-
-@pytest.fixture
 def app(sys_args):
     parser = create_parser('default')
     app = service.create_app(parser=parser, raw_args=sys_args[1:])
@@ -65,9 +58,14 @@ def app(sys_args):
 
 
 @pytest.fixture
-async def client(app, aiohttp_client, loop):
+async def client(app, aiohttp_client, aiohttp_server):
     """Allows patching the app or aiohttp_client before yielding it.
 
     Any tests wishing to add custom behavior to app can override the fixture
     """
-    return await aiohttp_client(app)
+    LOGGER.debug('Available features:')
+    for name, impl in app.get(features.FEATURES_KEY, {}).items():
+        LOGGER.debug(f'Feature "{name}" = {impl}')
+    LOGGER.debug(app.on_startup)
+
+    return await aiohttp_client(await aiohttp_server(app))

@@ -75,7 +75,7 @@ def test_select_timeframe(mocker):
     assert utils.select_timeframe(None, None, None, min_step) == (
         fmt(datetime(2021, 7, 14, 19)),
         '',
-        '86.0s'
+        '86s'
     )
 
     assert utils.select_timeframe(start=now(),
@@ -85,7 +85,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
-        '10.0s',
+        '10s',
     )
 
     assert utils.select_timeframe(start=now(),
@@ -95,7 +95,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
-        '10.0s',
+        '10s',
     )
 
     assert utils.select_timeframe(start=None,
@@ -105,7 +105,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
-        '10.0s',
+        '10s',
     )
 
     assert utils.select_timeframe(start=datetime(2021, 7, 15, 18),
@@ -115,7 +115,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
-        '10.0s',
+        '10s',
     )
 
     assert utils.select_timeframe(start=None,
@@ -125,7 +125,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
-        '10.0s',
+        '10s',
     )
 
     assert utils.select_timeframe(start=None,
@@ -135,7 +135,7 @@ def test_select_timeframe(mocker):
                                   ) == (
         fmt(datetime(2021, 7, 14, 19)),
         fmt(now()),
-        '86.0s',
+        '86s',
     )
 
 
