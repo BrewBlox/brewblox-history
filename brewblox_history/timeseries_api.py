@@ -153,6 +153,10 @@ class StreamView(VictoriaView):
                                          end=query.end)
         initial = True
 
+        # Workaround to resolve a bug where no data is returned if there are gaps
+        # https://github.com/VictoriaMetrics/VictoriaMetrics/issues/3271
+        await self.victoria.fields(TimeSeriesFieldsQuery(duration='-365d'))
+
         while True:
             async with protected('ranges query'):
                 await self.ws.send_json(
