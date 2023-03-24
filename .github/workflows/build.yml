@@ -19,6 +19,12 @@ jobs:
         with:
           python-version: "3.9"
 
+      - name: Get image metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ghcr.io/brewblox/brewblox-history
+
       - name: ghcr.io login
         uses: docker/login-action@v2
         if: github.event_name != 'pull_request'
@@ -26,12 +32,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get image metadata
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: ghcr.io/brewblox/brewblox-history
 
       - name: Install dependencies
         run: |
