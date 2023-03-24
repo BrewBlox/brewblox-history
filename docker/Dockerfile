@@ -13,6 +13,7 @@ RUN set -ex \
     && pip3 wheel --wheel-dir=/wheeley /app/dist/*
 
 FROM python:3.9-slim
+LABEL org.opencontainers.image.source="https://github.com/BrewBlox/brewblox-history"
 EXPOSE 5000
 WORKDIR /app
 
