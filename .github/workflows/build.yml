@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [develop, edge]
 
+env:
+  DOCKER_IMAGE: ghcr.io/brewblox/brewblox-history
+
 jobs:
   build:
     if: github.repository_owner == 'BrewBlox'
@@ -23,7 +26,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v4
         with:
-          images: ghcr.io/brewblox/brewblox-history
+          images: ${{ env.DOCKER_IMAGE }}
 
       - name: ghcr.io login
         uses: docker/login-action@v2
