@@ -23,7 +23,7 @@ def m_redis(mocker):
 
 @pytest.fixture
 def m_publish(mocker):
-    m = mocker.patch(TESTED + '.mqtt.publish', AsyncMock())
+    m = mocker.patch(TESTED + '.mqtt.publish', autospec=True)
     return m
 
 
@@ -144,7 +144,7 @@ async def test_set(app, m_redis, m_publish, client, rclient: redis.RedisClient):
     value = DatastoreValue(namespace='n:m', id='x', happy=True)
     assert await rclient.set(value) == value
     m_redis.set.assert_awaited_with('n:m:x', value.json())
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', {'changed': [value]}, err=False)
+    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'changed': [value.dict()]}), err=False)
 
     assert await response(client.post('/datastore/set', json={
         'value': value.dict()
@@ -176,8 +176,8 @@ async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient)
         'n2:x2': values[1].json()
     })
     m_publish.assert_has_awaits([
-        call(app, 'brewcast/datastore/n', {'changed': [values[0]]}, err=False),
-        call(app, 'brewcast/datastore/n2', {'changed': [values[1]]}, err=False),
+        call(app, 'brewcast/datastore/n', json.dumps({'changed': [dict_values[0]]}), err=False),
+        call(app, 'brewcast/datastore/n2', json.dumps({'changed': [dict_values[1]]}), err=False),
     ], any_order=True)
 
     assert await response(client.post('/datastore/mset', json={
@@ -194,7 +194,7 @@ async def test_delete(app, m_redis, m_publish, client, rclient: redis.RedisClien
     m_redis.delete.return_value = 1
     assert await rclient.delete('n', 'x') == 1
     m_redis.delete.assert_awaited_with('n:x')
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', {'deleted': ['n:x']}, err=False)
+    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x']}), err=False)
 
     assert await response(client.post('/datastore/delete', json={
         'namespace': 'n',
@@ -214,13 +214,13 @@ async def test_mdelete(app, m_redis, m_publish, client, rclient: redis.RedisClie
     assert m_redis.delete.await_count == 0
 
     assert await rclient.mdelete('n', ['x', 'y:z']) == 2
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', {'deleted': ['n:x', 'n:y:z']}, err=False)
+    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x', 'n:y:z']}), err=False)
 
     assert await rclient.mdelete('n', ['x'], '*') == 3
     m_publish.assert_has_calls([
-        call(app, 'brewcast/datastore/n', {'deleted': ['n:x']}, err=False),
-        call(app, 'brewcast/datastore/n1', {'deleted': ['n1:k1']}, err=False),
-        call(app, 'brewcast/datastore/n2', {'deleted': ['n2:k2']}, err=False),
+        call(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x']}), err=False),
+        call(app, 'brewcast/datastore/n1', json.dumps({'deleted': ['n1:k1']}), err=False),
+        call(app, 'brewcast/datastore/n2', json.dumps({'deleted': ['n2:k2']}), err=False),
     ], any_order=True)
 
     assert await response(client.post('/datastore/mdelete', json={

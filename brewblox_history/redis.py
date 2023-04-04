@@ -1,3 +1,4 @@
+import json
 from functools import wraps
 from itertools import groupby
 from typing import Optional
@@ -59,7 +60,7 @@ class RedisClient(features.ServiceFeature):
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
                 await mqtt.publish(self.app,
                                    f'{self.topic}/{key}',
-                                   {'changed': list((v.dict() for v in group))},
+                                   json.dumps({'changed': list((v.dict() for v in group))}),
                                    err=False)
 
         if deleted:
@@ -67,7 +68,7 @@ class RedisClient(features.ServiceFeature):
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
                 await mqtt.publish(self.app,
                                    f'{self.topic}/{key}',
-                                   {'deleted': list(group)},
+                                   json.dumps({'deleted': list(group)}),
                                    err=False)
 
     @autoconnect
