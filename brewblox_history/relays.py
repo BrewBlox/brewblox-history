@@ -2,6 +2,7 @@
 Functionality for persisting eventbus messages to the database
 """
 
+import json
 from contextlib import suppress
 
 from aiohttp import web
@@ -77,9 +78,9 @@ class MQTTDataRelay(features.ServiceFeature):
         with suppress(ValueError):
             await mqtt.unlisten(app, self.topic, self.on_event_message)
 
-    async def on_event_message(self, topic: str, raw: dict):
+    async def on_event_message(self, topic: str, payload: str):
         try:
-            evt = HistoryEvent(**raw)
+            evt = HistoryEvent(**json.loads(payload))
             await victoria.fget(self.app).write(evt)
             LOGGER.debug(f'MQTT: {evt.key} = {str(evt.data)[:30]}...')
 

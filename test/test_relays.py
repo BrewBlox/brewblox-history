@@ -2,6 +2,7 @@
 Tests brewblox_history.relays
 """
 
+import json
 from unittest.mock import AsyncMock, call
 
 import pytest
@@ -75,11 +76,11 @@ async def test_mqtt_relay(app, client, m_victoria):
     }
 
     topic = 'brewcast/history'
-    await relay.on_event_message(topic, {'key': 'm', 'data': data})
-    await relay.on_event_message(topic, {'key': 'm', 'data': flat_value})
-    await relay.on_event_message(topic, {'key': 'm', 'data': nested_empty_data})
-    await relay.on_event_message(topic, {'pancakes': 'yummy'})
-    await relay.on_event_message(topic, {'key': 'm', 'data': 'no'})
+    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': data}))
+    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': flat_value}))
+    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': nested_empty_data}))
+    await relay.on_event_message(topic, json.dumps({'pancakes': 'yummy'}))
+    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': 'no'}))
 
     assert m_victoria.write.call_args_list == [
         call(HistoryEvent(key='m', data=flat_data)),
