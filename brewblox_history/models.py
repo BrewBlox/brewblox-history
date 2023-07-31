@@ -6,7 +6,17 @@ import collections
 from datetime import datetime
 from typing import Any, Literal, NamedTuple, Optional
 
+from brewblox_service.models import BaseServiceConfig
 from pydantic import BaseModel, Extra, Field, validator
+
+
+class ServiceConfig(BaseServiceConfig):
+    redis_url: str
+    victoria_url: str
+    datastore_topic: str
+    ranges_interval: float
+    metrics_interval: float
+    minimum_step: float
 
 
 def flatten(d, parent_key=''):

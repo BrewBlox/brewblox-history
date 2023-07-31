@@ -10,10 +10,9 @@ from brewblox_service import brewblox_logger, features, mqtt, strex
 from pydantic import ValidationError
 
 from brewblox_history import victoria
-from brewblox_history.models import HistoryEvent
+from brewblox_history.models import HistoryEvent, ServiceConfig
 
 LOGGER = brewblox_logger(__name__)
-routes = web.RouteTableDef()
 
 
 class MQTTDataRelay(features.ServiceFeature):
@@ -60,15 +59,15 @@ class MQTTDataRelay(features.ServiceFeature):
         }
     """
 
-    def __init__(self, app):
+    def __init__(self, app: web.Application):
         super().__init__(app)
-        self.topic = None
+        config: ServiceConfig = app['config']
+        self.topic = config.history_topic + '/#'
 
     def __str__(self):
         return f'<{type(self).__name__} {self.topic}>'
 
     async def startup(self, app: web.Application):
-        self.topic = app['config']['history_topic'] + '/#'
         await mqtt.listen(app, self.topic, self.on_event_message)
         await mqtt.subscribe(app, self.topic)
 
@@ -90,7 +89,6 @@ class MQTTDataRelay(features.ServiceFeature):
 
 def setup(app: web.Application):
     features.add(app, MQTTDataRelay(app))
-    app.router.add_routes(routes)
 
 
 def fget(app: web.Application):

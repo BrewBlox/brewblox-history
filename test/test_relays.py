@@ -2,13 +2,15 @@
 Tests brewblox_history.relays
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, call
 
 import pytest
+from brewblox_service import mqtt, scheduler
 
 from brewblox_history import relays
-from brewblox_history.models import HistoryEvent
+from brewblox_history.models import HistoryEvent, ServiceConfig
 
 TESTED = relays.__name__
 
@@ -21,28 +23,32 @@ def m_victoria(mocker):
 
 
 @pytest.fixture
-def m_prepare(mocker):
-    mocker.patch(TESTED + '.mqtt.publish', AsyncMock())
-    mocker.patch(TESTED + '.mqtt.subscribe', AsyncMock())
-    mocker.patch(TESTED + '.mqtt.listen', AsyncMock())
-    mocker.patch(TESTED + '.mqtt.unsubscribe', AsyncMock())
-    mocker.patch(TESTED + '.mqtt.unlisten', AsyncMock())
+async def setup(app, mocker, m_victoria, mqtt_container):
+    config: ServiceConfig = app['config']
+    config.mqtt_host = 'localhost'
+    config.mqtt_port = mqtt_container['mqtt']
 
-
-@pytest.fixture
-def m_subscribe(mocker):
-    m = mocker.patch(TESTED + '.subscribe')
-    return m
-
-
-@pytest.fixture
-async def app(app, mocker, m_victoria, m_prepare):
+    scheduler.setup(app)
+    mqtt.setup(app)
     relays.setup(app)
-    return app
+
+
+@pytest.fixture(autouse=True)
+async def synchronized(app, client):
+    await asyncio.wait_for(mqtt.fget(app).ready.wait(), timeout=5)
 
 
 async def test_mqtt_relay(app, client, m_victoria):
-    relay = relays.fget(app)
+    topic = 'brewcast/history'
+    recv = []
+    recv_done = asyncio.Event()
+
+    async def history_cb(topic: str, payload: str):
+        recv.append(payload)
+        if len(recv) >= 5:
+            recv_done.set()
+
+    await mqtt.listen(app, topic, history_cb)
 
     data = {
         'nest': {
@@ -75,13 +81,15 @@ async def test_mqtt_relay(app, client, m_victoria):
         'single/text': 'value',
     }
 
-    topic = 'brewcast/history'
-    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': data}))
-    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': flat_value}))
-    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': nested_empty_data}))
-    await relay.on_event_message(topic, json.dumps({'pancakes': 'yummy'}))
-    await relay.on_event_message(topic, json.dumps({'key': 'm', 'data': 'no'}))
+    await mqtt.publish(app, topic, json.dumps({'key': 'm', 'data': data}))
+    await mqtt.publish(app, topic, json.dumps({'key': 'm', 'data': flat_value}))
+    await mqtt.publish(app, topic, json.dumps({'key': 'm', 'data': nested_empty_data}))
+    await mqtt.publish(app, topic, json.dumps({'pancakes': 'yummy'}))
+    await mqtt.publish(app, topic, json.dumps({'key': 'm', 'data': 'no'}))
 
+    await asyncio.wait_for(recv_done.wait(), timeout=5)
+
+    assert relays.fget(app) is not None
     assert m_victoria.write.call_args_list == [
         call(HistoryEvent(key='m', data=flat_data)),
         call(HistoryEvent(key='m', data=flat_value)),
