@@ -21,11 +21,10 @@ TESTED = victoria.__name__
 
 
 @pytest.fixture
-async def app(app):
+async def setup(app):
     scheduler.setup(app)
     http.setup(app)
     victoria.setup(app)
-    return app
 
 
 async def test_ping(app, client, aresponses: ResponsesMockServer):

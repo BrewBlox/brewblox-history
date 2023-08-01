@@ -8,7 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-brewblox-service = {git = "https://github.com/brewblox/brewblox-service.git", rev = "develop"}
+brewblox-service = "^3.1"
 aioredis = "^2.0.1"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
