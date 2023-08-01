@@ -8,14 +8,14 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-brewblox-service = "^3.1"
+brewblox-service = "^3.1.1"
 aioredis = "^2.0.1"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
 llist = "^0.7.1"
 cryptography = "40.0.1"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest-cov = "*"
 pytest-mock = "*"
 pytest-aiohttp = "*"
@@ -24,8 +24,6 @@ autopep8 = "*"
 flake8-quotes = "*"
 aresponses = "*"
 pytest = "*"
-
-[tool.poetry.group.dev.dependencies]
 invoke = "^2.2.0"
 
 [build-system]
