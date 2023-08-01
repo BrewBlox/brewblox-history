@@ -147,7 +147,7 @@ class StreamView(VictoriaView):
         self.ws: web.WebSocketResponse
 
     async def _stream_ranges(self, id: str, query: TimeSeriesRangesQuery):
-        interval = self.app['config']['ranges_interval']
+        interval = self.app['config'].ranges_interval
         open_ended = utils.is_open_ended(start=query.start,
                                          duration=query.duration,
                                          end=query.end)
@@ -175,7 +175,7 @@ class StreamView(VictoriaView):
             await asyncio.sleep(interval)
 
     async def _stream_metrics(self, id: str, query: TimeSeriesMetricsQuery):
-        interval = self.app['config']['metrics_interval']
+        interval = self.app['config'].metrics_interval
 
         while True:
             async with protected('metrics push'):
@@ -201,7 +201,7 @@ class StreamView(VictoriaView):
         Tags: TimeSeries
         """
         self.ws = web.WebSocketResponse()
-        streams = {}
+        streams: dict[str, asyncio.Task] = {}
 
         try:
             await self.ws.prepare(self.request)

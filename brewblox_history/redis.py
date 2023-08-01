@@ -7,7 +7,7 @@ import aioredis
 from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
-from brewblox_history.models import DatastoreValue
+from brewblox_history.models import DatastoreValue, ServiceConfig
 
 LOGGER = brewblox_logger(__name__)
 
@@ -22,7 +22,7 @@ def keycatobj(obj: DatastoreValue) -> str:
 
 def autoconnect(func):
     @wraps(func)
-    async def wrapper(self, *args, **kwargs):
+    async def wrapper(self: 'RedisClient', *args, **kwargs):
         if not self._redis:
             self._redis = await aioredis.from_url(self.url)
         return await func(self, *args, **kwargs)
@@ -33,8 +33,9 @@ class RedisClient(features.ServiceFeature):
 
     def __init__(self, app: web.Application):
         super().__init__(app)
-        self.url = app['config']['redis_url']
-        self.topic = app['config']['datastore_topic']
+        config: ServiceConfig = app['config']
+        self.url = config.redis_url
+        self.topic = config.datastore_topic
         # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None
 
@@ -59,16 +60,16 @@ class RedisClient(features.ServiceFeature):
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
                 await mqtt.publish(self.app,
-                                   f'{self.topic}/{key}',
-                                   json.dumps({'changed': list((v.dict() for v in group))}),
+                                   topic=f'{self.topic}/{key}',
+                                   payload=json.dumps({'changed': list((v.dict() for v in group))}),
                                    err=False)
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
                 await mqtt.publish(self.app,
-                                   f'{self.topic}/{key}',
-                                   json.dumps({'deleted': list(group)}),
+                                   topic=f'{self.topic}/{key}',
+                                   payload=json.dumps({'deleted': list(group)}),
                                    err=False)
 
     @autoconnect

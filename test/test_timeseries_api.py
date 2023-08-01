@@ -34,10 +34,9 @@ async def m_victoria(mocker):
 
 
 @pytest.fixture
-async def app(app):
+async def setup(app):
     socket_closer.setup(app)
     timeseries_api.setup(app)
-    return app
 
 
 async def test_ping(app, client, m_victoria):
@@ -160,7 +159,7 @@ async def test_empty_csv(app, client, m_victoria):
 
 
 async def test_stream(app, client, m_victoria):
-    app['config']['ranges_interval'] = 0.001
+    app['config'].ranges_interval = 0.001
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(
             metric='a',

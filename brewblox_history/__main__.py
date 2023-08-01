@@ -2,21 +2,16 @@
 Example of how to import and use the brewblox service
 """
 
-import json
-import traceback
 
-from aiohttp import web
-from brewblox_service import (brewblox_logger, http, mqtt, scheduler, service,
-                              strex)
+from brewblox_service import http, mqtt, scheduler, service
 
-from brewblox_history import (datastore_api, redis, relays, socket_closer,
-                              timeseries_api, victoria)
-
-LOGGER = brewblox_logger(__name__)
+from brewblox_history import (datastore_api, error_response, redis, relays,
+                              socket_closer, timeseries_api, victoria)
+from brewblox_history.models import ServiceConfig
 
 
-def create_parser(default_name='history'):
-    parser = service.create_parser(default_name=default_name)
+def create_parser():
+    parser = service.create_parser('history')
     parser.add_argument('--ranges-interval',
                         help='Interval (sec) between updates in live ranges. [%(default)s]',
                         default=10,
@@ -41,46 +36,24 @@ def create_parser(default_name='history'):
     return parser
 
 
-@web.middleware
-async def controller_error_middleware(request: web.Request, handler: web.RequestHandler) -> web.Response:
-    try:
-        return await handler(request)
-
-    except web.HTTPError:  # pragma: no cover
-        raise
-
-    except Exception as ex:
-        app = request.app
-        message = strex(ex)
-        debug = app['config']['debug']
-        LOGGER.error(f'[{request.url}] => {message}', exc_info=debug)
-
-        response = {
-            'error': message,
-            'traceback': traceback.format_tb(ex.__traceback__),
-        }
-
-        return web.HTTPInternalServerError(text=json.dumps(response),
-                                           content_type='application/json')
-
-
 def main():
-    app = service.create_app(parser=create_parser())
+    parser = create_parser()
+    config = service.create_config(parser, model=ServiceConfig)
+    app = service.create_app(config)
 
-    scheduler.setup(app)
-    http.setup(app)
-    mqtt.setup(app)
-    socket_closer.setup(app)
-    victoria.setup(app)
-    timeseries_api.setup(app)
-    redis.setup(app)
-    datastore_api.setup(app)
-    relays.setup(app)
+    async def setup():
+        scheduler.setup(app)
+        http.setup(app)
+        mqtt.setup(app)
+        socket_closer.setup(app)
+        victoria.setup(app)
+        timeseries_api.setup(app)
+        redis.setup(app)
+        datastore_api.setup(app)
+        relays.setup(app)
+        error_response.setup(app)
 
-    app.middlewares.append(controller_error_middleware)
-
-    service.furnish(app)
-    service.run(app)
+    service.run_app(app, setup())
 
 
 if __name__ == '__main__':

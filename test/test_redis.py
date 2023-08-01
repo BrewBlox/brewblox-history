@@ -2,76 +2,98 @@
 Tests brewblox_history.redis.py
 """
 
+import asyncio
 import json
-from unittest.mock import AsyncMock, call
+from unittest.mock import call
 
 import pytest
+from aiohttp.test_utils import TestClient
+from brewblox_service import mqtt, scheduler
 from brewblox_service.testing import response
+from pytest_mock import MockerFixture
 
 from brewblox_history import datastore_api, redis
-from brewblox_history.models import DatastoreValue
+from brewblox_history.models import DatastoreValue, ServiceConfig
 
 TESTED = redis.__name__
 
 
+def sort_pyvalues(values: list[DatastoreValue]):
+    return sorted(values, key=lambda v: v.id)
+
+
+def sort_dictvalues(values: list[dict]):
+    return sorted(values, key=lambda v: v['id'])
+
+
 @pytest.fixture
-def m_redis(mocker):
-    m = AsyncMock()
-    mocker.patch(TESTED + '.aioredis.from_url', AsyncMock(return_value=m))
+def m_publish(app, mocker: MockerFixture):
+    m = mocker.spy(mqtt, 'publish')
     return m
 
 
 @pytest.fixture
-def m_publish(mocker):
-    m = mocker.patch(TESTED + '.mqtt.publish', autospec=True)
-    return m
+async def setup(app, mqtt_container, redis_container):
+    config: ServiceConfig = app['config']
+    config.redis_url = 'redis://localhost:' + str(redis_container['redis'])
+    config.mqtt_host = 'localhost'
+    config.mqtt_port = mqtt_container['mqtt']
 
-
-@pytest.fixture
-async def app(app, m_redis):
+    scheduler.setup(app)
+    mqtt.setup(app)
     redis.setup(app)
     datastore_api.setup(app)
-    return app
 
 
-@pytest.fixture
-async def rclient(app, client):
-    return redis.fget(app)
+@pytest.fixture(autouse=True)
+async def synchronized(app, client: TestClient):
+    # Prevents test hangups if the connection fails
+    await asyncio.wait_for(
+        asyncio.gather(
+            redis.fget(app).ping(),
+            mqtt.fget(app).ready.wait(),
+        ),
+        timeout=5)
+    await redis.fget(app).mdelete('', filter='*')
 
 
-async def test_shutdown(app, m_redis, client, rclient):
-    await rclient.shutdown(app)
+async def test_standalone(app, client):
+    client = redis.RedisClient(app)
+    await client.startup(app)
+    await client.before_shutdown(app)
+    await client.shutdown(app)
 
 
-async def test_ping(m_redis, client, rclient: redis.RedisClient):
-    await rclient.ping()
+async def test_ping(app, client):
+    await redis.fget(app).ping()
     assert await response(client.get('/datastore/ping')) == {'ping': 'pong'}
 
 
-async def test_get(m_redis, client, rclient: redis.RedisClient):
-    obj = {
-        'namespace': 'namespace',
-        'id': 'id',
-        'hello': 'world',
-    }
-    m_redis.get.return_value = json.dumps(obj)
-    assert await rclient.get('namespace', 'id') == obj
-    m_redis.get.assert_awaited_with('namespace:id')
+async def test_get(app, client):
+    c = redis.fget(app)
+    obj = DatastoreValue(
+        namespace='ns1',
+        id='id1',
+        hello='world',
+    )
+    assert await c.set(obj) == obj
 
-    await rclient.get('', 'id')
-    m_redis.get.assert_awaited_with('id')
+    assert await c.get('ns1', 'id1') == obj
+    assert await c.get('', 'id1') is None
 
+    await c.set(obj)
     assert await response(client.post('/datastore/get', json={
-        'namespace': 'n',
-        'id': 'x'
-    })) == {'value': obj}
+        'namespace': 'ns1',
+        'id': 'id1'
+    })) == {'value': obj.dict()}
+
     # Missing namespace
     await response(client.post('/datastore/get', json={'id': 'x'}), 400)
 
 
-async def test_get_none(m_redis, client, rclient: redis.RedisClient):
-    m_redis.get.return_value = None
-    assert await rclient.get('namespace', 'id') is None
+async def test_get_none(app, client):
+    c = redis.fget(app)
+    assert await c.get('namespace', 'id') is None
     assert await response(client.post('/datastore/get', json={
         'namespace': 'n',
         'id': 'x'
@@ -80,101 +102,81 @@ async def test_get_none(m_redis, client, rclient: redis.RedisClient):
     }
 
 
-async def test_mget(m_redis, client, rclient: redis.RedisClient):
-    m_redis.mget.side_effect = lambda *keys: [
-        json.dumps({'namespace': 'ns', 'id': str(idx), 'idx': idx}) for idx in range(len(keys))
-    ]
-    m_redis.keys.return_value = [b'n1:k1', b'n2:k2']
+async def test_mget(app, client):
+    c = redis.fget(app)
+    await c.mset([DatastoreValue(namespace='ns1', id=f'{idx}', idx=idx) for idx in range(2)])
+    await c.mset([DatastoreValue(namespace='ns2', id=f'{idx}', idx=idx) for idx in range(3)])
+    await c.mset([DatastoreValue(namespace='ns2', id=f'k{idx}', idx=idx) for idx in range(3)])
 
-    assert await rclient.mget('namespace') == [
-        {'namespace': 'ns', 'id': '0', 'idx': 0},
-        {'namespace': 'ns', 'id': '1', 'idx': 1},
-    ]
-    assert m_redis.mget.await_count == 1
-    assert await rclient.mget('namespace', ['k']) == [
-        {'namespace': 'ns', 'id': '0', 'idx': 0},
-    ]
-    assert await rclient.mget('namespace', filter='*') == [
-        {'namespace': 'ns', 'id': '0', 'idx': 0},
-        {'namespace': 'ns', 'id': '1', 'idx': 1},
-    ]
-    m_redis.keys.assert_awaited_with('namespace:*')
+    assert sort_pyvalues(await c.mget('ns1')) == sort_pyvalues([
+        DatastoreValue(namespace='ns1', id='0', idx=0),
+        DatastoreValue(namespace='ns1', id='1', idx=1),
+    ])
+    assert sort_pyvalues(await c.mget('ns2', ['0'])) == sort_pyvalues([
+        DatastoreValue(namespace='ns2', id='0', idx=0),
+    ])
+    assert sort_pyvalues(await c.mget('ns2', filter='*')) == sort_pyvalues([
+        DatastoreValue(namespace='ns2', id='0', idx=0),
+        DatastoreValue(namespace='ns2', id='1', idx=1),
+        DatastoreValue(namespace='ns2', id='2', idx=2),
+        DatastoreValue(namespace='ns2', id='k0', idx=0),
+        DatastoreValue(namespace='ns2', id='k1', idx=1),
+        DatastoreValue(namespace='ns2', id='k2', idx=2),
+    ])
+
+    resp = await response(client.post('/datastore/mget', json={
+        'namespace': 'ns2',
+        'ids': ['2'],
+        'filter': 'k*',
+    }))
+    assert sort_dictvalues(resp['values']) == sort_dictvalues([
+        {'namespace': 'ns2', 'id': '2', 'idx': 2},
+        {'namespace': 'ns2', 'id': 'k0', 'idx': 0},
+        {'namespace': 'ns2', 'id': 'k1', 'idx': 1},
+        {'namespace': 'ns2', 'id': 'k2', 'idx': 2},
+    ])
 
     assert await response(client.post('/datastore/mget', json={
         'namespace': 'n',
-        'ids': ['k'],
-        'filter': '*',
-    })) == {
-        'values': [
-            {'namespace': 'ns', 'id': '0', 'idx': 0},
-            {'namespace': 'ns', 'id': '1', 'idx': 1},
-            {'namespace': 'ns', 'id': '2', 'idx': 2},
-        ]
-    }
-
-    assert await response(client.post('/datastore/mget', json={
-        'namespace': 'n',
-    })) == {
-        'values': [
-            {'namespace': 'ns', 'id': '0', 'idx': 0},
-            {'namespace': 'ns', 'id': '1', 'idx': 1},
-        ]
-    }
-    m_redis.keys.assert_awaited_with('n:*')
+    })) == {'values': []}
 
     await response(client.post('/datastore/mget', json={}), 400)
 
 
-async def test_mget_empty(m_redis, client, rclient: redis.RedisClient):
-    m_redis.mget.side_effect = lambda *keys: [
-        json.dumps({'idx': idx}) for idx in range(len(keys))
-    ]
-    m_redis.keys.return_value = []
-
-    assert await response(client.post('/datastore/mget', json={
-        'namespace': 'empty',
-    })) == {
-        'values': []
-    }
-    m_redis.keys.assert_awaited_with('empty:*')
-    assert m_redis.mget.call_count == 0
-
-
-async def test_set(app, m_redis, m_publish, client, rclient: redis.RedisClient):
+async def test_set(app,  m_publish, client):
     value = DatastoreValue(namespace='n:m', id='x', happy=True)
-    assert await rclient.set(value) == value
-    m_redis.set.assert_awaited_with('n:m:x', value.json())
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'changed': [value.dict()]}), err=False)
 
     assert await response(client.post('/datastore/set', json={
         'value': value.dict()
     })) == {
         'value': value.dict()
     }
+    assert await response(client.post('/datastore/get', json=value.dict())) == {
+        'value': value.dict()
+    }
+
+    # no namespace in arg
     await response(client.post('/datastore/set', json={
-        'value': {'id': 'x'},  # no namespace
+        'value': {'id': 'x'},
     }), 400)
 
+    # invalid characters in id
     await response(client.post('/datastore/set', json={
-        'value': {'namespace': 'n', 'id': '[x]'},  # invalid characters
+        'value': {'namespace': 'n', 'id': '[x]'},
     }), 400)
 
 
-async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient):
+async def test_mset(app, m_publish, client):
+    c = redis.fget(app)
     values = [
         DatastoreValue(namespace='n', id='x', happy=True),
         DatastoreValue(namespace='n2', id='x2', jolly=False),
     ]
-    dict_values = [v.dict() for v in values]
+    dict_values = sort_dictvalues([v.dict() for v in values])
 
-    assert await rclient.mset([]) == []
-    assert m_redis.mset.await_count == 0
+    assert await c.mset([]) == []
+    assert await c.mset(values) == values
 
-    assert await rclient.mset(values) == values
-    m_redis.mset.assert_awaited_with({
-        'n:x': values[0].json(),
-        'n2:x2': values[1].json()
-    })
     m_publish.assert_has_awaits([
         call(app, 'brewcast/datastore/n', json.dumps({'changed': [dict_values[0]]}), err=False),
         call(app, 'brewcast/datastore/n2', json.dumps({'changed': [dict_values[1]]}), err=False),
@@ -190,37 +192,70 @@ async def test_mset(app, m_redis, m_publish, client, rclient: redis.RedisClient)
     }), 400)
 
 
-async def test_delete(app, m_redis, m_publish, client, rclient: redis.RedisClient):
-    m_redis.delete.return_value = 1
-    assert await rclient.delete('n', 'x') == 1
-    m_redis.delete.assert_awaited_with('n:x')
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x']}), err=False)
+async def test_delete(app, m_publish, client):
+    c = redis.fget(app)
+    await c.mset([
+        DatastoreValue(namespace='ns1', id='id1'),
+        DatastoreValue(namespace='ns1', id='id2'),
+        DatastoreValue(namespace='ns2', id='id1'),
+        DatastoreValue(namespace='ns2', id='id2'),
+    ])
+
+    assert await c.delete('ns1', 'id1') == 1
+
+    m_publish.assert_awaited_with(app,
+                                  topic='brewcast/datastore/ns1',
+                                  payload=json.dumps({'deleted': ['ns1:id1']}),
+                                  err=False)
 
     assert await response(client.post('/datastore/delete', json={
-        'namespace': 'n',
-        'id': 'x'
+        'namespace': 'ns1',
+        'id': 'id2'
     })) == {
         'count': 1
+    }
+    assert await response(client.post('/datastore/delete', json={
+        'namespace': 'ns1',
+        'id': 'id2'
+    })) == {
+        'count': 0
     }
     await response(client.post('/datastore/delete', json={}), 400)
 
 
-async def test_mdelete(app, m_redis, m_publish, client, rclient: redis.RedisClient):
-    m_redis.keys.return_value = [b'n1:k1', b'n2:k2']
-    m_redis.delete.side_effect = lambda *keys: len(keys)
+async def test_mdelete(app, m_publish, client):
+    c = redis.fget(app)
+    await c.mset([
+        DatastoreValue(namespace='ns1', id='id1'),
+        DatastoreValue(namespace='ns1', id='id2'),
+        DatastoreValue(namespace='ns2', id='id1'),
+        DatastoreValue(namespace='ns2', id='id2'),
+        DatastoreValue(namespace='ns3', id='id1'),
+        DatastoreValue(namespace='ns3', id='id2'),
+        DatastoreValue(namespace='ns3', id='id3'),
+    ])
 
-    assert await rclient.mdelete('namespace') == 0
+    m_publish.reset_mock()
+    assert await c.mdelete('namespace') == 0
     assert m_publish.await_count == 0
-    assert m_redis.delete.await_count == 0
 
-    assert await rclient.mdelete('n', ['x', 'y:z']) == 2
-    m_publish.assert_awaited_with(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x', 'n:y:z']}), err=False)
+    assert await c.mdelete('ns1', ['id1', 'id2', 'id3']) == 2
+    m_publish.assert_awaited_with(app,
+                                  topic='brewcast/datastore/ns1',
+                                  payload=json.dumps({'deleted': ['ns1:id1', 'ns1:id2', 'ns1:id3']}),
+                                  err=False)
 
-    assert await rclient.mdelete('n', ['x'], '*') == 3
+    m_publish.reset_mock()
+    assert await c.mdelete('', ['x'], '*2') == 2
     m_publish.assert_has_calls([
-        call(app, 'brewcast/datastore/n', json.dumps({'deleted': ['n:x']}), err=False),
-        call(app, 'brewcast/datastore/n1', json.dumps({'deleted': ['n1:k1']}), err=False),
-        call(app, 'brewcast/datastore/n2', json.dumps({'deleted': ['n2:k2']}), err=False),
+        call(app,
+             topic='brewcast/datastore/ns2',
+             payload=json.dumps({'deleted': ['ns2:id2']}),
+             err=False),
+        call(app,
+             topic='brewcast/datastore/ns3',
+             payload=json.dumps({'deleted': ['ns3:id2']}),
+             err=False),
     ], any_order=True)
 
     assert await response(client.post('/datastore/mdelete', json={
@@ -229,10 +264,10 @@ async def test_mdelete(app, m_redis, m_publish, client, rclient: redis.RedisClie
         'count': 0
     }
     assert await response(client.post('/datastore/mdelete', json={
-        'namespace': 'n',
+        'namespace': 'ns3',
         'filter': '*',
     })) == {
-        'count': 2
+        'count': 2  # id1 and id3
     }
     await response(client.post('/datastore/mdelete', json={
         'filter': '*'

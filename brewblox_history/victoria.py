@@ -9,10 +9,10 @@ from brewblox_service import brewblox_logger, features, http, strex
 from llist import sllist
 
 from brewblox_history import utils
-from brewblox_history.models import (HistoryEvent, TimeSeriesCsvQuery,
-                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
-                                     TimeSeriesMetricsQuery, TimeSeriesRange,
-                                     TimeSeriesRangesQuery)
+from brewblox_history.models import (HistoryEvent, ServiceConfig,
+                                     TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
+                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
+                                     TimeSeriesRange, TimeSeriesRangesQuery)
 
 LOGGER = brewblox_logger(__name__, True)
 
@@ -22,14 +22,14 @@ class VictoriaClient(features.ServiceFeature):
     def __init__(self, app: web.Application):
         super().__init__(app)
 
-        config = self.app['config']
-        self._url = config['victoria_url']
+        config: ServiceConfig = self.app['config']
+        self._url = config.victoria_url
         self._query_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept-Encoding': 'gzip',
         }
 
-        self._minimum_step = timedelta(seconds=config['minimum_step'])
+        self._minimum_step = timedelta(seconds=config.minimum_step)
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
 
     async def ping(self):
