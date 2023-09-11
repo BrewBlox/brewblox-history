@@ -1,4 +1,4 @@
-FROM python:3.9-bullseye as base
+FROM python:3.11-bookworm as base
 
 COPY ./dist /app/dist
 
@@ -11,7 +11,7 @@ RUN set -ex \
     && pip3 wheel --wheel-dir=/wheeley -r /app/dist/requirements.txt \
     && pip3 wheel --wheel-dir=/wheeley /app/dist/*.tar.gz
 
-FROM python:3.9-slim-bullseye
+FROM python:3.11-slim-bookworm
 EXPOSE 5000
 WORKDIR /app
 
