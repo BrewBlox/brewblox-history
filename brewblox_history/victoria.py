@@ -36,7 +36,7 @@ class VictoriaClient(features.ServiceFeature):
         url = f'{self._url}/health'
         async with http.session(self.app).get(url) as resp:
             status = await resp.text()
-            if status != 'OK':
+            if status != 'OK':  # pragma: no branch
                 raise ConnectionError(f'Database ping returned warning: "{status}"')
 
     async def _json_query(self, query: str, url: str, session: ClientSession):

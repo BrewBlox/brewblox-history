@@ -3,11 +3,11 @@ from functools import wraps
 from itertools import groupby
 from typing import Optional
 
-import aioredis
 from aiohttp import web
 from brewblox_service import brewblox_logger, features, mqtt
 
 from brewblox_history.models import DatastoreValue, ServiceConfig
+from redis import asyncio as aioredis
 
 LOGGER = brewblox_logger(__name__)
 
