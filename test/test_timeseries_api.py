@@ -6,11 +6,13 @@ Tests brewblox_history.timeseries_api
 import asyncio
 from datetime import datetime, timezone
 from time import time_ns
+from typing import TextIO
 from unittest.mock import ANY, AsyncMock
 
 import pytest
 from aiohttp import ClientWebSocketResponse
 from aiohttp.http_websocket import WSCloseCode
+from brewblox_service import scheduler
 from brewblox_service.testing import response
 from pytest import approx
 
@@ -34,7 +36,9 @@ async def m_victoria(mocker):
 
 
 @pytest.fixture
-async def setup(app):
+async def setup(app, mocker):
+    mocker.patch(TESTED + '.CLEANUP_DELAY_S', 0.1)
+    scheduler.setup(app)
     socket_closer.setup(app)
     timeseries_api.setup(app)
 
@@ -130,12 +134,10 @@ async def test_metrics(app, client, m_victoria):
 
 
 async def test_csv(app, client, m_victoria, mocker):
-    mocker.patch(TESTED + '.CSV_CHUNK_SIZE', 10)
-
-    async def csv_mock(args: TimeSeriesCsvQuery):
-        yield ','.join(args.fields)
-        yield 'line 1'
-        yield 'line 2'
+    async def csv_mock(args: TimeSeriesCsvQuery, out: TextIO):
+        out.write(','.join(args.fields) + '\n')
+        out.write('line 1\n')
+        out.write('line 2\n')
 
     m_victoria.csv = csv_mock
     assert await response(
@@ -149,8 +151,8 @@ async def test_csv(app, client, m_victoria, mocker):
 
 
 async def test_empty_csv(app, client, m_victoria):
-    async def csv_mock(args: TimeSeriesCsvQuery):
-        yield ','.join(args.fields)
+    async def csv_mock(args: TimeSeriesCsvQuery, out: TextIO):
+        out.write(','.join(args.fields) + '\n')
 
     m_victoria.csv = csv_mock
     assert await response(

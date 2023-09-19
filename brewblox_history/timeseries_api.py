@@ -4,11 +4,12 @@ REST endpoints for TimeSeries queries
 
 import asyncio
 from contextlib import asynccontextmanager
+from tempfile import NamedTemporaryFile
 
 from aiohttp import web
 from aiohttp_pydantic import PydanticView
 from aiohttp_pydantic.oas.typing import r200
-from brewblox_service import brewblox_logger, strex
+from brewblox_service import brewblox_logger, scheduler, strex
 
 from brewblox_history import socket_closer, utils, victoria
 from brewblox_history.models import (TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
@@ -21,7 +22,7 @@ from brewblox_history.models import (TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
 LOGGER = brewblox_logger(__name__, True)
 routes = web.RouteTableDef()
 
-CSV_CHUNK_SIZE = pow(2, 15)
+CLEANUP_DELAY_S = 60
 
 
 @asynccontextmanager
@@ -115,27 +116,18 @@ class CsvView(VictoriaView):
 
         Tags: TimeSeries
         """
-        response = web.StreamResponse(
-            status=200,
-            reason='OK',
-            headers={
-                'Content-Type': 'text/plain',
-                'Access-Control-Allow-Origin': '*',
-            }
-        )
-        await response.prepare(self.request)
-        response.enable_chunked_encoding()
+        f = NamedTemporaryFile('w+t')
 
-        buffer = ''
-        async for line in self.victoria.csv(args):  # pragma: no branch
-            buffer = f'{buffer}{line}\n'
-            if len(buffer) >= CSV_CHUNK_SIZE:
-                await response.write(buffer.encode())
-                buffer = ''
+        async def cleanup():  # pragma: no cover
+            await asyncio.sleep(CLEANUP_DELAY_S)
+            f.close()
 
-        await response.write(buffer.encode())  # flush remainder
-        await response.write_eof()
-        return response
+        try:
+            await self.victoria.csv(args, f)
+            f.flush()
+            return web.FileResponse(path=f.name)
+        finally:
+            await scheduler.create(self.request.app, cleanup())
 
 
 @routes.view('/timeseries/stream')

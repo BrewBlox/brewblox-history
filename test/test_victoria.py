@@ -179,21 +179,26 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
         precision='ISO8601',
     )
 
-    result = []
-    async for line in vic.csv(args):
-        result.append(line)
-    assert len(result) == 23  # headers, 11 from sparkey, 11 from spock
-    assert result[0] == ','.join(['time'] + args.fields)
+    # async with vic.csv(args) as f:
+    #     result = f.readlines()
+    result = await vic.csv(args, out=None)
+    result = result.rstrip().split('\n')
 
+    assert len(result) == 23  # headers, 11 from sparkey, 11 from spock
+    assert result[0] == ','.join(['time', *args.fields])
     # line 1: values from spock
     line = result[1].split(',')
     assert ciso8601.parse_datetime(line[0])
-    assert line[1:] == ['', '0', '40']
+    assert line[1:] == ['', '0.0', '40.0']
 
     # line 2: values from sparkey
     line = result[2].split(',')
     assert ciso8601.parse_datetime(line[0])
-    assert line[1:] == ['0', '', '']
+    assert line[1:] == ['0.0', '', '']
+
+    # Assert that result is sorted by time
+    timestamps = [v[0] for v in [ln.split(',') for ln in result[1:]]]
+    assert timestamps == sorted(timestamps)
 
 
 async def test_write(app, mocker, client, aresponses: ResponsesMockServer):
