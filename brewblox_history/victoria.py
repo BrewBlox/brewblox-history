@@ -1,8 +1,8 @@
 import asyncio
-import json
 from datetime import timedelta
 from urllib.parse import quote
 
+import ujson
 from aiohttp import web
 from aiohttp.client import ClientSession
 from brewblox_service import brewblox_logger, features, http, strex
@@ -128,7 +128,7 @@ class VictoriaClient(features.ServiceFeature):
             chunk_ptr = None
 
             while line := await resp.content.readline():
-                chunk = json.loads(line)
+                chunk = ujson.loads(line)
                 field = chunk['metric']['__name__']
                 field_idx = args.fields.index(field) + 1  # include timestamp
 
