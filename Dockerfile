@@ -30,6 +30,11 @@ COPY --from=base /wheeley /wheeley
 RUN <<EOF
     set -ex
 
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        libopenblas-dev
+    rm -rf /var/cache/apt/archives /var/lib/apt/lists
+
     python3 -m venv $VENV
     pip3 install --no-index brewblox_history
     pip3 freeze
