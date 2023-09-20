@@ -108,6 +108,10 @@ class VictoriaClient(features.ServiceFeature):
 
         width = len(args.fields) + 1  # include timestamps
         rows = sllist()
+        count_chunks = 0
+        count_incr = 0
+        count_values = 0
+        count_reset = 0
 
         async with session.post(url,
                                 data=query,
@@ -123,11 +127,14 @@ class VictoriaClient(features.ServiceFeature):
             # Because incoming data is sorted, we can retain a pointer to a row node.
             # All values in the same metric only have to scan after the previously inserted/updated row.
             # The pointer must be reset when a new metric starts.
-            chunk_field = None
-            chunk_prev = None
-            chunk_ptr = None
+            # chunk_field = None
+            # chunk_prev = None
+            # chunk_ptr = None
+
+            field_ptrs = [None] * width
 
             while line := await resp.content.readline():
+                count_chunks += 1
                 chunk = ujson.loads(line)
                 field = chunk['metric']['__name__']
                 field_idx = args.fields.index(field) + 1  # include timestamp
@@ -135,43 +142,62 @@ class VictoriaClient(features.ServiceFeature):
                 # If multiple chunks are returned for the same metric,
                 # they are guaranteed to be in order.
                 # We can start iterating at the last known position.
-                if field == chunk_field:
-                    prev = chunk_prev
-                    ptr = chunk_ptr
-                else:
-                    chunk_field = field
-                    prev = None
-                    ptr = rows.first
+                found = field_ptrs[field_idx]
+                prev = None
+                ptr = found
+
+                # if field == chunk_field:
+                #     prev = chunk_prev
+                #     ptr = chunk_ptr
+                # else:
+                #     LOGGER.info(f'{chunk_field} -> {field}')
+                #     count_reset += 1
+                #     chunk_field = field
+                #     prev = None
+                #     ptr = rows.first
 
                 for (timestamp, value) in zip(chunk['timestamps'], chunk['values']):
+                    if ptr is None and rows.size > 0:
+                        ptr = rows.first
+
                     while ptr is not None and ptr.value[0] < timestamp:
                         prev = ptr
                         ptr = ptr.next
+                        count_incr += 1
+                    count_values += 1
 
                     if ptr is None:  # end of list reached
                         arr = [''] * width
                         arr[0] = timestamp
                         arr[field_idx] = str(value)
+                        prev = rows.last
                         ptr = rows.appendright(arr)
+                        found = ptr
 
                     elif ptr.value[0] == timestamp:  # existing entry found
                         arr = ptr.value
                         arr[field_idx] = str(value)
+                        found = ptr
 
                     elif prev is None:  # new row at the very start
                         arr = [''] * width
                         arr[0] = timestamp
                         arr[field_idx] = str(value)
-                        rows.appendleft(arr)
+                        prev = rows.appendleft(arr)
+                        ptr = prev.next
+                        found = prev
 
                     else:  # new row between prev and ptr
                         arr = [''] * width
                         arr[0] = timestamp
                         arr[field_idx] = str(value)
-                        ptr = rows.insertafter(arr, prev)
+                        prev = rows.insertafter(arr, prev)
+                        found = prev
 
-                chunk_prev = prev
-                chunk_ptr = ptr
+                # Store last known insert position for this field
+                field_ptrs[field_idx] = found
+
+            LOGGER.info(f'{count_incr=}, {count_values=}, {count_chunks=}, {count_reset=}')
 
             # CSV headers
             yield ','.join(['time'] + args.fields)
