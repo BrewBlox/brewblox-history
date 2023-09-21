@@ -125,9 +125,9 @@ class VictoriaClient(features.ServiceFeature):
                     # We want to avoid creating a new list for every call to setdefault()
                     # We'll re-use the same object until it is inserted
                     row = rows.setdefault(timestamp, empty_row)
-                    row[field_idx] = str(value)
                     if row is empty_row:
                         empty_row = [''] * width
+                    row[field_idx] = str(value)
 
             # CSV headers
             yield ','.join(['time', *args.fields])
