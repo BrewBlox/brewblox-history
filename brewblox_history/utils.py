@@ -39,7 +39,7 @@ def parse_datetime(value: DatetimeSrc_) -> Optional[datetime]:
         # 10e10 falls in 1973 if the timestamp is in milliseconds,
         # and in 5138 if the timestamp is in seconds
         if value > 10e10:
-            value //= 1000
+            value /= 1000
         return datetime.fromtimestamp(value, tz=timezone.utc)
 
     else:

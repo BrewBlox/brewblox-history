@@ -103,7 +103,6 @@ class VictoriaClient(features.ServiceFeature):
             for f in args.fields
         ])
         query = f'{matches}&start={start}&end={end}'
-        query += '&reduce_mem_usage=1'
         query += '&max_rows_per_line=1000'
 
         width = len(args.fields)
