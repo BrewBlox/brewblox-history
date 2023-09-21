@@ -160,8 +160,8 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
             '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}',
 
             '{"metric":{"__name__":"spock/actuator-1/value"},' +
-            '"values":[40,40,40,40,40,40,40,40,40,40,40],' +
-            '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,' +
+            '"values":[40,40,40,40,40,40,40,40,40,40,40,40,40],' +
+            '"timestamps":[1626368060379,1626368060380,1626368070380,1626368078080,1626368083130,1626368088178,' +
             '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
 
             '{"metric":{"__name__":"spock/pin-actuator-1/state"},' +
@@ -182,18 +182,22 @@ async def test_csv(app, client, aresponses: ResponsesMockServer):
     result = []
     async for line in vic.csv(args):
         result.append(line)
-    assert len(result) == 23  # headers, 11 from sparkey, 11 from spock
+    assert len(result) == 25  # headers, 13 from sparkey, 11 from spock
     assert result[0] == ','.join(['time'] + args.fields)
 
     # line 1: values from spock
     line = result[1].split(',')
     assert ciso8601.parse_datetime(line[0])
-    assert line[1:] == ['', '0', '40']
+    assert line[1:] == ['', '', '40']
 
-    # line 2: values from sparkey
-    line = result[2].split(',')
+    # line 4: values from sparkey
+    line = result[4].split(',')
     assert ciso8601.parse_datetime(line[0])
     assert line[1:] == ['0', '', '']
+
+    # Assert that result is sorted by time
+    timestamps = [v[0] for v in [ln.split(',') for ln in result[1:]]]
+    assert timestamps == sorted(timestamps)
 
 
 async def test_write(app, mocker, client, aresponses: ResponsesMockServer):

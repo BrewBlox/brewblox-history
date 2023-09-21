@@ -1,12 +1,12 @@
 import asyncio
-import json
 from datetime import timedelta
 from urllib.parse import quote
 
+import ujson
 from aiohttp import web
 from aiohttp.client import ClientSession
 from brewblox_service import brewblox_logger, features, http, strex
-from llist import sllist
+from sortedcontainers import SortedDict
 
 from brewblox_history import utils
 from brewblox_history.models import (HistoryEvent, ServiceConfig,
@@ -103,11 +103,10 @@ class VictoriaClient(features.ServiceFeature):
             for f in args.fields
         ])
         query = f'{matches}&start={start}&end={end}'
-        query += '&reduce_mem_usage=1'
         query += '&max_rows_per_line=1000'
 
-        width = len(args.fields) + 1  # include timestamps
-        rows = sllist()
+        width = len(args.fields)
+        rows = SortedDict()
 
         async with session.post(url,
                                 data=query,
@@ -115,71 +114,27 @@ class VictoriaClient(features.ServiceFeature):
             # Objects are returned as newline-separated JSON objects.
             # Metrics may be returned in multiple chunks.
             # We need to transpose incoming (column-based) data to rows.
-            # This is done by using a linked list of values.
-            # Each node in the linked list is a row.
-            # For each timestamp/value received from Victoria,
-            # we scan the linked list, and either insert or update a row.
-            #
-            # Because incoming data is sorted, we can retain a pointer to a row node.
-            # All values in the same metric only have to scan after the previously inserted/updated row.
-            # The pointer must be reset when a new metric starts.
-            chunk_field = None
-            chunk_prev = None
-            chunk_ptr = None
-
             while line := await resp.content.readline():
-                chunk = json.loads(line)
+                chunk = ujson.loads(line)
                 field = chunk['metric']['__name__']
-                field_idx = args.fields.index(field) + 1  # include timestamp
-
-                # If multiple chunks are returned for the same metric,
-                # they are guaranteed to be in order.
-                # We can start iterating at the last known position.
-                if field == chunk_field:
-                    prev = chunk_prev
-                    ptr = chunk_ptr
-                else:
-                    chunk_field = field
-                    prev = None
-                    ptr = rows.first
+                field_idx = args.fields.index(field)
+                empty_row = [''] * width
 
                 for (timestamp, value) in zip(chunk['timestamps'], chunk['values']):
-                    while ptr is not None and ptr.value[0] < timestamp:
-                        prev = ptr
-                        ptr = ptr.next
-
-                    if ptr is None:  # end of list reached
-                        arr = [''] * width
-                        arr[0] = timestamp
-                        arr[field_idx] = str(value)
-                        ptr = rows.appendright(arr)
-
-                    elif ptr.value[0] == timestamp:  # existing entry found
-                        arr = ptr.value
-                        arr[field_idx] = str(value)
-
-                    elif prev is None:  # new row at the very start
-                        arr = [''] * width
-                        arr[0] = timestamp
-                        arr[field_idx] = str(value)
-                        rows.appendleft(arr)
-
-                    else:  # new row between prev and ptr
-                        arr = [''] * width
-                        arr[0] = timestamp
-                        arr[field_idx] = str(value)
-                        ptr = rows.insertafter(arr, prev)
-
-                chunk_prev = prev
-                chunk_ptr = ptr
+                    # We want to avoid creating a new list for every call to setdefault()
+                    # We'll re-use the same object until it is inserted
+                    row = rows.setdefault(timestamp, empty_row)
+                    if row is empty_row:
+                        empty_row = [''] * width
+                    row[field_idx] = str(value)
 
             # CSV headers
-            yield ','.join(['time'] + args.fields)
+            yield ','.join(['time', *args.fields])
 
             # CSV values
-            for row in rows.itervalues():
-                row[0] = str(utils.format_datetime(row[0], args.precision))
-                yield ','.join(row)
+            for (timestamp, row) in rows.items():
+                yield '{},{}'.format(utils.format_datetime(timestamp, args.precision),
+                                     ','.join(row))
 
     async def write(self, evt: HistoryEvent):
         url = f'{self._url}/write'
