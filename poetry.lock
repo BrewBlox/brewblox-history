@@ -612,16 +612,6 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
-name = "llist"
-version = "0.7.1"
-description = "Linked list data structures for Python"
-optional = false
-python-versions = "*"
-files = [
-    {file = "llist-0.7.1.tar.gz", hash = "sha256:6f73a120136897a0bce61c202188f4f3891d9f70aa906d21fc1ee1cf43659eca"},
-]
-
-[[package]]
 name = "markupsafe"
 version = "2.1.3"
 description = "Safely add untrusted strings to HTML/XML markup."
@@ -1021,6 +1011,17 @@ hiredis = ["hiredis (>=1.0.0)"]
 ocsp = ["cryptography (>=36.0.1)", "pyopenssl (==20.0.1)", "requests (>=2.26.0)"]
 
 [[package]]
+name = "sortedcontainers"
+version = "2.4.0"
+description = "Sorted Containers -- Sorted List, Sorted Dict, Sorted Set"
+optional = false
+python-versions = "*"
+files = [
+    {file = "sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0"},
+    {file = "sortedcontainers-2.4.0.tar.gz", hash = "sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88"},
+]
+
+[[package]]
 name = "swagger-ui-bundle"
 version = "0.0.9"
 description = "swagger_ui_bundle - swagger-ui files in a pip package"
@@ -1216,4 +1217,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "c46c0d72582b3e384dfd776bfd7a9439a700e2808827bb89419771963799c770"
+content-hash = "327eb57fb02e9498f2f3d401e26787ee304346b96a6983f620ce1c538feac3a1"

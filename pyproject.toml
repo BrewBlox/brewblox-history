@@ -11,9 +11,9 @@ python = ">=3.9,<4"
 brewblox-service = "^3.3.2"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
-llist = "^0.7.1"
 redis = "^5.0.0"
 ujson = "^5.8.0"
+sortedcontainers = "^2.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-cov = "*"
