@@ -25,6 +25,7 @@ def autoconnect(func):
     async def wrapper(self: 'RedisClient', *args, **kwargs):
         if not self._redis:
             self._redis = await aioredis.from_url(self.url)
+            await self._redis
         return await func(self, *args, **kwargs)
     return wrapper
 
