@@ -2,7 +2,7 @@
 Tests brewblox_history.__main__
 """
 
-from brewblox_history import __main__ as main
+from brewblox_history import app as main
 
 TESTED = main.__name__
 

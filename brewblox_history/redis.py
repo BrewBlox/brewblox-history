@@ -1,15 +1,18 @@
-import json
+# import json
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from functools import wraps
 from itertools import groupby
 from typing import Optional
 
-from aiohttp import web
-from brewblox_service import brewblox_logger, features, mqtt
-
-from brewblox_history.models import DatastoreValue, ServiceConfig
 from redis import asyncio as aioredis
 
+from .models import DatastoreValue
+from .settings import brewblox_logger, get_config
+
 LOGGER = brewblox_logger(__name__)
+
+client: ContextVar['RedisClient'] = ContextVar('redis_client')
 
 
 def keycat(namespace: str, key: str) -> str:
@@ -30,17 +33,17 @@ def autoconnect(func):
     return wrapper
 
 
-class RedisClient(features.ServiceFeature):
+class RedisClient:
 
-    def __init__(self, app: web.Application):
-        super().__init__(app)
-        config: ServiceConfig = app['config']
+    def __init__(self):
+        # super().__init__(app)
+        config = get_config()
         self.url = config.redis_url
         self.topic = config.datastore_topic
         # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None
 
-    async def shutdown(self, app: web.Application):
+    async def disconnect(self):
         if self._redis:
             await self._redis.close()
 
@@ -60,18 +63,20 @@ class RedisClient(features.ServiceFeature):
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                await mqtt.publish(self.app,
-                                   topic=f'{self.topic}/{key}',
-                                   payload=json.dumps({'changed': list((v.dict() for v in group))}),
-                                   err=False)
+                pass
+                # await mqtt.publish(self.app,
+                #                    topic=f'{self.topic}/{key}',
+                #                    payload=json.dumps({'changed': list((v.dict() for v in group))}),
+                #                    err=False)
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                await mqtt.publish(self.app,
-                                   topic=f'{self.topic}/{key}',
-                                   payload=json.dumps({'deleted': list(group)}),
-                                   err=False)
+                pass
+                # await mqtt.publish(self.app,
+                #                    topic=f'{self.topic}/{key}',
+                #                    payload=json.dumps({'deleted': list(group)}),
+                #                    err=False)
 
     @autoconnect
     async def ping(self):
@@ -126,9 +131,21 @@ class RedisClient(features.ServiceFeature):
         return count
 
 
-def setup(app: web.Application):
-    features.add(app, RedisClient(app))
+# def setup(app: web.Application):
+#     features.add(app, RedisClient(app))
 
 
-def fget(app: web.Application) -> RedisClient:
-    return features.get(app, RedisClient)
+# def fget(app: web.Application) -> RedisClient:
+#     return features.get(app, RedisClient)
+
+
+@asynccontextmanager
+async def lifespan():
+    # impl = RedisClient()
+    # token = client.set(impl)
+    # yield
+    # client.reset(token)
+    # await impl.disconnect()
+    yield
+    await client.get().disconnect()
+    LOGGER.info('goodbye')

@@ -7,22 +7,23 @@ license = "GPL-3.0"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.9,<4"
-brewblox-service = "^3.3.2"
+python = ">=3.11,<4"
 ciso8601 = "^2.2.0"
 pytimeparse = "^1.1.8"
 redis = "^5.0.0"
 ujson = "^5.8.0"
 sortedcontainers = "^2.4.0"
+fastapi = "^0.104.1"
+uvicorn = { extras = ["standard"], version = "^0.24.0.post1" }
+pydantic-settings = "^2.1.0"
+python-dotenv = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest-cov = "*"
 pytest-mock = "*"
-pytest-aiohttp = "*"
 flake8 = "*"
 autopep8 = "*"
 flake8-quotes = "*"
-aresponses = "*"
 pytest = "*"
 invoke = "*"
 

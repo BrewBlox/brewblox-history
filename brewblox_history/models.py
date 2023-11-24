@@ -4,19 +4,10 @@ Pydantic data models
 
 import collections
 from datetime import datetime
-from typing import Any, Literal, NamedTuple, Optional
+from typing import Any, Literal, NamedTuple
 
-from brewblox_service.models import BaseServiceConfig
-from pydantic import BaseModel, Extra, Field, validator
-
-
-class ServiceConfig(BaseServiceConfig):
-    redis_url: str
-    victoria_url: str
-    datastore_topic: str
-    ranges_interval: float
-    metrics_interval: float
-    minimum_step: float
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def flatten(d, parent_key=''):
@@ -38,24 +29,48 @@ def flatten(d, parent_key=''):
     return dict(sorted(items, key=lambda pair: pair[0]))
 
 
-class HistoryEvent(BaseModel, extra=Extra.ignore):
+class ServiceConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file='.appenv',
+        env_prefix='brewblox_',
+        case_sensitive=False,
+        extra='ignore',
+    )
+
+    name: str = 'history'
+    debug: bool = False
+    redis_url: str = 'redis://redis'
+    victoria_url: str = 'http://victoria:8428/victoria'
+    history_topic: str = 'brewcast/history'
+    datastore_topic: str = 'brewcast/datastore'
+    ranges_interval: float = 10
+    metrics_interval: float = 10
+    minimum_step: float = 10
+
+
+class HistoryEvent(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+
     key: str
     data: dict[str, Any]  # converted to float later
 
-    @validator('data', pre=True)
+    @model_validator(mode='before')
+    @classmethod
     def flatten_data(cls, v):
         assert isinstance(v, dict)
         return flatten(v)
 
 
-class DatastoreValue(BaseModel, extra=Extra.allow):
+class DatastoreValue(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
     namespace: str
     id: str
 
 
 class DatastoreCheckedValue(DatastoreValue):
-    namespace: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
-    id: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
+    namespace: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
+    id: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
 
 
 class DatastoreSingleQuery(BaseModel):
@@ -65,8 +80,8 @@ class DatastoreSingleQuery(BaseModel):
 
 class DatastoreMultiQuery(BaseModel):
     namespace: str
-    ids: Optional[list[str]]
-    filter: Optional[str]
+    ids: list[str] | None
+    filter: str | None
 
 
 class DatastoreSingleValueBox(BaseModel):
@@ -74,7 +89,7 @@ class DatastoreSingleValueBox(BaseModel):
 
 
 class DatastoreOptSingleValueBox(BaseModel):
-    value: Optional[DatastoreCheckedValue]
+    value: DatastoreCheckedValue | None
 
 
 class DatastoreMultiValueBox(BaseModel):
@@ -101,9 +116,9 @@ class TimeSeriesMetric(BaseModel):
 
 class TimeSeriesRangesQuery(BaseModel):
     fields: list[str] = Field(example=['spark-one/sensor/value[degC]'])
-    start: Optional[datetime] = Field(example='2020-01-01T20:00:00.000Z')
-    end: Optional[datetime] = Field(example='2030-01-01T20:00:00.000Z')
-    duration: Optional[str] = Field(example='1d')
+    start: datetime | None = Field(example='2020-01-01T20:00:00.000Z')
+    end: datetime | None = Field(example='2030-01-01T20:00:00.000Z')
+    duration: str | None = Field(example='1d')
 
 
 class TimeSeriesRangeValue(NamedTuple):
@@ -127,7 +142,7 @@ class TimeSeriesCsvQuery(TimeSeriesRangesQuery):
 class TimeSeriesStreamCommand(BaseModel):
     id: str
     command: Literal['ranges', 'metrics', 'stop']
-    query: Optional[dict]
+    query: dict | None
 
 
 class TimeSeriesMetricStreamData(BaseModel):
