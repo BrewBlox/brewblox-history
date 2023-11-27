@@ -17,6 +17,8 @@ fastapi = "^0.104.1"
 uvicorn = { extras = ["standard"], version = "^0.24.0.post1" }
 pydantic-settings = "^2.1.0"
 python-dotenv = "^1.0.0"
+fastapi-mqtt = "^2.0.0"
+httpx = "^0.25.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest-cov = "*"
@@ -26,7 +28,41 @@ autopep8 = "*"
 flake8-quotes = "*"
 pytest = "*"
 invoke = "*"
+flake8-pyproject = "*"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = """
+    --ignore=app/
+    --ignore=victoria/
+    --cov=brewblox_history
+    --cov-branch
+    --cov-report=term-missing:skip-covered
+    --cov-fail-under=100
+    --no-cov-on-fail
+    --durations=3
+    """
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "except asyncio.CancelledError:",
+]
+
+[tool.flake8]
+max-line-length = 120
+exclude = ".venv"
+
+[tool.autopep8]
+max-line-length = 120

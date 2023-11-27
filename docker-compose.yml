@@ -38,8 +38,12 @@ services:
       - type: bind
         source: ./brewblox_history
         target: /app/brewblox_history
+      - type: bind
+        source: ./parse_appenv.py
+        target: /app/parse_appenv.py
     environment:
       - BREWBLOX_DEBUG=True
       - UVICORN_RELOAD=True
+    command: --unknown=flappy
     ports:
       - "5000:5000"

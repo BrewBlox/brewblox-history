@@ -1,18 +1,17 @@
 # import json
+import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
 from itertools import groupby
-from typing import Optional
 
 from redis import asyncio as aioredis
 
-from .models import DatastoreValue
-from .settings import brewblox_logger, get_config
+from .models import DatastoreValue, ServiceConfig
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
-client: ContextVar['RedisClient'] = ContextVar('redis_client')
+CV: ContextVar['RedisClient'] = ContextVar('RedisClient')
 
 
 def keycat(namespace: str, key: str) -> str:
@@ -36,8 +35,7 @@ def autoconnect(func):
 class RedisClient:
 
     def __init__(self):
-        # super().__init__(app)
-        config = get_config()
+        config = ServiceConfig.cached()
         self.url = config.redis_url
         self.topic = config.datastore_topic
         # Lazy-loaded in autoconnect wrapper
@@ -47,7 +45,7 @@ class RedisClient:
         if self._redis:
             await self._redis.close()
 
-    async def _mkeys(self, namespace: str, ids: Optional[list[str]], filter: Optional[str]) -> list[str]:
+    async def _mkeys(self, namespace: str, ids: list[str] | None, filter: str | None) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
         if filter is not None:
             keys += [key.decode()
@@ -83,7 +81,7 @@ class RedisClient:
         await self._redis.ping()
 
     @autoconnect
-    async def get(self, namespace: str, id: str) -> Optional[DatastoreValue]:
+    async def get(self, namespace: str, id: str) -> DatastoreValue | None:
         resp = await self._redis.get(keycat(namespace, id))
         return DatastoreValue.parse_raw(resp) if resp else None
 
@@ -131,21 +129,11 @@ class RedisClient:
         return count
 
 
-# def setup(app: web.Application):
-#     features.add(app, RedisClient(app))
-
-
-# def fget(app: web.Application) -> RedisClient:
-#     return features.get(app, RedisClient)
+def setup():
+    CV.set(RedisClient())
 
 
 @asynccontextmanager
 async def lifespan():
-    # impl = RedisClient()
-    # token = client.set(impl)
-    # yield
-    # client.reset(token)
-    # await impl.disconnect()
     yield
-    await client.get().disconnect()
-    LOGGER.info('goodbye')
+    await CV.get().disconnect()

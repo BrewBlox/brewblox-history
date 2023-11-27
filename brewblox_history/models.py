@@ -4,7 +4,8 @@ Pydantic data models
 
 import collections
 from datetime import datetime
-from typing import Any, Literal, NamedTuple
+from functools import lru_cache
+from typing import Any, Literal, NamedTuple, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -47,6 +48,11 @@ class ServiceConfig(BaseSettings):
     metrics_interval: float = 10
     minimum_step: float = 10
 
+    @classmethod
+    @lru_cache
+    def cached(cls) -> Self:
+        return cls()
+
 
 class HistoryEvent(BaseModel):
     model_config = ConfigDict(extra='ignore')
@@ -58,7 +64,10 @@ class HistoryEvent(BaseModel):
     @classmethod
     def flatten_data(cls, v):
         assert isinstance(v, dict)
-        return flatten(v)
+        assert 'key' in v
+        assert 'data' in v
+        data = flatten(v['data'])
+        return {'key': v['key'], 'data': data}
 
 
 class DatastoreValue(BaseModel):

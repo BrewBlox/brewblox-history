@@ -2,15 +2,16 @@
 REST endpoints for datastore queries
 """
 
+import logging
+
 from fastapi import APIRouter, Response
 
 from . import redis
 from .models import (DatastoreDeleteResponse, DatastoreMultiQuery,
                      DatastoreMultiValueBox, DatastoreOptSingleValueBox,
                      DatastoreSingleQuery, DatastoreSingleValueBox)
-from .settings import brewblox_logger
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/datastore', tags=['Datastore'])
 
@@ -23,7 +24,7 @@ async def ping(response: Response):
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
-    await redis.client.get().ping()
+    await redis.CV.get().ping()
     return {'ping': 'pong'}
 
 
@@ -32,7 +33,7 @@ async def datastore_get(args: DatastoreSingleQuery) -> DatastoreOptSingleValueBo
     """
     Get a specific object from the datastore.
     """
-    value = await redis.client.get().get(args.namespace, args.id)
+    value = await redis.CV.get().get(args.namespace, args.id)
     return DatastoreOptSingleValueBox(value=value)
 
 
@@ -41,7 +42,7 @@ async def datastore_mget(args: DatastoreMultiQuery) -> DatastoreMultiQuery:
     """
     Get multiple objects from the datastore.
     """
-    values = await redis.client.get().mget(args.namespace, args.ids, args.filter)
+    values = await redis.CV.get().mget(args.namespace, args.ids, args.filter)
     return DatastoreMultiValueBox(values=values)
 
 
@@ -50,7 +51,7 @@ async def datastore_set(args: DatastoreOptSingleValueBox) -> DatastoreSingleValu
     """
     Create or update an object in the datastore.
     """
-    value = await redis.client.get().set(args.value)
+    value = await redis.CV.get().set(args.value)
     return DatastoreSingleValueBox(value=value)
 
 
@@ -59,7 +60,7 @@ async def datastore_mset(args: DatastoreMultiValueBox) -> DatastoreMultiValueBox
     """
     Create or update multiple objects in the datastore.
     """
-    values = await redis.client.get().mset(args.values)
+    values = await redis.CV.get().mset(args.values)
     return DatastoreMultiValueBox(values=values)
 
 
@@ -68,7 +69,7 @@ async def datastore_delete(args: DatastoreSingleQuery) -> DatastoreDeleteRespons
     """
     Remove a single object from the datastore.
     """
-    count = await redis.client.get().delete(args.namespace, args.id)
+    count = await redis.CV.get().delete(args.namespace, args.id)
     return DatastoreDeleteResponse(count=count)
 
 
@@ -77,5 +78,5 @@ async def datastore_mdelete(args: DatastoreMultiQuery) -> DatastoreDeleteRespons
     """
     Remove multiple objects from the datastore.
     """
-    count = await redis.client.get().mdelete(args.namespace, args.ids, args.filter)
+    count = await redis.CV.get().mdelete(args.namespace, args.ids, args.filter)
     return DatastoreDeleteResponse(count=count)

@@ -1,29 +1,54 @@
+import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from pprint import pformat
 
 from fastapi import FastAPI
 
-from . import datastore_api, redis, settings
+from . import datastore_api, mqtt, redis, relays, victoria
+from .models import ServiceConfig
 
-LOGGER = settings.brewblox_logger(__name__)
+LOGGER = logging.getLogger(__name__)
+
+
+def init_logging():
+    config = ServiceConfig.cached()
+    level = logging.DEBUG if config.debug else logging.INFO
+    unimportant_level = logging.INFO if config.debug else logging.WARN
+    format = '%(asctime)s.%(msecs)03d [%(levelname).1s:%(name)s:%(lineno)d] %(message)s'
+    datefmt = '%Y/%m/%d %H:%M:%S'
+
+    logging.basicConfig(level=level, format=format, datefmt=datefmt)
+    logging.captureWarnings(True)
+
+    logging.getLogger('gmqtt').setLevel(unimportant_level)
+    logging.getLogger('httpx').setLevel(unimportant_level)
+    logging.getLogger('httpcore').setLevel(logging.WARN)
+
+
+def setup():
+    mqtt.setup()
+    redis.setup()
+    victoria.setup()
+    relays.setup()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    LOGGER.info(settings.get_config())
-    LOGGER.debug('\n' + pformat(app.routes))
+    LOGGER.info(ServiceConfig.cached())
+    LOGGER.debug('ROUTES:\n' + pformat(app.routes))
+    # LOGGER.debug('LOGGERS:\n' + pformat(logging.root.manager.loggerDict))
+
     async with AsyncExitStack() as stack:
+        await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
         yield
 
 
 def create_app():
-    settings.get_config.cache_clear()
-    settings.init_logging()
-    config = settings.get_config()
+    init_logging()
+    setup()
 
-    redis.client.set(redis.RedisClient())
-
+    config = ServiceConfig.cached()
     prefix = f'/{config.name}'
     app = FastAPI(lifespan=lifespan,
                   docs_url=f'{prefix}/api/doc',
@@ -33,52 +58,3 @@ def create_app():
     app.include_router(datastore_api.router, prefix=prefix)
 
     return app
-
-# def create_parser():
-#     parser = service.create_parser('history')
-#     parser.add_argument('--ranges-interval',
-#                         help='Interval (sec) between updates in live ranges. [%(default)s]',
-#                         default=10,
-#                         type=float)
-#     parser.add_argument('--metrics-interval',
-#                         help='Interval (sec) between updates in live metrics. [%(default)s]',
-#                         default=5,
-#                         type=float)
-#     parser.add_argument('--redis-url',
-#                         help='URL for the Redis database',
-#                         default='redis://redis')
-#     parser.add_argument('--victoria-url',
-#                         help='URL for the Victoria Metrics database',
-#                         default='http://victoria:8428/victoria')
-#     parser.add_argument('--datastore-topic',
-#                         help='Synchronization topic for datastore updates',
-#                         default='brewcast/datastore')
-#     parser.add_argument('--minimum-step',
-#                         help='Minimum period (sec) for range data downsampling',
-#                         default=10,
-#                         type=float)
-#     return parser
-
-
-# def main():
-#     parser = create_parser()
-#     config = service.create_config(parser, model=ServiceConfig)
-#     app = service.create_app(config)
-
-#     async def setup():
-#         scheduler.setup(app)
-#         http.setup(app)
-#         mqtt.setup(app)
-#         socket_closer.setup(app)
-#         victoria.setup(app)
-#         timeseries_api.setup(app)
-#         redis.setup(app)
-#         datastore_api.setup(app)
-#         relays.setup(app)
-#         error_response.setup(app)
-
-#     service.run_app(app, setup())
-
-
-# if __name__ == '__main__':
-#     main()
