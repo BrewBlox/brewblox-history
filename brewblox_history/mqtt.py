@@ -4,11 +4,16 @@ from contextvars import ContextVar
 from fastapi_mqtt.config import MQTTConfig
 from fastapi_mqtt.fastmqtt import FastMQTT
 
+from .models import ServiceConfig
+
 CV: ContextVar[FastMQTT] = ContextVar('FastMQTT')
 
 
 def setup():
-    mqtt_config = MQTTConfig(host='eventbus')
+    config = ServiceConfig.cached()
+    mqtt_config = MQTTConfig(host=config.mqtt_host,
+                             port=config.mqtt_port,
+                             reconnect_retries=-1)
     fast_mqtt = FastMQTT(config=mqtt_config)
     CV.set(fast_mqtt)
 

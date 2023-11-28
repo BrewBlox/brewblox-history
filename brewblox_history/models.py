@@ -41,6 +41,8 @@ class ServiceConfig(BaseSettings):
 
     name: str = 'history'
     debug: bool = False
+    mqtt_host: str = 'eventbus'
+    mqtt_port: int = 1883
     redis_url: str = 'redis://redis'
     victoria_url: str = 'http://victoria:8428/victoria'
     history_topic: str = 'brewcast/history'
