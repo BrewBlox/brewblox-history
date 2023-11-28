@@ -1,8 +1,6 @@
-import json
 import logging
 import traceback
 from datetime import datetime, timedelta, timezone
-from functools import partial
 
 import ciso8601
 from pytimeparse.timeparse import timeparse
@@ -96,17 +94,6 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
         return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     else:
         raise ValueError(f'Invalid precision: {precision}')
-
-
-def json_serial(obj):
-    if isinstance(obj, datetime):
-        return int(obj.timestamp() * 1e3)  # ms precision
-    raise TypeError(f'{repr(obj)} is not serializable')
-
-
-# This extends the default JSON serializer to allow for datetime in JSON
-json_dumps = partial(json.dumps, default=json_serial)
-# json_response = partial(web.json_response, dumps=json_dumps)
 
 
 def is_open_ended(start=None, duration=None, end=None) -> bool:

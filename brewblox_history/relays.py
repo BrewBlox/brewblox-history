@@ -58,7 +58,6 @@ def setup():
     @fast_mqtt.subscribe(config.history_topic + '/#')
     async def on_history_message(client, topic, payload, qos, properties):
         try:
-            LOGGER.info(f'{topic} {payload}')
             evt = HistoryEvent.model_validate_json(payload)
             await victoria.CV.get().write(evt)
             LOGGER.debug(f'MQTT: {evt.key} = {str(evt.data)[:30]}...')

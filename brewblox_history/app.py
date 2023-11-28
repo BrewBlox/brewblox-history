@@ -4,7 +4,7 @@ from pprint import pformat
 
 from fastapi import FastAPI
 
-from . import datastore_api, mqtt, redis, relays, victoria
+from . import datastore_api, mqtt, redis, relays, timeseries_api, victoria
 from .models import ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -56,5 +56,6 @@ def create_app():
                   openapi_url=f'{prefix}/openapi.json')
 
     app.include_router(datastore_api.router, prefix=prefix)
+    app.include_router(timeseries_api.router, prefix=prefix)
 
     return app

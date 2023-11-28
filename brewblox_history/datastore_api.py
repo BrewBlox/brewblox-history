@@ -17,7 +17,7 @@ router = APIRouter(prefix='/datastore', tags=['Datastore'])
 
 
 @router.get('/ping')
-async def ping(response: Response):
+async def ping(response: Response) -> dict:
     """
     Ping datastore, checking availability.
     """
@@ -34,11 +34,12 @@ async def datastore_get(args: DatastoreSingleQuery) -> DatastoreOptSingleValueBo
     Get a specific object from the datastore.
     """
     value = await redis.CV.get().get(args.namespace, args.id)
+    LOGGER.info(type(value))
     return DatastoreOptSingleValueBox(value=value)
 
 
 @router.post('/mget')
-async def datastore_mget(args: DatastoreMultiQuery) -> DatastoreMultiQuery:
+async def datastore_mget(args: DatastoreMultiQuery) -> DatastoreMultiValueBox:
     """
     Get multiple objects from the datastore.
     """

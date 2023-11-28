@@ -7,6 +7,7 @@ from itertools import groupby
 
 from redis import asyncio as aioredis
 
+from . import mqtt
 from .models import DatastoreValue, ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -58,23 +59,19 @@ class RedisClient:
         Objects are grouped by top-level namespace, and then published
         to a topic postfixed with the top-level namespace.
         """
+        fast_mqtt = mqtt.CV.get()
+
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                pass
-                # await mqtt.publish(self.app,
-                #                    topic=f'{self.topic}/{key}',
-                #                    payload=json.dumps({'changed': list((v.dict() for v in group))}),
-                #                    err=False)
+                fast_mqtt.publish(f'{self.topic}/{key}',
+                                  {'changed': list((v.model_dump() for v in group))})
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                pass
-                # await mqtt.publish(self.app,
-                #                    topic=f'{self.topic}/{key}',
-                #                    payload=json.dumps({'deleted': list(group)}),
-                #                    err=False)
+                fast_mqtt.publish(f'{self.topic}/{key}',
+                                  {'deleted': list(group)})
 
     @autoconnect
     async def ping(self):
@@ -83,7 +80,7 @@ class RedisClient:
     @autoconnect
     async def get(self, namespace: str, id: str) -> DatastoreValue | None:
         resp = await self._redis.get(keycat(namespace, id))
-        return DatastoreValue.parse_raw(resp) if resp else None
+        return DatastoreValue.model_validate_json(resp) if resp else None
 
     @autoconnect
     async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreValue]:
@@ -93,13 +90,13 @@ class RedisClient:
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-        return [DatastoreValue.parse_raw(v)
+        return [DatastoreValue.model_validate_json(v)
                 for v in values
                 if v is not None]
 
     @autoconnect
     async def set(self, value: DatastoreValue) -> DatastoreValue:
-        await self._redis.set(keycatobj(value), value.json())
+        await self._redis.set(keycatobj(value), value.model_dump_json())
         await self._publish(changed=[value])
         return value
 
@@ -107,7 +104,7 @@ class RedisClient:
     async def mset(self, values: list[DatastoreValue]) -> list[DatastoreValue]:
         if values:
             db_keys = [keycatobj(v) for v in values]
-            db_values = [v.json() for v in values]
+            db_values = [v.model_dump_json() for v in values]
             await self._redis.mset(dict(zip(db_keys, db_values)))
             await self._publish(changed=values)
         return values

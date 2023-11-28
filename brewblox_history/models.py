@@ -7,7 +7,8 @@ from datetime import datetime
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, field_validator,
+                      model_validator)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,24 +61,20 @@ class HistoryEvent(BaseModel):
     key: str
     data: dict[str, Any]  # converted to float later
 
-    @model_validator(mode='before')
+    @field_validator('data', mode='before')
     @classmethod
     def flatten_data(cls, v):
         assert isinstance(v, dict)
-        assert 'key' in v
-        assert 'data' in v
-        data = flatten(v['data'])
-        return {'key': v['key'], 'data': data}
+        return flatten(v)
+        # assert 'key' in v
+        # assert 'data' in v
+        # data = flatten(v['data'])
+        # return {'key': v['key'], 'data': data}
 
 
 class DatastoreValue(BaseModel):
     model_config = ConfigDict(extra='allow')
 
-    namespace: str
-    id: str
-
-
-class DatastoreCheckedValue(DatastoreValue):
     namespace: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
     id: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
 
@@ -89,20 +86,20 @@ class DatastoreSingleQuery(BaseModel):
 
 class DatastoreMultiQuery(BaseModel):
     namespace: str
-    ids: list[str] | None
-    filter: str | None
+    ids: list[str] | None = None
+    filter: str | None = None
 
 
 class DatastoreSingleValueBox(BaseModel):
-    value: DatastoreCheckedValue
+    value: DatastoreValue
 
 
 class DatastoreOptSingleValueBox(BaseModel):
-    value: DatastoreCheckedValue | None
+    value: DatastoreValue | None
 
 
 class DatastoreMultiValueBox(BaseModel):
-    values: list[DatastoreCheckedValue]
+    values: list[DatastoreValue]
 
 
 class DatastoreDeleteResponse(BaseModel):
@@ -125,9 +122,9 @@ class TimeSeriesMetric(BaseModel):
 
 class TimeSeriesRangesQuery(BaseModel):
     fields: list[str] = Field(example=['spark-one/sensor/value[degC]'])
-    start: datetime | None = Field(example='2020-01-01T20:00:00.000Z')
-    end: datetime | None = Field(example='2030-01-01T20:00:00.000Z')
-    duration: str | None = Field(example='1d')
+    start: datetime | None = Field(None, example='2020-01-01T20:00:00.000Z')
+    end: datetime | None = Field(None, example='2030-01-01T20:00:00.000Z')
+    duration: str | None = Field(None, example='1d')
 
 
 class TimeSeriesRangeValue(NamedTuple):
@@ -151,7 +148,20 @@ class TimeSeriesCsvQuery(TimeSeriesRangesQuery):
 class TimeSeriesStreamCommand(BaseModel):
     id: str
     command: Literal['ranges', 'metrics', 'stop']
-    query: dict | None
+    query: TimeSeriesRangesQuery | TimeSeriesMetricsQuery | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_query_type(cls, data: dict) -> dict:
+        command = data.get('command')
+        query = data.get('query', {})
+        if command == 'ranges':
+            data['query'] = TimeSeriesRangesQuery(**query)
+        if command == 'metrics':
+            data['query'] = TimeSeriesMetricsQuery(**query)
+        if command == 'stop':
+            data['query'] = None
+        return data
 
 
 class TimeSeriesMetricStreamData(BaseModel):
