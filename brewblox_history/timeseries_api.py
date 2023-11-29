@@ -11,9 +11,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 from brewblox_history import utils, victoria
-from brewblox_history.models import (ServiceConfig, TimeSeriesCsvQuery,
-                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
-                                     TimeSeriesMetricsQuery,
+from brewblox_history.models import (TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
+                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
                                      TimeSeriesMetricStreamData,
                                      TimeSeriesRange, TimeSeriesRangesQuery,
                                      TimeSeriesRangeStreamData,
@@ -111,7 +110,7 @@ async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
 
 
 async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
-    interval = ServiceConfig.cached().ranges_interval
+    interval = utils.get_config().ranges_interval
     open_ended = utils.is_open_ended(start=query.start,
                                      duration=query.duration,
                                      end=query.end)
@@ -139,7 +138,7 @@ async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
 
 
 async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery):
-    interval = ServiceConfig.cached().metrics_interval
+    interval = utils.get_config().metrics_interval
 
     while True:
         async with protected('metrics push'):

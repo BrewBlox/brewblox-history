@@ -1,9 +1,12 @@
 import logging
 import traceback
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 import ciso8601
 from pytimeparse.timeparse import timeparse
+
+from .models import ServiceConfig
 
 FLAT_SEPARATOR = '/'
 DESIRED_POINTS = 1000
@@ -27,6 +30,11 @@ class DuplicateFilter(logging.Filter):
             self.last_log = current_log
             return True
         return False
+
+
+@lru_cache
+def get_config() -> ServiceConfig:
+    return ServiceConfig()
 
 
 def strex(ex: Exception, tb=False):

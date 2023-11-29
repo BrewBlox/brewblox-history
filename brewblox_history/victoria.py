@@ -9,23 +9,24 @@ import ujson
 from sortedcontainers import SortedDict
 
 from brewblox_history import utils
-from brewblox_history.models import (HistoryEvent, ServiceConfig,
-                                     TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
-                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
-                                     TimeSeriesRange, TimeSeriesRangesQuery)
+from brewblox_history.models import (HistoryEvent, TimeSeriesCsvQuery,
+                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
+                                     TimeSeriesMetricsQuery, TimeSeriesRange,
+                                     TimeSeriesRangesQuery)
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.addFilter(utils.DuplicateFilter())
 
-CV: ContextVar['VictoriaClient'] = ContextVar('VictoriaClient')
+CV: ContextVar['VictoriaClient'] = ContextVar('victoria.client')
 
 
 class VictoriaClient:
 
     def __init__(self):
-        config = ServiceConfig.cached()
+        config = utils.get_config()
 
-        self._url = config.victoria_url
+        self._url = f'{config.victoria_protocol}://{config.victoria_host}:{config.victoria_port}'
+        self._url += config.victoria_path
         self._minimum_step = timedelta(seconds=config.minimum_step)
         self._query_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',

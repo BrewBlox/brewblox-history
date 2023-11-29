@@ -7,12 +7,12 @@ from itertools import groupby
 
 from redis import asyncio as aioredis
 
-from . import mqtt
-from .models import DatastoreValue, ServiceConfig
+from . import mqtt, utils
+from .models import DatastoreValue
 
 LOGGER = logging.getLogger(__name__)
 
-CV: ContextVar['RedisClient'] = ContextVar('RedisClient')
+CV: ContextVar['RedisClient'] = ContextVar('redis.client')
 
 
 def keycat(namespace: str, key: str) -> str:
@@ -36,8 +36,8 @@ def autoconnect(func):
 class RedisClient:
 
     def __init__(self):
-        config = ServiceConfig.cached()
-        self.url = config.redis_url
+        config = utils.get_config()
+        self.url = f'redis://{config.redis_host}:{config.redis_port}'
         self.topic = config.datastore_topic
         # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None

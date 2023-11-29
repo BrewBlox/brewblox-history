@@ -4,12 +4,12 @@ Pydantic data models
 
 import collections
 from datetime import datetime
-from functools import lru_cache
-from typing import Any, Literal, NamedTuple, Self
+from typing import Any, Literal, NamedTuple
 
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
+                               SettingsConfigDict)
 
 
 def flatten(d, parent_key=''):
@@ -36,29 +36,36 @@ class ServiceConfig(BaseSettings):
         env_file='.appenv',
         env_prefix='brewblox_',
         case_sensitive=False,
-        extra='ignore',
+        json_schema_extra='ignore',
     )
 
     name: str = 'history'
     debug: bool = False
+
+    mqtt_protocol: Literal['mqtt', 'mqtts'] = 'mqtt'
     mqtt_host: str = 'eventbus'
     mqtt_port: int = 1883
-    redis_url: str = 'redis://redis'
-    victoria_url: str = 'http://victoria:8428/victoria'
+
+    redis_host: str = 'redis'
+    redis_port: int = 6379
+
+    victoria_protocol: Literal['http', 'https'] = 'http'
+    victoria_host: str = 'victoria'
+    victoria_port: int = 8428
+    victoria_path: str = '/victoria'
+
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
+
     ranges_interval: float = 10
     metrics_interval: float = 10
     minimum_step: float = 10
 
-    @classmethod
-    @lru_cache
-    def cached(cls) -> Self:
-        return cls()
-
 
 class HistoryEvent(BaseModel):
-    model_config = ConfigDict(extra='ignore')
+    model_config = ConfigDict(
+        json_schema_extra='ignore',
+    )
 
     key: str
     data: dict[str, Any]  # converted to float later
@@ -68,14 +75,12 @@ class HistoryEvent(BaseModel):
     def flatten_data(cls, v):
         assert isinstance(v, dict)
         return flatten(v)
-        # assert 'key' in v
-        # assert 'data' in v
-        # data = flatten(v['data'])
-        # return {'key': v['key'], 'data': data}
 
 
 class DatastoreValue(BaseModel):
-    model_config = ConfigDict(extra='allow')
+    model_config = ConfigDict(
+        json_schema_extra='allow',
+    )
 
     namespace: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
     id: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')

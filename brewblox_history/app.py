@@ -4,16 +4,15 @@ from pprint import pformat
 
 from fastapi import FastAPI
 
-from . import datastore_api, mqtt, redis, relays, timeseries_api, victoria
-from .models import ServiceConfig
+from . import (datastore_api, mqtt, redis, relays, timeseries_api, utils,
+               victoria)
 
 LOGGER = logging.getLogger(__name__)
 
 
-def init_logging():
-    config = ServiceConfig.cached()
-    level = logging.DEBUG if config.debug else logging.INFO
-    unimportant_level = logging.INFO if config.debug else logging.WARN
+def init_logging(debug: bool):
+    level = logging.DEBUG if debug else logging.INFO
+    unimportant_level = logging.INFO if debug else logging.WARN
     format = '%(asctime)s.%(msecs)03d [%(levelname).1s:%(name)s:%(lineno)d] %(message)s'
     datefmt = '%Y/%m/%d %H:%M:%S'
 
@@ -34,7 +33,7 @@ def setup():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    LOGGER.info(ServiceConfig.cached())
+    LOGGER.info(utils.get_config())
     LOGGER.debug('ROUTES:\n' + pformat(app.routes))
     # LOGGER.debug('LOGGERS:\n' + pformat(logging.root.manager.loggerDict))
 
@@ -45,10 +44,11 @@ async def lifespan(app: FastAPI):
 
 
 def create_app():
-    init_logging()
+    config = utils.get_config()
+
+    init_logging(config.debug)
     setup()
 
-    config = ServiceConfig.cached()
     prefix = f'/{config.name}'
     app = FastAPI(lifespan=lifespan,
                   docs_url=f'{prefix}/api/doc',

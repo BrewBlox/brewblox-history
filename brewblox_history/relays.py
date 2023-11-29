@@ -46,13 +46,13 @@ import logging
 from pydantic import ValidationError
 
 from . import mqtt, utils, victoria
-from .models import HistoryEvent, ServiceConfig
+from .models import HistoryEvent
 
 LOGGER = logging.getLogger(__name__)
 
 
 def setup():
-    config = ServiceConfig.cached()
+    config = utils.get_config()
     fast_mqtt = mqtt.CV.get()
 
     @fast_mqtt.subscribe(config.history_topic + '/#')

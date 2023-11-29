@@ -5,16 +5,37 @@ Any fixtures declared here are available to all test functions in this directory
 
 
 import logging
-import os
 import socket
 from contextlib import contextmanager
 from subprocess import run
 
 import pytest
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from brewblox_history import app
+from brewblox_history import app, models, utils
 
 LOGGER = logging.getLogger(__name__)
+
+
+class TestConfig(models.ServiceConfig):
+    """
+    An override for ServiceConfig that only uses
+    settings provided to __init__()
+
+    This makes tests independent from env values
+    and the content of .appenv
+    """
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
 
 
 def find_free_port():
@@ -65,20 +86,15 @@ def docker_container(name: str, ports: dict[str, int], args: list[str]):
 
 
 @pytest.fixture(scope='session', autouse=True)
-def env_settings():
-    os.environ['BREWBLOX_DEBUG'] = 'True'
-
-
-@pytest.fixture(scope='session', autouse=True)
-def log_enabled(env_settings):
-    app.init_logging()
+def log_enabled():
+    app.init_logging(True)
 
 
 @pytest.fixture(scope='session')
 def mqtt_container():
     with docker_container(
         name='mqtt-test-container',
-        ports={'mqtt': 1883, 'ws': 15675},
+        ports={'mqtt': 1883},
         args=['ghcr.io/brewblox/mosquitto:develop'],
     ) as ports:
         yield ports
@@ -92,3 +108,16 @@ def redis_container():
         args=['redis:6.0'],
     ) as ports:
         yield ports
+
+
+@pytest.fixture(autouse=True)
+def config(monkeypatch: pytest.MonkeyPatch, mqtt_container, redis_container):
+    cfg = TestConfig(
+        debug=True,
+        mqtt_host='localhost',
+        mqtt_port=mqtt_container['mqtt'],
+        redis_host='localhost',
+        redis_port=redis_container['redis'],
+    )
+    monkeypatch.setattr(utils, 'get_config', lambda: cfg)
+    yield cfg
