@@ -1,0 +1,9 @@
+services:
+  redis:
+    image: redis:6.0
+    ports:
+      - "6379"
+  mqtt:
+    image: ghcr.io/brewblox/mosquitto:develop
+    ports:
+      - "1883"

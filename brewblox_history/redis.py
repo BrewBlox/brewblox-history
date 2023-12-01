@@ -2,7 +2,6 @@
 import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from functools import wraps
 from itertools import groupby
 
 from redis import asyncio as aioredis
@@ -23,28 +22,23 @@ def keycatobj(obj: DatastoreValue) -> str:
     return keycat(obj.namespace, obj.id)
 
 
-def autoconnect(func):
-    @wraps(func)
-    async def wrapper(self: 'RedisClient', *args, **kwargs):
-        if not self._redis:
-            self._redis = await aioredis.from_url(self.url)
-            await self._redis
-        return await func(self, *args, **kwargs)
-    return wrapper
-
-
 class RedisClient:
 
     def __init__(self):
         config = utils.get_config()
         self.url = f'redis://{config.redis_host}:{config.redis_port}'
         self.topic = config.datastore_topic
-        # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None
+
+    async def connect(self):
+        await self.disconnect()
+        self._redis = await aioredis.from_url(self.url)
+        await self._redis.initialize()
 
     async def disconnect(self):
         if self._redis:
-            await self._redis.close()
+            await self._redis.aclose()
+            self._redis = None
 
     async def _mkeys(self, namespace: str, ids: list[str] | None, filter: str | None) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
@@ -59,30 +53,27 @@ class RedisClient:
         Objects are grouped by top-level namespace, and then published
         to a topic postfixed with the top-level namespace.
         """
-        fast_mqtt = mqtt.CV.get()
+        fmqtt = mqtt.CV.get()
 
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                fast_mqtt.publish(f'{self.topic}/{key}',
-                                  {'changed': list((v.model_dump() for v in group))})
+                fmqtt.publish(f'{self.topic}/{key}',
+                              {'changed': list((v.model_dump() for v in group))})
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                fast_mqtt.publish(f'{self.topic}/{key}',
-                                  {'deleted': list(group)})
+                fmqtt.publish(f'{self.topic}/{key}',
+                              {'deleted': list(group)})
 
-    @autoconnect
     async def ping(self):
         await self._redis.ping()
 
-    @autoconnect
     async def get(self, namespace: str, id: str) -> DatastoreValue | None:
         resp = await self._redis.get(keycat(namespace, id))
         return DatastoreValue.model_validate_json(resp) if resp else None
 
-    @autoconnect
     async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreValue]:
         if ids is None and filter is None:
             filter = '*'
@@ -94,13 +85,11 @@ class RedisClient:
                 for v in values
                 if v is not None]
 
-    @autoconnect
     async def set(self, value: DatastoreValue) -> DatastoreValue:
         await self._redis.set(keycatobj(value), value.model_dump_json())
         await self._publish(changed=[value])
         return value
 
-    @autoconnect
     async def mset(self, values: list[DatastoreValue]) -> list[DatastoreValue]:
         if values:
             db_keys = [keycatobj(v) for v in values]
@@ -109,14 +98,12 @@ class RedisClient:
             await self._publish(changed=values)
         return values
 
-    @autoconnect
     async def delete(self, namespace: str, id: str) -> int:
         key = keycat(namespace, id)
         count = await self._redis.delete(key)
         await self._publish(deleted=[key])
         return count
 
-    @autoconnect
     async def mdelete(self, namespace: str, ids: list[str] = None, filter: str = None) -> int:
         keys = await self._mkeys(namespace, ids, filter)
         count = 0
@@ -132,5 +119,7 @@ def setup():
 
 @asynccontextmanager
 async def lifespan():
+    client = CV.get()
+    await client.connect()
     yield
-    await CV.get().disconnect()
+    await client.disconnect()

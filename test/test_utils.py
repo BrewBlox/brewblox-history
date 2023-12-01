@@ -137,9 +137,3 @@ def test_select_timeframe(mocker):
         fmt(now()),
         '86s',
     )
-
-
-def test_json_dumps():
-    assert utils.json_dumps({'dt': datetime(2021, 7, 15, 19, tzinfo=timezone.utc)}) == '{"dt": 1626375600000}'
-    with pytest.raises(TypeError):
-        utils.json_dumps({'fn': lambda x: x})

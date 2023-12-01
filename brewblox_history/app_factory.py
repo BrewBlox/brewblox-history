@@ -17,18 +17,11 @@ def init_logging(debug: bool):
     datefmt = '%Y/%m/%d %H:%M:%S'
 
     logging.basicConfig(level=level, format=format, datefmt=datefmt)
-    logging.captureWarnings(True)
+    # logging.captureWarnings(True)
 
     logging.getLogger('gmqtt').setLevel(unimportant_level)
     logging.getLogger('httpx').setLevel(unimportant_level)
     logging.getLogger('httpcore').setLevel(logging.WARN)
-
-
-def setup():
-    mqtt.setup()
-    redis.setup()
-    victoria.setup()
-    relays.setup()
 
 
 @asynccontextmanager
@@ -45,16 +38,23 @@ async def lifespan(app: FastAPI):
 
 def create_app():
     config = utils.get_config()
-
     init_logging(config.debug)
-    setup()
 
+    # Call setup functions for modules
+    mqtt.setup()
+    redis.setup()
+    victoria.setup()
+    relays.setup()
+
+    # Create app
+    # OpenApi endpoints are set to /api/doc for backwards compatibility
     prefix = f'/{config.name}'
     app = FastAPI(lifespan=lifespan,
                   docs_url=f'{prefix}/api/doc',
                   redoc_url=f'{prefix}/api/redoc',
                   openapi_url=f'{prefix}/openapi.json')
 
+    # Include all endpoints declared by modules
     app.include_router(datastore_api.router, prefix=prefix)
     app.include_router(timeseries_api.router, prefix=prefix)
 

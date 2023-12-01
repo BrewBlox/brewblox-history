@@ -53,9 +53,9 @@ LOGGER = logging.getLogger(__name__)
 
 def setup():
     config = utils.get_config()
-    fast_mqtt = mqtt.CV.get()
+    mqtt_client = mqtt.CV.get()
 
-    @fast_mqtt.subscribe(config.history_topic + '/#')
+    @mqtt_client.subscribe(config.history_topic + '/#')
     async def on_history_message(client, topic, payload, qos, properties):
         try:
             evt = HistoryEvent.model_validate_json(payload)

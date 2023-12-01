@@ -8,8 +8,7 @@ from typing import Any, Literal, NamedTuple
 
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
-from pydantic_settings import (BaseSettings, PydanticBaseSettingsSource,
-                               SettingsConfigDict)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def flatten(d, parent_key=''):
@@ -64,7 +63,7 @@ class ServiceConfig(BaseSettings):
 
 class HistoryEvent(BaseModel):
     model_config = ConfigDict(
-        json_schema_extra='ignore',
+        extra='ignore',
     )
 
     key: str
@@ -79,7 +78,7 @@ class HistoryEvent(BaseModel):
 
 class DatastoreValue(BaseModel):
     model_config = ConfigDict(
-        json_schema_extra='allow',
+        extra='allow',
     )
 
     namespace: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
@@ -124,14 +123,14 @@ class TimeSeriesMetricsQuery(BaseModel):
 class TimeSeriesMetric(BaseModel):
     metric: str
     value: float
-    timestamp: datetime = Field(example='2020-01-01T20:00:00.000Z')
+    timestamp: datetime = Field(examples=['2020-01-01T20:00:00.000Z'])
 
 
 class TimeSeriesRangesQuery(BaseModel):
-    fields: list[str] = Field(example=['spark-one/sensor/value[degC]'])
-    start: datetime | None = Field(None, example='2020-01-01T20:00:00.000Z')
-    end: datetime | None = Field(None, example='2030-01-01T20:00:00.000Z')
-    duration: str | None = Field(None, example='1d')
+    fields: list[str] = Field(examples=[['spark-one/sensor/value[degC]']])
+    start: datetime | None = Field(None, examples=['2020-01-01T20:00:00.000Z'])
+    end: datetime | None = Field(None, examples=['2030-01-01T20:00:00.000Z'])
+    duration: str | None = Field(None, examples=['1d'])
 
 
 class TimeSeriesRangeValue(NamedTuple):
