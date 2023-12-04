@@ -6,6 +6,16 @@ ROOT = Path(__file__).parent.resolve()
 
 
 @task
+def testclean(ctx: Context):
+    """
+    Cleans up leftover test containers.
+    Container cleanup is normally done in test fixtures.
+    This is skipped if debugged tests are stopped halfway.
+    """
+    ctx.run('docker rm -f $(docker ps -aq --filter "name=pytest")')
+
+
+@task
 def build(ctx: Context):
     with ctx.cd(ROOT):
         ctx.run('rm -rf dist')

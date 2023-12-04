@@ -31,6 +31,7 @@ invoke = "*"
 flake8-pyproject = "*"
 pytest-docker = "*"
 pytest-asyncio = "*"
+pytest-httpx = "*"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

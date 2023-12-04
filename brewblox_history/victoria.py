@@ -25,8 +25,14 @@ class VictoriaClient:
     def __init__(self):
         config = utils.get_config()
 
-        self._url = f'{config.victoria_protocol}://{config.victoria_host}:{config.victoria_port}'
-        self._url += config.victoria_path
+        self._url = ''.join([
+            config.victoria_protocol,
+            '://',
+            config.victoria_host,
+            ':',
+            str(config.victoria_port),
+            config.victoria_path,
+        ])
         self._minimum_step = timedelta(seconds=config.minimum_step)
         self._query_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',

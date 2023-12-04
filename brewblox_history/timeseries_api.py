@@ -6,7 +6,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Response, WebSocket
+from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
@@ -197,6 +197,9 @@ async def timeseries_stream(ws: WebSocket):
                     'error': utils.strex(ex),
                     'message': msg,
                 })
+
+    except WebSocketDisconnect:
+        pass
 
     finally:
         # Coverage complains about next line -> exit not being covered

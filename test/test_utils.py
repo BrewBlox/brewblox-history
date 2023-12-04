@@ -40,7 +40,7 @@ def test_parse_datetime():
 
 def test_format_datetime():
     time_s = 1626359370
-    iso_str = '2021-07-15T14:29:30.000Z'
+    iso_str = '2021-07-15T14:29:30.000000Z'
     time_ms = time_s * 1000
     dt = datetime.fromtimestamp(time_s, tz=timezone.utc)
 

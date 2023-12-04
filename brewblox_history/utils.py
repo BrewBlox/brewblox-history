@@ -99,7 +99,7 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
     elif precision == 's':
         return str(int(dt.timestamp()))
     elif precision == 'ISO8601':
-        return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        return dt.isoformat(timespec='auto').replace('+00:00', 'Z')
     else:
         raise ValueError(f'Invalid precision: {precision}')
 

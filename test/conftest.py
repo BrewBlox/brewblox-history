@@ -5,6 +5,7 @@ Any fixtures declared here are available to all test functions in this directory
 
 
 import logging
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -13,12 +14,13 @@ from httpx import AsyncClient
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from pytest_docker.plugin import Services as DockerServices
 
-from brewblox_history import app_factory, models, utils
+from brewblox_history import app_factory, utils
+from brewblox_history.models import ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
 
 
-class TestConfig(models.ServiceConfig):
+class TestConfig(ServiceConfig):
     """
     An override for ServiceConfig that only uses
     settings provided to __init__()
@@ -45,7 +47,9 @@ def docker_compose_file():
 
 
 @pytest.fixture(autouse=True)
-def config(monkeypatch: pytest.MonkeyPatch, docker_services: DockerServices):
+def config(monkeypatch: pytest.MonkeyPatch,
+           docker_services: DockerServices,
+           ) -> Generator[ServiceConfig, None, None]:
     cfg = TestConfig(
         debug=True,
         mqtt_host='localhost',
@@ -58,7 +62,7 @@ def config(monkeypatch: pytest.MonkeyPatch, docker_services: DockerServices):
 
 
 @pytest.fixture(autouse=True)
-def log_enabled(config):
+def init_logging(config):
     app_factory.init_logging(True)
 
 
@@ -66,7 +70,9 @@ def log_enabled(config):
 def app():
     """
     Override this in test modules to bootstrap the subset of required dependencies.
-    This must NOT be an async fixture
+
+    IMPORTANT: This must NOT be an async fixture.
+    Contextvars assigned in async fixtures are invisible to test functions.
     """
     app = FastAPI()
     return app
@@ -81,6 +87,6 @@ async def lifespan(app):
 
 
 @pytest.fixture
-async def client(config, app: FastAPI, lifespan):
+async def client(config: ServiceConfig, app: FastAPI, lifespan):
     async with AsyncClient(app=app, base_url='http://test') as ac:
         yield ac

@@ -51,7 +51,7 @@ class ServiceConfig(BaseSettings):
     victoria_protocol: Literal['http', 'https'] = 'http'
     victoria_host: str = 'victoria'
     victoria_port: int = 8428
-    victoria_path: str = '/victoria'
+    victoria_path: str = Field(default='/victoria', pattern=r'^(|/.+)$')
 
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
@@ -134,7 +134,7 @@ class TimeSeriesRangesQuery(BaseModel):
 
 
 class TimeSeriesRangeValue(NamedTuple):
-    timestamp: int
+    timestamp: float
     value: str  # Number serialized as string
 
 
