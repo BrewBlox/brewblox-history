@@ -17,7 +17,7 @@ def init_logging(debug: bool):
     datefmt = '%Y/%m/%d %H:%M:%S'
 
     logging.basicConfig(level=level, format=format, datefmt=datefmt)
-    # logging.captureWarnings(True)
+    logging.captureWarnings(True)
 
     logging.getLogger('gmqtt').setLevel(unimportant_level)
     logging.getLogger('httpx').setLevel(unimportant_level)
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
         yield
 
 
-def create_app():
+def create_app() -> FastAPI:
     config = utils.get_config()
     init_logging(config.debug)
 

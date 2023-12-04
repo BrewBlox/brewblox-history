@@ -2,6 +2,7 @@
 Tests brewblox_history.utils
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -9,6 +10,12 @@ import pytest
 from brewblox_history import utils
 
 TESTED = utils.__name__
+
+
+def test_duplicate_filter(caplog: pytest.LogCaptureFixture):
+    logger = logging.getLogger('test_duplicate')
+    logger.addFilter(utils.DuplicateFilter())
+    len_start = len(caplog.records)
 
 
 def test_parse_duration():

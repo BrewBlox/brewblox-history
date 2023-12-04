@@ -249,3 +249,16 @@ async def test_write(client: AsyncClient,
         'service f1=1.0',
         'service f1=2.0,f2=3.0',
     ]
+
+
+async def test_write_exc(client: AsyncClient,
+                         url: str,
+                         httpx_mock: HTTPXMock):
+    vic = victoria.CV.get()
+
+    httpx_mock.add_exception(url=f'{url}/write',
+                             method='POST',
+                             exception=RuntimeError('dummy error'))
+
+    # Write errors are swallowed
+    await vic.write(HistoryEvent(key='service', data={'f1': 1}))
