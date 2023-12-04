@@ -22,6 +22,15 @@ from brewblox_history.models import (ServiceConfig, TimeSeriesCsvQuery,
 TESTED = timeseries_api.__name__
 
 
+class dt_eq:
+
+    def __init__(self, value: utils.DatetimeSrc_) -> None:
+        self.value = utils.parse_datetime(value)
+
+    def __eq__(self, __value: object) -> bool:
+        return self.value == utils.parse_datetime(__value)
+
+
 @pytest.fixture
 async def m_victoria(mocker):
     m = mocker.patch(TESTED + '.victoria.CV').get.return_value
@@ -103,7 +112,6 @@ async def test_ranges(client: AsyncClient, m_victoria: Mock):
 
 async def test_metrics(client: AsyncClient, m_victoria: Mock):
     now = time_ns() // 1_000_000
-    now_str = utils.format_datetime(now, 'ISO8601')
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(
             metric='a',
@@ -124,9 +132,9 @@ async def test_metrics(client: AsyncClient, m_victoria: Mock):
 
     resp = await client.post('/timeseries/metrics', json={'fields': ['a', 'b', 'c']})
     assert resp.json() == [
-        {'metric': 'a', 'value': approx(1.2), 'timestamp': now_str},
-        {'metric': 'b', 'value': approx(2.2), 'timestamp': now_str},
-        {'metric': 'c', 'value': approx(3.2), 'timestamp': now_str},
+        {'metric': 'a', 'value': approx(1.2), 'timestamp': dt_eq(now)},
+        {'metric': 'b', 'value': approx(2.2), 'timestamp': dt_eq(now)},
+        {'metric': 'c', 'value': approx(3.2), 'timestamp': dt_eq(now)},
     ]
 
     resp = await client.post('/timeseries/metrics', json={})
@@ -273,7 +281,7 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
         TimeSeriesMetric(
             metric='a',
             value=1.2,
-            timestamp=datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+            timestamp=dt
         ),
     ]
 
@@ -311,7 +319,7 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
                 'metrics': [{
                     'metric': 'a',
                     'value': approx(1.2),
-                    'timestamp': utils.format_datetime(dt, 'ISO8601'),
+                    'timestamp': dt_eq(dt),
                 }],
             },
         }

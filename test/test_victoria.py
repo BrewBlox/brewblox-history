@@ -122,7 +122,7 @@ async def test_metrics(client: AsyncClient,
     assert result == [
         TimeSeriesMetric(metric='service/f1',
                          value=1,
-                         timestamp=now()),
+                         timestamp=now),
         TimeSeriesMetric(metric='service/f2',
                          value=2,
                          timestamp=now),
