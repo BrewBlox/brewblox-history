@@ -177,3 +177,12 @@ class TimeSeriesMetricStreamData(BaseModel):
 class TimeSeriesRangeStreamData(BaseModel):
     initial: bool
     ranges: list[TimeSeriesRange]
+
+
+class PingResponse(BaseModel):
+    ping: Literal['pong'] = 'pong'
+
+
+class ErrorResponse(BaseModel):
+    error: str
+    details: str

@@ -9,7 +9,8 @@ from fastapi import APIRouter, Response
 from . import redis
 from .models import (DatastoreDeleteResponse, DatastoreMultiQuery,
                      DatastoreMultiValueBox, DatastoreOptSingleValueBox,
-                     DatastoreSingleQuery, DatastoreSingleValueBox)
+                     DatastoreSingleQuery, DatastoreSingleValueBox,
+                     PingResponse)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix='/datastore', tags=['Datastore'])
 
 
 @router.get('/ping')
-async def ping(response: Response) -> dict:
+async def ping(response: Response) -> PingResponse:
     """
     Ping datastore, checking availability.
     """
@@ -25,7 +26,7 @@ async def ping(response: Response) -> dict:
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     await redis.CV.get().ping()
-    return {'ping': 'pong'}
+    return PingResponse()
 
 
 @router.post('/get')
@@ -34,7 +35,6 @@ async def datastore_get(args: DatastoreSingleQuery) -> DatastoreOptSingleValueBo
     Get a specific object from the datastore.
     """
     value = await redis.CV.get().get(args.namespace, args.id)
-    LOGGER.info(type(value))
     return DatastoreOptSingleValueBox(value=value)
 
 

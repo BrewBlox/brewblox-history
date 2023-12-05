@@ -12,7 +12,10 @@ def testclean(ctx: Context):
     Container cleanup is normally done in test fixtures.
     This is skipped if debugged tests are stopped halfway.
     """
-    ctx.run('docker rm -f $(docker ps -aq --filter "name=pytest")')
+    result = ctx.run('docker ps -aq --filter "name=pytest"', hide='stdout')
+    containers = result.stdout.strip().replace('\n', ' ')
+    if containers:
+        ctx.run(f'docker rm -f {containers}')
 
 
 @task
@@ -24,6 +27,6 @@ def build(ctx: Context):
 
 
 @task(pre=[build])
-def local_docker(ctx: Context, tag='local'):
+def image(ctx: Context, tag='local'):
     with ctx.cd(ROOT):
         ctx.run(f'docker build -t ghcr.io/brewblox/brewblox-history:{tag} .')

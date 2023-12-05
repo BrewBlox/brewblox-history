@@ -7,4 +7,4 @@ exec uvicorn \
     --host 0.0.0.0 \
     --port 5000 \
     --factory \
-    brewblox_history.app:create_app
+    brewblox_history.app_factory:create_app

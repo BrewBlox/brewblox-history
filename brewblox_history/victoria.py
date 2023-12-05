@@ -40,11 +40,10 @@ class VictoriaClient:
         }
 
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
-        self._client = httpx.AsyncClient()
+        self._client = httpx.AsyncClient(base_url=self._url)
 
     async def ping(self):
-        url = f'{self._url}/health'
-        resp = await self._client.get(url)
+        resp = await self._client.get('/health')
         if resp.text != 'OK':
             raise ConnectionError(
                 f'Database ping returned warning: "{resp.text}"')
@@ -54,11 +53,9 @@ class VictoriaClient:
         return resp.json()
 
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
-        url = f'{self._url}/api/v1/series'
-
         query = f'match[]={{__name__!=""}}&start={args.duration}'
         LOGGER.debug(query)
-        result = await self._json_query(query, url)
+        result = await self._json_query(query, '/api/v1/series')
         retv = [
             v['__name__']
             for v in result['data']
@@ -74,8 +71,6 @@ class VictoriaClient:
         ))
 
     async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
-        url = f'{self._url}/api/v1/query_range'
-
         start, end, step = utils.select_timeframe(args.start,
                                                   args.duration,
                                                   args.end,
@@ -86,7 +81,7 @@ class VictoriaClient:
         ]
         LOGGER.debug(queries)
         query_responses = await asyncio.gather(*[
-            self._json_query(q, url)
+            self._json_query(q, '/api/v1/query_range')
             for q in queries
         ])
         retv = [
@@ -98,7 +93,6 @@ class VictoriaClient:
         return retv
 
     async def csv(self, args: TimeSeriesCsvQuery):
-        url = f'{self._url}/api/v1/export'
         start, end, _ = utils.select_timeframe(args.start,
                                                args.duration,
                                                args.end,
@@ -114,7 +108,7 @@ class VictoriaClient:
         rows = SortedDict()
 
         async with self._client.stream('POST',
-                                       url,
+                                       '/api/v1/export',
                                        content=query,
                                        headers=self._query_headers) as resp:
             # Objects are returned as newline-separated JSON objects.
@@ -143,7 +137,6 @@ class VictoriaClient:
                                      ','.join(row))
 
     async def write(self, evt: HistoryEvent):
-        url = f'{self._url}/write'
         line_items = []
 
         for field in sorted(evt.data.keys()):
@@ -170,7 +163,7 @@ class VictoriaClient:
             try:
                 line = f'{evt.key} {",".join(line_items)}'
                 LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
-                await self._client.post(url, content=line)
+                await self._client.post('/write', content=line)
 
             except Exception as ex:
                 msg = utils.strex(ex)

@@ -32,6 +32,7 @@ flake8-pyproject = "*"
 pytest-docker = "*"
 pytest-asyncio = "*"
 pytest-httpx = "*"
+asgi-lifespan = "*"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

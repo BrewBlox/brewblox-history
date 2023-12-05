@@ -13,7 +13,7 @@ from pytest import approx
 from pytest_mock import MockerFixture
 from starlette.testclient import TestClient, WebSocketTestSession
 
-from brewblox_history import timeseries_api, utils
+from brewblox_history import app_factory, timeseries_api, utils
 from brewblox_history.models import (ServiceConfig, TimeSeriesCsvQuery,
                                      TimeSeriesMetric, TimeSeriesRange,
                                      TimeSeriesRangeMetric,
@@ -32,7 +32,7 @@ class dt_eq:
 
 
 @pytest.fixture
-async def m_victoria(mocker):
+async def m_victoria(mocker: MockerFixture) -> Mock:
     m = mocker.patch(TESTED + '.victoria.CV').get.return_value
     m.ping = AsyncMock()
     m.fields = AsyncMock()
@@ -43,15 +43,11 @@ async def m_victoria(mocker):
 
 
 @pytest.fixture
-def app():
+def app() -> FastAPI:
     app = FastAPI()
     app.include_router(timeseries_api.router)
+    app_factory.add_exception_handlers(app)
     return app
-
-
-@pytest.fixture
-def sync_client(config, app):
-    yield TestClient(app=app, base_url='http://test')
 
 
 async def test_ping(client: AsyncClient, m_victoria: Mock):

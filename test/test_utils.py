@@ -15,7 +15,31 @@ TESTED = utils.__name__
 def test_duplicate_filter(caplog: pytest.LogCaptureFixture):
     logger = logging.getLogger('test_duplicate')
     logger.addFilter(utils.DuplicateFilter())
-    len_start = len(caplog.records)
+    logger.setLevel(logging.INFO)
+
+    caplog.clear()
+    logger.info('message 1')
+    logger.info('message 1')
+    assert len(caplog.records) == 1
+    assert caplog.records[-1].message == 'message 1'
+
+    caplog.clear()
+    logger.info('message 2')
+    logger.info('message 3')
+    logger.info('message 2')
+    assert len(caplog.records) == 3
+    assert caplog.records[-1].message == 'message 2'
+
+
+def test_strex():
+    try:
+        raise RuntimeError('oops')
+    except RuntimeError as ex:
+        assert utils.strex(ex) == 'RuntimeError(oops)'
+
+        with_tb = utils.strex(ex, tb=True)
+        assert with_tb.startswith('RuntimeError(oops)')
+        assert 'test_utils.py' in with_tb
 
 
 def test_parse_duration():

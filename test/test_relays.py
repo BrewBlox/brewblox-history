@@ -3,12 +3,13 @@ Tests brewblox_history.relays
 """
 
 import asyncio
-from contextlib import AsyncExitStack
-from unittest.mock import AsyncMock, Mock, call
+from contextlib import AsyncExitStack, asynccontextmanager
+from unittest.mock import Mock, call
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from pytest_mock import MockerFixture
 
 from brewblox_history import mqtt, relays, victoria
 from brewblox_history.models import HistoryEvent, ServiceConfig
@@ -16,32 +17,29 @@ from brewblox_history.models import HistoryEvent, ServiceConfig
 TESTED = relays.__name__
 
 
-@pytest.fixture
-def m_victoria(mocker):
-    m = Mock()
-    m.write = AsyncMock()
-    victoria.CV.set(m)
-    return m
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(mqtt.lifespan())
+        yield
 
 
 @pytest.fixture
-def app(m_victoria):
+def app() -> FastAPI:
+    victoria.setup()
     mqtt.setup()
     relays.setup()
-    app = FastAPI()
+    app = FastAPI(lifespan=lifespan)
     return app
 
 
 @pytest.fixture
-async def lifespan(app):
-    async with AsyncExitStack() as stack:
-        # Prevents test hangups if the connection fails
-        async with asyncio.timeout(5):
-            await stack.enter_async_context(mqtt.lifespan())
-        yield
+def m_write(app: FastAPI, mocker: MockerFixture):
+    m = mocker.spy(victoria.CV.get(), 'write')
+    return m
 
 
-async def test_mqtt_relay(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
+async def test_mqtt_relay(client: AsyncClient, config: ServiceConfig, m_write: Mock):
     topic = 'brewcast/history'
     recv = []
     recv_done = asyncio.Event()
@@ -92,7 +90,7 @@ async def test_mqtt_relay(client: AsyncClient, config: ServiceConfig, m_victoria
 
     await asyncio.wait_for(recv_done.wait(), timeout=5)
 
-    assert m_victoria.write.await_args_list == [
+    assert m_write.call_args_list == [
         call(HistoryEvent(key='m', data=flat_data)),
         call(HistoryEvent(key='m', data=flat_value)),
         call(HistoryEvent(key='m', data={})),

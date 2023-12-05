@@ -1,9 +1,16 @@
 services:
-  redis:
-    image: redis:6.0
-    ports:
-      - "6379"
   mqtt:
     image: ghcr.io/brewblox/mosquitto:develop
     ports:
       - "1883"
+  redis:
+    image: redis:6.0
+    ports:
+      - "6379"
+  victoria:
+    image: victoriametrics/victoria-metrics:v1.88.0
+    command: >-
+      --influxMeasurementFieldSeparator=/
+      --http.pathPrefix=/victoria
+    ports:
+      - "8428"

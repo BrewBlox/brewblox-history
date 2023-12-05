@@ -33,7 +33,7 @@ class DuplicateFilter(logging.Filter):
 
 
 @lru_cache
-def get_config() -> ServiceConfig:
+def get_config() -> ServiceConfig:  # pragma: no cover
     return ServiceConfig()
 
 

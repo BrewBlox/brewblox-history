@@ -11,8 +11,9 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 from brewblox_history import utils, victoria
-from brewblox_history.models import (TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
-                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
+from brewblox_history.models import (PingResponse, TimeSeriesCsvQuery,
+                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
+                                     TimeSeriesMetricsQuery,
                                      TimeSeriesMetricStreamData,
                                      TimeSeriesRange, TimeSeriesRangesQuery,
                                      TimeSeriesRangeStreamData,
@@ -26,16 +27,8 @@ LOGGER.addFilter(utils.DuplicateFilter())
 router = APIRouter(prefix='/timeseries', tags=['TimeSeries'])
 
 
-@asynccontextmanager
-async def protected(desc: str):
-    try:
-        yield
-    except Exception as ex:
-        LOGGER.error(f'{desc} error {utils.strex(ex)}')
-
-
 @router.get('/ping')
-async def timeseries_ping(response: Response) -> dict:
+async def timeseries_ping(response: Response) -> PingResponse:
     """
     Ping the Victoria Metrics database.
     """
@@ -43,7 +36,7 @@ async def timeseries_ping(response: Response) -> dict:
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     await victoria.CV.get().ping()
-    return {'ping': 'pong'}
+    return PingResponse()
 
 
 @router.post('/fields')
@@ -107,6 +100,14 @@ async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
             'Content-Type': 'text/plain',
             'Access-Control-Allow-Origin': '*',
         })
+
+
+@asynccontextmanager
+async def protected(desc: str):
+    try:
+        yield
+    except Exception as ex:
+        LOGGER.error(f'{desc} error {utils.strex(ex)}')
 
 
 async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):

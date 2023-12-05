@@ -6,8 +6,7 @@ from datetime import datetime
 
 import ciso8601
 import pytest
-from fastapi import FastAPI
-from httpx import AsyncClient, Request, Response
+from httpx import Request, Response
 from pytest_httpx import HTTPXMock
 from pytest_mock import MockerFixture
 
@@ -40,15 +39,12 @@ def now(mocker: MockerFixture) -> datetime:
 
 
 @pytest.fixture
-def app():
+def vic() -> victoria.VictoriaClient:
     victoria.setup()
-    app = FastAPI()
-    return app
+    return victoria.CV.get()
 
 
-async def test_ping(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
-
+async def test_ping(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=f'{url}/health',
                             method='GET',
                             text='OK')
@@ -61,9 +57,7 @@ async def test_ping(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
         await vic.ping()
 
 
-async def test_fields(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
-
+async def test_fields(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=f'{url}/api/v1/series',
                             method='POST',
                             json={
@@ -93,11 +87,10 @@ async def test_fields(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
     ]
 
 
-async def test_metrics(client: AsyncClient,
+async def test_metrics(vic: victoria.VictoriaClient,
                        url: str,
                        now: datetime,
                        httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
     args = TimeSeriesMetricsQuery(fields=['service/f1', 'service/f2'])
 
     # No values cached yet
@@ -129,9 +122,7 @@ async def test_metrics(client: AsyncClient,
     ]
 
 
-async def test_ranges(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
-
+async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     result = {
         'metric': {'__name__': 'sparkey/sensor'},
         'values': [
@@ -156,9 +147,7 @@ async def test_ranges(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
     assert retv == [TimeSeriesRange(**result)] * 3
 
 
-async def test_csv(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
-
+async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     httpx_mock.add_response(
         url=f'{url}/api/v1/export',
         method='POST',
@@ -213,11 +202,10 @@ async def test_csv(client: AsyncClient, url: str, httpx_mock: HTTPXMock):
     assert timestamps == sorted(timestamps)
 
 
-async def test_write(client: AsyncClient,
+async def test_write(vic: victoria.VictoriaClient,
                      url: str,
                      now: datetime,
                      httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
     written = []
 
     async def handler(request: Request) -> Response:
@@ -251,11 +239,9 @@ async def test_write(client: AsyncClient,
     ]
 
 
-async def test_write_exc(client: AsyncClient,
+async def test_write_exc(vic: victoria.VictoriaClient,
                          url: str,
                          httpx_mock: HTTPXMock):
-    vic = victoria.CV.get()
-
     httpx_mock.add_exception(url=f'{url}/write',
                              method='POST',
                              exception=RuntimeError('dummy error'))

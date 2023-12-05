@@ -2,8 +2,7 @@
 Tests brewblox_history.redis.py
 """
 
-import asyncio
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from unittest.mock import Mock, call
 
 import pytest
@@ -25,25 +24,23 @@ def sort_dictvalues(values: list[dict]):
     return sorted(values, key=lambda v: v['id'])
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(mqtt.lifespan())
+        await stack.enter_async_context(redis.lifespan())
+        # Cleanup of data inserted by previous tests
+        await redis.CV.get().mdelete('', filter='*')
+        yield
+
+
 @pytest.fixture
 def app():
     mqtt.setup()
     redis.setup()
-    app = FastAPI()
+    app = FastAPI(lifespan=lifespan)
     app.include_router(datastore_api.router)
     return app
-
-
-@pytest.fixture
-async def lifespan(app):
-    async with AsyncExitStack() as stack:
-        # Prevents test hangups if the connection fails
-        async with asyncio.timeout(5):
-            await stack.enter_async_context(mqtt.lifespan())
-            await stack.enter_async_context(redis.lifespan())
-            # Cleanup
-            await redis.CV.get().mdelete('', filter='*')
-        yield
 
 
 @pytest.fixture
