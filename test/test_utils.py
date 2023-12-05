@@ -2,6 +2,7 @@
 Tests brewblox_history.utils
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -9,6 +10,36 @@ import pytest
 from brewblox_history import utils
 
 TESTED = utils.__name__
+
+
+def test_duplicate_filter(caplog: pytest.LogCaptureFixture):
+    logger = logging.getLogger('test_duplicate')
+    logger.addFilter(utils.DuplicateFilter())
+    logger.setLevel(logging.INFO)
+
+    caplog.clear()
+    logger.info('message 1')
+    logger.info('message 1')
+    assert len(caplog.records) == 1
+    assert caplog.records[-1].message == 'message 1'
+
+    caplog.clear()
+    logger.info('message 2')
+    logger.info('message 3')
+    logger.info('message 2')
+    assert len(caplog.records) == 3
+    assert caplog.records[-1].message == 'message 2'
+
+
+def test_strex():
+    try:
+        raise RuntimeError('oops')
+    except RuntimeError as ex:
+        assert utils.strex(ex) == 'RuntimeError(oops)'
+
+        with_tb = utils.strex(ex, tb=True)
+        assert with_tb.startswith('RuntimeError(oops)')
+        assert 'test_utils.py' in with_tb
 
 
 def test_parse_duration():
@@ -40,7 +71,7 @@ def test_parse_datetime():
 
 def test_format_datetime():
     time_s = 1626359370
-    iso_str = '2021-07-15T14:29:30.000Z'
+    iso_str = '2021-07-15T14:29:30Z'
     time_ms = time_s * 1000
     dt = datetime.fromtimestamp(time_s, tz=timezone.utc)
 
@@ -137,9 +168,3 @@ def test_select_timeframe(mocker):
         fmt(now()),
         '86s',
     )
-
-
-def test_json_dumps():
-    assert utils.json_dumps({'dt': datetime(2021, 7, 15, 19, tzinfo=timezone.utc)}) == '{"dt": 1626375600000}'
-    with pytest.raises(TypeError):
-        utils.json_dumps({'fn': lambda x: x})

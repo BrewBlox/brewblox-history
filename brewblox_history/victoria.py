@@ -1,57 +1,61 @@
 import asyncio
+import logging
+from contextvars import ContextVar
 from datetime import timedelta
 from urllib.parse import quote
 
+import httpx
 import ujson
-from aiohttp import web
-from aiohttp.client import ClientSession
-from brewblox_service import brewblox_logger, features, http, strex
 from sortedcontainers import SortedDict
 
 from brewblox_history import utils
-from brewblox_history.models import (HistoryEvent, ServiceConfig,
-                                     TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
-                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
-                                     TimeSeriesRange, TimeSeriesRangesQuery)
+from brewblox_history.models import (HistoryEvent, TimeSeriesCsvQuery,
+                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
+                                     TimeSeriesMetricsQuery, TimeSeriesRange,
+                                     TimeSeriesRangesQuery)
 
-LOGGER = brewblox_logger(__name__, True)
+LOGGER = logging.getLogger(__name__)
+LOGGER.addFilter(utils.DuplicateFilter())
+
+CV: ContextVar['VictoriaClient'] = ContextVar('victoria.client')
 
 
-class VictoriaClient(features.ServiceFeature):
+class VictoriaClient:
 
-    def __init__(self, app: web.Application):
-        super().__init__(app)
+    def __init__(self):
+        config = utils.get_config()
 
-        config: ServiceConfig = self.app['config']
-        self._url = config.victoria_url
+        self._url = ''.join([
+            config.victoria_protocol,
+            '://',
+            config.victoria_host,
+            ':',
+            str(config.victoria_port),
+            config.victoria_path,
+        ])
+        self._minimum_step = timedelta(seconds=config.minimum_step)
         self._query_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept-Encoding': 'gzip',
         }
 
-        self._minimum_step = timedelta(seconds=config.minimum_step)
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
+        self._client = httpx.AsyncClient(base_url=self._url)
 
     async def ping(self):
-        url = f'{self._url}/health'
-        async with http.session(self.app).get(url) as resp:
-            status = await resp.text()
-            if status != 'OK':  # pragma: no branch
-                raise ConnectionError(f'Database ping returned warning: "{status}"')
+        resp = await self._client.get('/health')
+        if resp.text != 'OK':
+            raise ConnectionError(
+                f'Database ping returned warning: "{resp.text}"')
 
-    async def _json_query(self, query: str, url: str, session: ClientSession):
-        async with session.post(url,
-                                data=query,
-                                headers=self._query_headers) as resp:
-            return await resp.json()
+    async def _json_query(self, query: str, url: str):
+        resp = await self._client.post(url, content=query, headers=self._query_headers)
+        return resp.json()
 
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
-        url = f'{self._url}/api/v1/series'
-        session = http.session(self.app)
-
         query = f'match[]={{__name__!=""}}&start={args.duration}'
         LOGGER.debug(query)
-        result = await self._json_query(query, url, session)
+        result = await self._json_query(query, '/api/v1/series')
         retv = [
             v['__name__']
             for v in result['data']
@@ -67,9 +71,6 @@ class VictoriaClient(features.ServiceFeature):
         ))
 
     async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
-        url = f'{self._url}/api/v1/query_range'
-        session = http.session(self.app)
-
         start, end, step = utils.select_timeframe(args.start,
                                                   args.duration,
                                                   args.end,
@@ -80,7 +81,7 @@ class VictoriaClient(features.ServiceFeature):
         ]
         LOGGER.debug(queries)
         query_responses = await asyncio.gather(*[
-            self._json_query(q, url, session)
+            self._json_query(q, '/api/v1/query_range')
             for q in queries
         ])
         retv = [
@@ -92,8 +93,6 @@ class VictoriaClient(features.ServiceFeature):
         return retv
 
     async def csv(self, args: TimeSeriesCsvQuery):
-        url = f'{self._url}/api/v1/export'
-        session = http.session(self.app)
         start, end, _ = utils.select_timeframe(args.start,
                                                args.duration,
                                                args.end,
@@ -108,13 +107,14 @@ class VictoriaClient(features.ServiceFeature):
         width = len(args.fields)
         rows = SortedDict()
 
-        async with session.post(url,
-                                data=query,
-                                headers=self._query_headers) as resp:
+        async with self._client.stream('POST',
+                                       '/api/v1/export',
+                                       content=query,
+                                       headers=self._query_headers) as resp:
             # Objects are returned as newline-separated JSON objects.
             # Metrics may be returned in multiple chunks.
             # We need to transpose incoming (column-based) data to rows.
-            while line := await resp.content.readline():
+            async for line in resp.aiter_lines():
                 chunk = ujson.loads(line)
                 field = chunk['metric']['__name__']
                 field_idx = args.fields.index(field)
@@ -137,7 +137,6 @@ class VictoriaClient(features.ServiceFeature):
                                      ','.join(row))
 
     async def write(self, evt: HistoryEvent):
-        url = f'{self._url}/write'
         line_items = []
 
         for field in sorted(evt.data.keys()):
@@ -164,16 +163,12 @@ class VictoriaClient(features.ServiceFeature):
             try:
                 line = f'{evt.key} {",".join(line_items)}'
                 LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
-                await http.session(self.app).post(url, data=line)
+                await self._client.post('/write', content=line)
 
             except Exception as ex:
-                msg = strex(ex)
+                msg = utils.strex(ex)
                 LOGGER.warning(f'{self} {msg}')
 
 
-def setup(app):
-    features.add(app, VictoriaClient(app))
-
-
-def fget(app: web.Application) -> VictoriaClient:
-    return features.get(app, VictoriaClient)
+def setup():
+    CV.set(VictoriaClient())

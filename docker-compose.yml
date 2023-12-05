@@ -9,7 +9,7 @@ services:
       - "1883:1883"
 
   victoria:
-    image: victoriametrics/victoria-metrics:v1.69.0
+    image: victoriametrics/victoria-metrics:v1.88.0
     labels:
       - traefik.http.services.victoria.loadbalancer.server.port=8428
     volumes:
@@ -20,6 +20,7 @@ services:
       --retentionPeriod=100y
       --influxMeasurementFieldSeparator=/
       --http.pathPrefix=/victoria
+      --search.latencyOffset=10s
 
   redis:
     image: redis:6.0
@@ -32,10 +33,17 @@ services:
     command: --appendonly yes
 
   history:
-    image: brewblox/brewblox-history:local
+    build: .
     volumes:
       - type: bind
-        source: ./
-        target: /app
+        source: ./brewblox_history
+        target: /app/brewblox_history
+      - type: bind
+        source: ./parse_appenv.py
+        target: /app/parse_appenv.py
+    environment:
+      - BREWBLOX_DEBUG=True
+      - UVICORN_RELOAD=True
+    command: --unknown=flappy
     ports:
       - "5000:5000"

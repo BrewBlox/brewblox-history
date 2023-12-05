@@ -75,3 +75,4 @@ victoria/*
 
 redis/*
 !redis/.gitkeep
+.appenv

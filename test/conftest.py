@@ -5,107 +5,110 @@ Any fixtures declared here are available to all test functions in this directory
 
 
 import logging
+from collections.abc import Generator
+from pathlib import Path
 
 import pytest
-from aiohttp import test_utils
-from brewblox_service import brewblox_logger, features, service, testing
+from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
+from httpx import AsyncClient
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+from pytest_docker.plugin import Services as DockerServices
+from starlette.testclient import TestClient
 
-from brewblox_history import error_response
+from brewblox_history import app_factory, utils
 from brewblox_history.models import ServiceConfig
 
-LOGGER = brewblox_logger(__name__)
+LOGGER = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope='session', autouse=True)
-def log_enabled():
-    """Sets log level to DEBUG for all test functions.
-    Allows all logged messages to be captured during pytest runs"""
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.captureWarnings(True)
+class TestConfig(ServiceConfig):
+    """
+    An override for ServiceConfig that only uses
+    settings provided to __init__()
+
+    This makes tests independent from env values
+    and the content of .appenv
+    """
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (init_settings,)
 
 
-@pytest.fixture
-def app_config() -> ServiceConfig:
-    return ServiceConfig(
-        # From brewblox_service
-        name='test_app',
-        host='localhost',
-        port=1234,
+@pytest.fixture(scope='session')
+def docker_compose_file():
+    return Path('./test/docker-compose.yml').resolve()
+
+
+@pytest.fixture(autouse=True)
+def config(monkeypatch: pytest.MonkeyPatch,
+           docker_services: DockerServices,
+           ) -> Generator[ServiceConfig, None, None]:
+    cfg = TestConfig(
         debug=True,
-        mqtt_protocol='mqtt',
-        mqtt_host='eventbus',
-        mqtt_port=1883,
-        mqtt_path='/eventbus',
-        history_topic='brewcast/history',
-        state_topic='brewcast/state',
-
-        # From brewblox_history
-        victoria_url='http://victoria:8428/victoria',
-        redis_url='redis://redis',
-        datastore_topic='brewcast/datastore',
-        ranges_interval=30,
-        metrics_interval=5,
-        minimum_step=10,
+        mqtt_host='localhost',
+        mqtt_port=docker_services.port_for('mqtt', 1883),
+        redis_host='localhost',
+        redis_port=docker_services.port_for('redis', 6379),
+        victoria_host='localhost',
+        victoria_port=docker_services.port_for('victoria', 8428),
     )
+    monkeypatch.setattr(utils, 'get_config', lambda: cfg)
+    yield cfg
+
+
+@pytest.fixture(autouse=True)
+def setup_logging(config):
+    app_factory.setup_logging(True)
 
 
 @pytest.fixture
-def sys_args(app_config: ServiceConfig) -> list:
-    return [str(v) for v in [
-        'app_name',
-        '--ranges-interval', app_config.ranges_interval,
-        '--metrics-interval', app_config.metrics_interval,
-        '--victoria-url', app_config.victoria_url,
-        '--redis-url', app_config.redis_url,
-        '--datastore-topic', app_config.datastore_topic,
-        '--minimum-step', app_config.minimum_step,
-        '--debug',
-    ]]
+def app() -> FastAPI:
+    """
+    Override this in test modules to bootstrap required dependencies.
 
-
-@pytest.fixture
-def app(app_config):
-    app = service.create_app(app_config)
-    error_response.setup(app)
+    IMPORTANT: This must NOT be an async fixture.
+    Contextvars assigned in async fixtures are invisible to test functions.
+    """
+    app = FastAPI()
     return app
 
 
 @pytest.fixture
-async def setup(app):
-    pass
+async def client(app: FastAPI) -> Generator[AsyncClient, None, None]:
+    """
+    The default test client for making REST API calls.
+    Using this fixture will also guarantee that lifespan startup has happened.
+
+    Do not use `client` and `sync_client` at the same time.
+    """
+    # AsyncClient does not automatically send ASGI lifespan events to the app
+    # https://asgi.readthedocs.io/en/latest/specs/lifespan.html
+    async with LifespanManager(app):
+        async with AsyncClient(app=app,
+                               base_url='http://test') as ac:
+            yield ac
 
 
 @pytest.fixture
-async def client(app, setup, aiohttp_client, aiohttp_server):
-    """Allows patching the app or aiohttp_client before yielding it.
-
-    Any tests wishing to add custom behavior to app can override the fixture
+def sync_client(app: FastAPI) -> Generator[TestClient, None, None]:
     """
-    LOGGER.debug('Available features:')
-    for name, impl in app.get(features.FEATURES_KEY, {}).items():
-        LOGGER.debug(f'Feature "{name}" = {impl}')
-    LOGGER.debug(app.on_startup)
+    The alternative test client for making REST API calls.
+    Using this fixture will also guarantee that lifespan startup has happened.
 
-    test_server: test_utils.TestServer = await aiohttp_server(app)
-    test_client: test_utils.TestClient = await aiohttp_client(test_server)
-    return test_client
+    `sync_client` is provided because `client` cannot make websocket requests.
 
-
-@pytest.fixture(scope='session')
-def mqtt_container():
-    with testing.docker_container(
-        name='mqtt-test-container',
-        ports={'mqtt': 1883, 'ws': 15675},
-        args=['ghcr.io/brewblox/mosquitto:develop'],
-    ) as ports:
-        yield ports
-
-
-@pytest.fixture(scope='session')
-def redis_container():
-    with testing.docker_container(
-        name='redis-test-container',
-        ports={'redis': 6379},
-        args=['redis:6.0'],
-    ) as ports:
-        yield ports
+    Do not use `client` and `sync_client` at the same time.
+    """
+    # The Starlette TestClient does send lifespan events
+    # and does not need a separate LifespanManager
+    with TestClient(app=app, base_url='http://test') as c:
+        yield c

@@ -1,15 +1,16 @@
-import json
-from functools import wraps
+import logging
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from itertools import groupby
-from typing import Optional
 
-from aiohttp import web
-from brewblox_service import brewblox_logger, features, mqtt
-
-from brewblox_history.models import DatastoreValue, ServiceConfig
 from redis import asyncio as aioredis
 
-LOGGER = brewblox_logger(__name__)
+from . import mqtt, utils
+from .models import DatastoreValue
+
+LOGGER = logging.getLogger(__name__)
+
+CV: ContextVar['RedisClient'] = ContextVar('redis.client')
 
 
 def keycat(namespace: str, key: str) -> str:
@@ -20,31 +21,25 @@ def keycatobj(obj: DatastoreValue) -> str:
     return keycat(obj.namespace, obj.id)
 
 
-def autoconnect(func):
-    @wraps(func)
-    async def wrapper(self: 'RedisClient', *args, **kwargs):
-        if not self._redis:
-            self._redis = await aioredis.from_url(self.url)
-            await self._redis
-        return await func(self, *args, **kwargs)
-    return wrapper
+class RedisClient:
 
-
-class RedisClient(features.ServiceFeature):
-
-    def __init__(self, app: web.Application):
-        super().__init__(app)
-        config: ServiceConfig = app['config']
-        self.url = config.redis_url
+    def __init__(self):
+        config = utils.get_config()
+        self.url = f'redis://{config.redis_host}:{config.redis_port}'
         self.topic = config.datastore_topic
-        # Lazy-loaded in autoconnect wrapper
         self._redis: aioredis.Redis = None
 
-    async def shutdown(self, app: web.Application):
-        if self._redis:
-            await self._redis.close()
+    async def connect(self):
+        await self.disconnect()
+        self._redis = await aioredis.from_url(self.url)
+        await self._redis.initialize()
 
-    async def _mkeys(self, namespace: str, ids: Optional[list[str]], filter: Optional[str]) -> list[str]:
+    async def disconnect(self):
+        if self._redis:
+            await self._redis.aclose()
+            self._redis = None
+
+    async def _mkeys(self, namespace: str, ids: list[str] | None, filter: str | None) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
         if filter is not None:
             keys += [key.decode()
@@ -57,32 +52,27 @@ class RedisClient(features.ServiceFeature):
         Objects are grouped by top-level namespace, and then published
         to a topic postfixed with the top-level namespace.
         """
+        fmqtt = mqtt.CV.get()
+
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                await mqtt.publish(self.app,
-                                   topic=f'{self.topic}/{key}',
-                                   payload=json.dumps({'changed': list((v.dict() for v in group))}),
-                                   err=False)
+                fmqtt.publish(f'{self.topic}/{key}',
+                              {'changed': list((v.model_dump() for v in group))})
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                await mqtt.publish(self.app,
-                                   topic=f'{self.topic}/{key}',
-                                   payload=json.dumps({'deleted': list(group)}),
-                                   err=False)
+                fmqtt.publish(f'{self.topic}/{key}',
+                              {'deleted': list(group)})
 
-    @autoconnect
     async def ping(self):
         await self._redis.ping()
 
-    @autoconnect
-    async def get(self, namespace: str, id: str) -> Optional[DatastoreValue]:
+    async def get(self, namespace: str, id: str) -> DatastoreValue | None:
         resp = await self._redis.get(keycat(namespace, id))
-        return DatastoreValue.parse_raw(resp) if resp else None
+        return DatastoreValue.model_validate_json(resp) if resp else None
 
-    @autoconnect
     async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreValue]:
         if ids is None and filter is None:
             filter = '*'
@@ -90,33 +80,29 @@ class RedisClient(features.ServiceFeature):
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-        return [DatastoreValue.parse_raw(v)
+        return [DatastoreValue.model_validate_json(v)
                 for v in values
                 if v is not None]
 
-    @autoconnect
     async def set(self, value: DatastoreValue) -> DatastoreValue:
-        await self._redis.set(keycatobj(value), value.json())
+        await self._redis.set(keycatobj(value), value.model_dump_json())
         await self._publish(changed=[value])
         return value
 
-    @autoconnect
     async def mset(self, values: list[DatastoreValue]) -> list[DatastoreValue]:
         if values:
             db_keys = [keycatobj(v) for v in values]
-            db_values = [v.json() for v in values]
+            db_values = [v.model_dump_json() for v in values]
             await self._redis.mset(dict(zip(db_keys, db_values)))
             await self._publish(changed=values)
         return values
 
-    @autoconnect
     async def delete(self, namespace: str, id: str) -> int:
         key = keycat(namespace, id)
         count = await self._redis.delete(key)
         await self._publish(deleted=[key])
         return count
 
-    @autoconnect
     async def mdelete(self, namespace: str, ids: list[str] = None, filter: str = None) -> int:
         keys = await self._mkeys(namespace, ids, filter)
         count = 0
@@ -126,9 +112,13 @@ class RedisClient(features.ServiceFeature):
         return count
 
 
-def setup(app: web.Application):
-    features.add(app, RedisClient(app))
+def setup():
+    CV.set(RedisClient())
 
 
-def fget(app: web.Application) -> RedisClient:
-    return features.get(app, RedisClient)
+@asynccontextmanager
+async def lifespan():
+    client = CV.get()
+    await client.connect()
+    yield
+    await client.disconnect()

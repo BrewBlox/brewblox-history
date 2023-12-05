@@ -1,20 +1,53 @@
-import json
+import logging
+import traceback
 from datetime import datetime, timedelta, timezone
-from functools import partial
-from typing import Optional, Tuple, Union
+from functools import lru_cache
 
 import ciso8601
-from aiohttp import web
-from brewblox_service import brewblox_logger
 from pytimeparse.timeparse import timeparse
+
+from .models import ServiceConfig
 
 FLAT_SEPARATOR = '/'
 DESIRED_POINTS = 1000
 DEFAULT_DURATION = timedelta(days=1)
 
-LOGGER = brewblox_logger(__name__, True)
+LOGGER = logging.getLogger(__name__)
 
-DatetimeSrc_ = Union[str, int, float, datetime, None]
+DatetimeSrc_ = str | int | float | datetime | None
+
+
+class DuplicateFilter(logging.Filter):
+    """
+    Logging filter to prevent long-running errors from flooding the log.
+    When set, repeated log messages are blocked.
+    This will not block alternating messages, and is module-specific.
+    """
+
+    def filter(self, record):
+        current_log = (record.module, record.levelno, record.msg)
+        if current_log != getattr(self, 'last_log', None):
+            self.last_log = current_log
+            return True
+        return False
+
+
+@lru_cache
+def get_config() -> ServiceConfig:  # pragma: no cover
+    return ServiceConfig()
+
+
+def strex(ex: Exception, tb=False):
+    """
+    Generic formatter for exceptions.
+    A formatted traceback is included if `tb=True`.
+    """
+    msg = f'{type(ex).__name__}({str(ex)})'
+    if tb:
+        trace = ''.join(traceback.format_exception(None, ex, ex.__traceback__))
+        return f'{msg}\n\n{trace}'
+    else:
+        return msg
 
 
 def parse_duration(value: str) -> timedelta:
@@ -24,7 +57,7 @@ def parse_duration(value: str) -> timedelta:
         return timedelta(seconds=timeparse(value))
 
 
-def parse_datetime(value: DatetimeSrc_) -> Optional[datetime]:
+def parse_datetime(value: DatetimeSrc_) -> datetime | None:
     if value is None or value == '':
         return None
 
@@ -55,7 +88,7 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
     - s
     - ISO8601
     """
-    dt: Optional[datetime] = parse_datetime(value)
+    dt: datetime | None = parse_datetime(value)
 
     if dt is None:
         return ''
@@ -66,20 +99,9 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
     elif precision == 's':
         return str(int(dt.timestamp()))
     elif precision == 'ISO8601':
-        return dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        return dt.isoformat(timespec='auto').replace('+00:00', 'Z')
     else:
         raise ValueError(f'Invalid precision: {precision}')
-
-
-def json_serial(obj):
-    if isinstance(obj, datetime):
-        return int(obj.timestamp() * 1e3)  # ms precision
-    raise TypeError(f'{repr(obj)} is not serializable')
-
-
-# This extends the default JSON serializer to allow for datetime in JSON
-json_dumps = partial(json.dumps, default=json_serial)
-json_response = partial(web.json_response, dumps=json_dumps)
 
 
 def is_open_ended(start=None, duration=None, end=None) -> bool:
@@ -101,7 +123,7 @@ def now() -> datetime:  # pragma: no cover
     return datetime.now(timezone.utc)
 
 
-def select_timeframe(start, duration, end, min_step) -> Tuple[str, str, str]:
+def select_timeframe(start, duration, end, min_step) -> tuple[str, str, str]:
     """Calculate start, end, and step for given start, duration, and end
 
     The returned `start` and `end` strings are either empty,
@@ -109,8 +131,8 @@ def select_timeframe(start, duration, end, min_step) -> Tuple[str, str, str]:
 
     `duration` is formatted as `{value}s`.
     """
-    dt_start: Optional[datetime] = None
-    dt_end: Optional[datetime] = None
+    dt_start: datetime | None = None
+    dt_end: datetime | None = None
 
     if all([start, duration, end]):
         raise ValueError('At most two out of three timeframe arguments can be provided')
