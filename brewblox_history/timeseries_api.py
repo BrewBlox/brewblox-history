@@ -199,10 +199,12 @@ async def timeseries_stream(ws: WebSocket):
                     'message': msg,
                 })
 
-    except WebSocketDisconnect:
+    except WebSocketDisconnect:  # pragma: no cover
         pass
 
     finally:
         # Coverage complains about next line -> exit not being covered
         for task in streams.values():  # pragma: no cover
             task.cancel()
+        await asyncio.gather(*streams.values(),
+                             return_exceptions=True)

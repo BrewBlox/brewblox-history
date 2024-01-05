@@ -4,6 +4,7 @@ Any fixtures declared here are available to all test functions in this directory
 """
 
 
+import asyncio
 import logging
 from collections.abc import Generator
 from pathlib import Path
@@ -12,9 +13,9 @@ import pytest
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 from httpx import AsyncClient
+from httpx_ws.transport import ASGIWebSocketTransport
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from pytest_docker.plugin import Services as DockerServices
-from starlette.testclient import TestClient
 
 from brewblox_history import app_factory, utils
 from brewblox_history.models import ServiceConfig
@@ -66,6 +67,23 @@ def config(monkeypatch: pytest.MonkeyPatch,
 
 
 @pytest.fixture(autouse=True)
+def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+    """
+    Allows keeping track of calls to asyncio sleep.
+    For tests, we want to reduce all sleep durations.
+    Set a breakpoint in the wrapper to track all calls.
+    """
+    real_func = asyncio.sleep
+
+    async def wrapper(delay: float, *args, **kwargs):
+        if delay > 0.1:
+            print(f'asyncio.sleep({delay}) in {request.node.name}')
+        return await real_func(delay, *args, **kwargs)
+    monkeypatch.setattr('asyncio.sleep', wrapper)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def setup_logging(config):
     app_factory.setup_logging(True)
 
@@ -83,32 +101,28 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-async def client(app: FastAPI) -> Generator[AsyncClient, None, None]:
+async def manager(app: FastAPI) -> Generator[LifespanManager, None, None]:
     """
-    The default test client for making REST API calls.
-    Using this fixture will also guarantee that lifespan startup has happened.
+    AsyncClient does not automatically send ASGI lifespan events to the app
+    https://asgi.readthedocs.io/en/latest/specs/lifespan.html
 
-    Do not use `client` and `sync_client` at the same time.
+    For testing, this ensures that lifespan() functions are handled.
+    If you don't need to make HTTP requests, you can use the manager
+    without the `client` fixture.
     """
-    # AsyncClient does not automatically send ASGI lifespan events to the app
-    # https://asgi.readthedocs.io/en/latest/specs/lifespan.html
-    async with LifespanManager(app):
-        async with AsyncClient(app=app,
-                               base_url='http://test') as ac:
-            yield ac
+    async with LifespanManager(app) as mgr:
+        yield mgr
 
 
 @pytest.fixture
-def sync_client(app: FastAPI) -> Generator[TestClient, None, None]:
+async def client(app: FastAPI, manager: LifespanManager) -> Generator[AsyncClient, None, None]:
     """
-    The alternative test client for making REST API calls.
+    The default test client for making REST API calls.
     Using this fixture will also guarantee that lifespan startup has happened.
-
-    `sync_client` is provided because `client` cannot make websocket requests.
-
-    Do not use `client` and `sync_client` at the same time.
     """
-    # The Starlette TestClient does send lifespan events
-    # and does not need a separate LifespanManager
-    with TestClient(app=app, base_url='http://test') as c:
-        yield c
+    # AsyncClient does not automatically send ASGI lifespan events to the app
+    # https://asgi.readthedocs.io/en/latest/specs/lifespan.html
+    async with AsyncClient(app=app,
+                           base_url='http://test',
+                           transport=ASGIWebSocketTransport(app)) as ac:
+        yield ac

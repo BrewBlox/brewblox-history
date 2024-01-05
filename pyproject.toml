@@ -33,6 +33,7 @@ pytest-docker = "*"
 pytest-asyncio = "*"
 pytest-httpx = "*"
 asgi-lifespan = "*"
+httpx-ws = "*"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

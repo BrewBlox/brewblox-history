@@ -12,15 +12,16 @@ services:
     image: victoriametrics/victoria-metrics:v1.88.0
     labels:
       - traefik.http.services.victoria.loadbalancer.server.port=8428
+    command: --envflag.enable=true --envflag.prefix=VM_
+    environment:
+      - VM_retentionPeriod=100y
+      - VM_influxMeasurementFieldSeparator=/
+      - VM_http_pathPrefix=/victoria
+      - VM_search_latencyOffset=10s
     volumes:
       - type: bind
         source: ./victoria
         target: /victoria-metrics-data
-    command: >-
-      --retentionPeriod=100y
-      --influxMeasurementFieldSeparator=/
-      --http.pathPrefix=/victoria
-      --search.latencyOffset=10s
 
   redis:
     image: redis:6.0
@@ -41,9 +42,12 @@ services:
       - type: bind
         source: ./parse_appenv.py
         target: /app/parse_appenv.py
+      - type: bind
+        source: ./entrypoint.sh
+        target: /app/entrypoint.sh
     environment:
-      - BREWBLOX_DEBUG=True
       - UVICORN_RELOAD=True
+      - BREWBLOX_HISTORY_DEBUG=True
     command: --unknown=flappy
     ports:
       - "5000:5000"

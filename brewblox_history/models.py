@@ -33,7 +33,7 @@ def flatten(d, parent_key=''):
 class ServiceConfig(BaseSettings):
     model_config = SettingsConfigDict(
         env_file='.appenv',
-        env_prefix='brewblox_',
+        env_prefix='brewblox_history_',
         case_sensitive=False,
         json_schema_extra='ignore',
     )

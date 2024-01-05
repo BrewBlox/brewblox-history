@@ -123,7 +123,11 @@ def now() -> datetime:  # pragma: no cover
     return datetime.now(timezone.utc)
 
 
-def select_timeframe(start, duration, end, min_step) -> tuple[str, str, str]:
+def select_timeframe(start: DatetimeSrc_,
+                     duration: str,
+                     end: DatetimeSrc_,
+                     min_step: timedelta,
+                     ) -> tuple[str, str, str]:
     """Calculate start, end, and step for given start, duration, and end
 
     The returned `start` and `end` strings are either empty,

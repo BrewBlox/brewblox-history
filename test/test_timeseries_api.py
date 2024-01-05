@@ -2,6 +2,7 @@
 Tests brewblox_history.timeseries_api
 """
 
+import asyncio
 from datetime import datetime, timezone
 from time import time_ns
 from unittest.mock import ANY, AsyncMock, Mock
@@ -9,9 +10,9 @@ from unittest.mock import ANY, AsyncMock, Mock
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from httpx_ws import aconnect_ws
 from pytest import approx
 from pytest_mock import MockerFixture
-from starlette.testclient import TestClient, WebSocketTestSession
 
 from brewblox_history import app_factory, timeseries_api, utils
 from brewblox_history.models import (ServiceConfig, TimeSeriesCsvQuery,
@@ -166,7 +167,7 @@ async def test_empty_csv(client: AsyncClient, m_victoria: Mock):
     assert resp.text == 'a,b,c\n'
 
 
-async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria: Mock):
+async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = 0.001
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(
@@ -200,18 +201,16 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
         ),
     ]
 
-    with sync_client.websocket_connect('/timeseries/stream') as ws:
-        ws: WebSocketTestSession
-
+    async with aconnect_ws('/timeseries/stream', client) as ws:
         # Metrics
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-metrics',
             'command': 'metrics',
             'query': {
                 'fields': ['a', 'b', 'c'],
             },
         })
-        resp = ws.receive_json()
+        resp = await ws.receive_json()
         assert resp == {
             'id': 'test-metrics',
             'data': {
@@ -220,7 +219,7 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
         }
 
         # Ranges
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-ranges-once',
             'command': 'ranges',
             'query': {
@@ -228,7 +227,7 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
                 'end': '2021-07-15T14:29:30.000Z',
             },
         })
-        resp = ws.receive_json()
+        resp = await ws.receive_json()
         assert resp == {
             'id': 'test-ranges-once',
             'data': {
@@ -238,7 +237,7 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
         }
 
         # Live ranges
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-ranges-live',
             'command': 'ranges',
             'query': {
@@ -246,7 +245,7 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
                 'duration': '30m',
             },
         })
-        resp = ws.receive_json()
+        resp = await ws.receive_json()
         assert resp == {
             'id': 'test-ranges-live',
             'data': {
@@ -254,7 +253,7 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
                 'ranges': [ANY, ANY, ANY],
             },
         }
-        resp = ws.receive_json()
+        resp = await ws.receive_json()
         assert resp == {
             'id': 'test-ranges-live',
             'data': {
@@ -264,13 +263,19 @@ async def test_stream(sync_client: TestClient, config: ServiceConfig, m_victoria
         }
 
         # Stop live ranges
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-ranges-live',
             'command': 'stop',
         })
 
+        # https://github.com/frankie567/httpx-ws/issues/49
+        await ws.close()
+        await asyncio.gather(ws._background_receive_task,
+                             ws._background_keepalive_ping_task,
+                             return_exceptions=True)
 
-async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
+
+async def test_stream_error(client: AsyncClient, m_victoria: Mock):
     dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
     m_victoria.ranges.side_effect = RuntimeError
     m_victoria.metrics.return_value = [
@@ -281,16 +286,14 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
         ),
     ]
 
-    with sync_client.websocket_connect('/timeseries/stream') as ws:
-        ws: WebSocketTestSession
-
+    async with aconnect_ws('/timeseries/stream', client) as ws:
         # Invalid request
-        ws.send_json({'empty': True})
-        resp = ws.receive_json()
+        await ws.send_json({'empty': True})
+        resp = await ws.receive_json()
         assert resp['error']
 
         # Backend raises error
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-ranges-once',
             'command': 'ranges',
             'query': {
@@ -300,7 +303,7 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
         })
 
         # Other command is OK
-        ws.send_json({
+        await ws.send_json({
             'id': 'test-metrics',
             'command': 'metrics',
             'query': {
@@ -308,7 +311,7 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
             },
         })
 
-        resp = ws.receive_json()
+        resp = await ws.receive_json()
         assert resp == {
             'id': 'test-metrics',
             'data': {
@@ -319,3 +322,9 @@ async def test_stream_error(sync_client: TestClient, m_victoria: Mock):
                 }],
             },
         }
+
+        # https://github.com/frankie567/httpx-ws/issues/49
+        await ws.close()
+        await asyncio.gather(ws._background_receive_task,
+                             ws._background_keepalive_ping_task,
+                             return_exceptions=True)
