@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from contextvars import ContextVar
-from datetime import timedelta
 from urllib.parse import quote
 
 import httpx
@@ -33,7 +32,6 @@ class VictoriaClient:
             str(config.victoria_port),
             config.victoria_path,
         ])
-        self._minimum_step = timedelta(seconds=config.minimum_step)
         self._query_headers = {
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept-Encoding': 'gzip',
@@ -65,16 +63,17 @@ class VictoriaClient:
         return retv
 
     async def metrics(self, args: TimeSeriesMetricsQuery) -> list[TimeSeriesMetric]:
+        start = utils.now() - utils.parse_duration(args.duration)
         return list((
             v for k, v in self._cached_metrics.items()
             if k in args.fields
+            and v.timestamp >= start
         ))
 
     async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
         start, end, step = utils.select_timeframe(args.start,
                                                   args.duration,
-                                                  args.end,
-                                                  self._minimum_step)
+                                                  args.end)
         queries = [
             f'query=avg_over_time({{__name__="{quote(f)}"}}[{step}])&step={step}&start={start}&end={end}'
             for f in args.fields
@@ -95,8 +94,7 @@ class VictoriaClient:
     async def csv(self, args: TimeSeriesCsvQuery):
         start, end, _ = utils.select_timeframe(args.start,
                                                args.duration,
-                                               args.end,
-                                               self._minimum_step)
+                                               args.end)
         matches = '&'.join([
             f'match[]={{__name__="{quote(f)}"}}'
             for f in args.fields

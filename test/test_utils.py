@@ -45,6 +45,7 @@ def test_strex():
 def test_parse_duration():
     assert utils.parse_duration('2h10m') == timedelta(hours=2, minutes=10)
     assert utils.parse_duration('10') == timedelta(seconds=10)
+    assert utils.parse_duration(timedelta(hours=1)) == timedelta(minutes=60)
 
     with pytest.raises(TypeError):
         utils.parse_duration('')
@@ -95,15 +96,16 @@ def test_select_timeframe(mocker):
         return str(int(dt.timestamp()))
 
     mocker.patch(TESTED + '.now').side_effect = now
-    min_step = timedelta(seconds=10)
 
     with pytest.raises(ValueError):
         utils.select_timeframe(start='yesterday',
                                duration='2d',
-                               end='tomorrow',
-                               min_step=min_step)
+                               end='tomorrow')
 
-    assert utils.select_timeframe(None, None, None, min_step) == (
+    assert utils.select_timeframe(None,
+                                  None,
+                                  None
+                                  ) == (
         fmt(datetime(2021, 7, 14, 19)),
         '',
         '86s'
@@ -111,8 +113,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=now(),
                                   duration='1h',
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -121,8 +122,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=now(),
                                   duration=None,
-                                  end=datetime(2021, 7, 15, 20),
-                                  min_step=min_step
+                                  end=datetime(2021, 7, 15, 20)
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -131,8 +131,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration='1h',
-                                  end=datetime(2021, 7, 15, 20),
-                                  min_step=min_step
+                                  end=datetime(2021, 7, 15, 20)
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -141,8 +140,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=datetime(2021, 7, 15, 18),
                                   duration=None,
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
@@ -151,8 +149,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration='1h',
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
@@ -161,8 +158,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration=None,
-                                  end=now(),
-                                  min_step=min_step
+                                  end=now()
                                   ) == (
         fmt(datetime(2021, 7, 14, 19)),
         fmt(now()),

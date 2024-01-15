@@ -111,7 +111,7 @@ async def protected(desc: str):
 
 
 async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
-    interval = utils.get_config().ranges_interval
+    config = utils.get_config()
     open_ended = utils.is_open_ended(start=query.start,
                                      duration=query.duration,
                                      end=query.end)
@@ -135,11 +135,11 @@ async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
         if not open_ended:
             break
 
-        await asyncio.sleep(interval)
+        await asyncio.sleep(config.ranges_interval.total_seconds())
 
 
 async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery):
-    interval = utils.get_config().metrics_interval
+    config = utils.get_config()
 
     while True:
         async with protected('metrics push'):
@@ -152,7 +152,7 @@ async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery)
                 'data': jsonable_encoder(data),
             })
 
-        await asyncio.sleep(interval)
+        await asyncio.sleep(config.metrics_interval.total_seconds())
 
 
 @router.websocket('/stream')
