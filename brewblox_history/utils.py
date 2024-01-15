@@ -6,14 +6,12 @@ from functools import lru_cache
 import ciso8601
 from pytimeparse.timeparse import timeparse
 
+from . import utils
 from .models import ServiceConfig
-
-FLAT_SEPARATOR = '/'
-DESIRED_POINTS = 1000
-DEFAULT_DURATION = timedelta(days=1)
 
 LOGGER = logging.getLogger(__name__)
 
+DurationSrc_ = str | int | float | timedelta
 DatetimeSrc_ = str | int | float | datetime | None
 
 
@@ -50,11 +48,16 @@ def strex(ex: Exception, tb=False):
         return msg
 
 
-def parse_duration(value: str) -> timedelta:
+def parse_duration(value: DurationSrc_) -> timedelta:
+    if isinstance(value, timedelta):
+        return value
+
     try:
-        return timedelta(seconds=float(value))
+        total_seconds = float(value)
     except ValueError:
-        return timedelta(seconds=timeparse(value))
+        total_seconds = timeparse(value)
+
+    return timedelta(seconds=total_seconds)
 
 
 def parse_datetime(value: DatetimeSrc_) -> datetime | None:
@@ -124,9 +127,8 @@ def now() -> datetime:  # pragma: no cover
 
 
 def select_timeframe(start: DatetimeSrc_,
-                     duration: str,
+                     duration: DurationSrc_,
                      end: DatetimeSrc_,
-                     min_step: timedelta,
                      ) -> tuple[str, str, str]:
     """Calculate start, end, and step for given start, duration, and end
 
@@ -135,6 +137,7 @@ def select_timeframe(start: DatetimeSrc_,
 
     `duration` is formatted as `{value}s`.
     """
+    config = utils.get_config()
     dt_start: datetime | None = None
     dt_end: datetime | None = None
 
@@ -142,7 +145,7 @@ def select_timeframe(start: DatetimeSrc_,
         raise ValueError('At most two out of three timeframe arguments can be provided')
 
     elif not any([start, duration, end]):
-        dt_start = now() - DEFAULT_DURATION
+        dt_start = now() - config.query_duration_default
         dt_end = None
 
     elif start and duration:
@@ -167,7 +170,7 @@ def select_timeframe(start: DatetimeSrc_,
 
     elif end:
         dt_end = parse_datetime(end)
-        dt_start = dt_end - DEFAULT_DURATION
+        dt_start = dt_end - config.query_duration_default
 
     # This path should never be reached
     else:  # pragma: no cover
@@ -176,8 +179,8 @@ def select_timeframe(start: DatetimeSrc_,
     # Calculate optimal step interval
     # We want a decent resolution without flooding the front-end with data
     actual_duration: timedelta = (dt_end or now()) - dt_start
-    desired_step = actual_duration.total_seconds() // DESIRED_POINTS
-    step = int(max(desired_step, min_step.total_seconds()))
+    desired_step = actual_duration.total_seconds() // config.query_desired_points
+    step = int(max(desired_step, config.minimum_step.total_seconds()))
 
     return (
         format_datetime(dt_start, 's'),

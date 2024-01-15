@@ -3,7 +3,7 @@ Pydantic data models
 """
 
 import collections
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal, NamedTuple
 
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
@@ -56,9 +56,12 @@ class ServiceConfig(BaseSettings):
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
 
-    ranges_interval: float = 10
-    metrics_interval: float = 10
-    minimum_step: float = 10
+    ranges_interval: timedelta = timedelta(seconds=10)
+    metrics_interval: timedelta = timedelta(seconds=10)
+    minimum_step: timedelta = timedelta(seconds=10)
+
+    query_duration_default: timedelta = timedelta(days=1)
+    query_desired_points: int = 1000
 
 
 class HistoryEvent(BaseModel):
@@ -113,11 +116,12 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: str
+    duration: str = Field('10m', examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
+    duration: str = Field('10m', examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):

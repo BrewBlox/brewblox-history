@@ -3,7 +3,7 @@ Tests brewblox_history.timeseries_api
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import time_ns
 from unittest.mock import ANY, AsyncMock, Mock
 
@@ -168,7 +168,7 @@ async def test_empty_csv(client: AsyncClient, m_victoria: Mock):
 
 
 async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
-    config.ranges_interval = 0.001
+    config.ranges_interval = timedelta(milliseconds=1)
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(
             metric='a',
@@ -275,7 +275,8 @@ async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mo
                              return_exceptions=True)
 
 
-async def test_stream_error(client: AsyncClient, m_victoria: Mock):
+async def test_stream_error(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
+    config.ranges_interval = timedelta(milliseconds=1)
     dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
     m_victoria.ranges.side_effect = RuntimeError
     m_victoria.metrics.return_value = [
