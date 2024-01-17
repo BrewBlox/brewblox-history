@@ -2,6 +2,7 @@
 Tests brewblox_history.utils
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -11,9 +12,40 @@ from brewblox_history import utils
 TESTED = utils.__name__
 
 
+def test_duplicate_filter(caplog: pytest.LogCaptureFixture):
+    logger = logging.getLogger('test_duplicate')
+    logger.addFilter(utils.DuplicateFilter())
+    logger.setLevel(logging.INFO)
+
+    caplog.clear()
+    logger.info('message 1')
+    logger.info('message 1')
+    assert len(caplog.records) == 1
+    assert caplog.records[-1].message == 'message 1'
+
+    caplog.clear()
+    logger.info('message 2')
+    logger.info('message 3')
+    logger.info('message 2')
+    assert len(caplog.records) == 3
+    assert caplog.records[-1].message == 'message 2'
+
+
+def test_strex():
+    try:
+        raise RuntimeError('oops')
+    except RuntimeError as ex:
+        assert utils.strex(ex) == 'RuntimeError(oops)'
+
+        with_tb = utils.strex(ex, tb=True)
+        assert with_tb.startswith('RuntimeError(oops)')
+        assert 'test_utils.py' in with_tb
+
+
 def test_parse_duration():
     assert utils.parse_duration('2h10m') == timedelta(hours=2, minutes=10)
     assert utils.parse_duration('10') == timedelta(seconds=10)
+    assert utils.parse_duration(timedelta(hours=1)) == timedelta(minutes=60)
 
     with pytest.raises(TypeError):
         utils.parse_duration('')
@@ -40,7 +72,7 @@ def test_parse_datetime():
 
 def test_format_datetime():
     time_s = 1626359370
-    iso_str = '2021-07-15T14:29:30.000Z'
+    iso_str = '2021-07-15T14:29:30Z'
     time_ms = time_s * 1000
     dt = datetime.fromtimestamp(time_s, tz=timezone.utc)
 
@@ -64,15 +96,16 @@ def test_select_timeframe(mocker):
         return str(int(dt.timestamp()))
 
     mocker.patch(TESTED + '.now').side_effect = now
-    min_step = timedelta(seconds=10)
 
     with pytest.raises(ValueError):
         utils.select_timeframe(start='yesterday',
                                duration='2d',
-                               end='tomorrow',
-                               min_step=min_step)
+                               end='tomorrow')
 
-    assert utils.select_timeframe(None, None, None, min_step) == (
+    assert utils.select_timeframe(None,
+                                  None,
+                                  None
+                                  ) == (
         fmt(datetime(2021, 7, 14, 19)),
         '',
         '86s'
@@ -80,8 +113,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=now(),
                                   duration='1h',
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -90,8 +122,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=now(),
                                   duration=None,
-                                  end=datetime(2021, 7, 15, 20),
-                                  min_step=min_step
+                                  end=datetime(2021, 7, 15, 20)
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -100,8 +131,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration='1h',
-                                  end=datetime(2021, 7, 15, 20),
-                                  min_step=min_step
+                                  end=datetime(2021, 7, 15, 20)
                                   ) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
@@ -110,8 +140,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=datetime(2021, 7, 15, 18),
                                   duration=None,
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
@@ -120,8 +149,7 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration='1h',
-                                  end=None,
-                                  min_step=min_step
+                                  end=None
                                   ) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
@@ -130,16 +158,9 @@ def test_select_timeframe(mocker):
 
     assert utils.select_timeframe(start=None,
                                   duration=None,
-                                  end=now(),
-                                  min_step=min_step
+                                  end=now()
                                   ) == (
         fmt(datetime(2021, 7, 14, 19)),
         fmt(now()),
         '86s',
     )
-
-
-def test_json_dumps():
-    assert utils.json_dumps({'dt': datetime(2021, 7, 15, 19, tzinfo=timezone.utc)}) == '{"dt": 1626375600000}'
-    with pytest.raises(TypeError):
-        utils.json_dumps({'fn': lambda x: x})

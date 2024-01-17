@@ -3,10 +3,12 @@ Pydantic data models
 """
 
 import collections
-from datetime import datetime
-from typing import Any, Literal, NamedTuple, Optional
+from datetime import datetime, timedelta
+from typing import Any, Literal, NamedTuple
 
-from pydantic import BaseModel, Extra, Field, validator
+from pydantic import (BaseModel, ConfigDict, Field, field_validator,
+                      model_validator)
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def flatten(d, parent_key=''):
@@ -28,24 +30,62 @@ def flatten(d, parent_key=''):
     return dict(sorted(items, key=lambda pair: pair[0]))
 
 
-class HistoryEvent(BaseModel, extra=Extra.ignore):
+class ServiceConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file='.appenv',
+        env_prefix='brewblox_history_',
+        case_sensitive=False,
+        json_schema_extra='ignore',
+    )
+
+    name: str = 'history'
+    debug: bool = False
+
+    mqtt_protocol: Literal['mqtt', 'mqtts'] = 'mqtt'
+    mqtt_host: str = 'eventbus'
+    mqtt_port: int = 1883
+
+    redis_host: str = 'redis'
+    redis_port: int = 6379
+
+    victoria_protocol: Literal['http', 'https'] = 'http'
+    victoria_host: str = 'victoria'
+    victoria_port: int = 8428
+    victoria_path: str = Field(default='/victoria', pattern=r'^(|/.+)$')
+
+    history_topic: str = 'brewcast/history'
+    datastore_topic: str = 'brewcast/datastore'
+
+    ranges_interval: timedelta = timedelta(seconds=10)
+    metrics_interval: timedelta = timedelta(seconds=10)
+    minimum_step: timedelta = timedelta(seconds=10)
+
+    query_duration_default: timedelta = timedelta(days=1)
+    query_desired_points: int = 1000
+
+
+class HistoryEvent(BaseModel):
+    model_config = ConfigDict(
+        extra='ignore',
+    )
+
     key: str
     data: dict[str, Any]  # converted to float later
 
-    @validator('data', pre=True)
+    @field_validator('data', mode='before')
+    @classmethod
     def flatten_data(cls, v):
         assert isinstance(v, dict)
         return flatten(v)
 
 
-class DatastoreValue(BaseModel, extra=Extra.allow):
-    namespace: str
-    id: str
+class DatastoreValue(BaseModel):
+    model_config = ConfigDict(
+        extra='allow',
+    )
 
-
-class DatastoreCheckedValue(DatastoreValue):
-    namespace: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
-    id: str = Field(regex=r'^[\w\-\.\:~_ \(\)]*$')
+    namespace: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
+    id: str = Field(pattern=r'^[\w\-\.\:~_ \(\)]*$')
 
 
 class DatastoreSingleQuery(BaseModel):
@@ -55,20 +95,20 @@ class DatastoreSingleQuery(BaseModel):
 
 class DatastoreMultiQuery(BaseModel):
     namespace: str
-    ids: Optional[list[str]]
-    filter: Optional[str]
+    ids: list[str] | None = None
+    filter: str | None = None
 
 
 class DatastoreSingleValueBox(BaseModel):
-    value: DatastoreCheckedValue
+    value: DatastoreValue
 
 
 class DatastoreOptSingleValueBox(BaseModel):
-    value: Optional[DatastoreCheckedValue]
+    value: DatastoreValue | None
 
 
 class DatastoreMultiValueBox(BaseModel):
-    values: list[DatastoreCheckedValue]
+    values: list[DatastoreValue]
 
 
 class DatastoreDeleteResponse(BaseModel):
@@ -76,28 +116,29 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: str
+    duration: str = Field('1d', examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
+    duration: str = Field('10m', examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):
     metric: str
     value: float
-    timestamp: datetime = Field(example='2020-01-01T20:00:00.000Z')
+    timestamp: datetime = Field(examples=['2020-01-01T20:00:00.000Z'])
 
 
 class TimeSeriesRangesQuery(BaseModel):
-    fields: list[str] = Field(example=['spark-one/sensor/value[degC]'])
-    start: Optional[datetime] = Field(example='2020-01-01T20:00:00.000Z')
-    end: Optional[datetime] = Field(example='2030-01-01T20:00:00.000Z')
-    duration: Optional[str] = Field(example='1d')
+    fields: list[str] = Field(examples=[['spark-one/sensor/value[degC]']])
+    start: datetime | None = Field(None, examples=['2020-01-01T20:00:00.000Z'])
+    end: datetime | None = Field(None, examples=['2030-01-01T20:00:00.000Z'])
+    duration: str | None = Field(None, examples=['1d'])
 
 
 class TimeSeriesRangeValue(NamedTuple):
-    timestamp: int
+    timestamp: float
     value: str  # Number serialized as string
 
 
@@ -117,7 +158,20 @@ class TimeSeriesCsvQuery(TimeSeriesRangesQuery):
 class TimeSeriesStreamCommand(BaseModel):
     id: str
     command: Literal['ranges', 'metrics', 'stop']
-    query: Optional[dict]
+    query: TimeSeriesRangesQuery | TimeSeriesMetricsQuery | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def check_query_type(cls, data: dict) -> dict:
+        command = data.get('command')
+        query = data.get('query', {})
+        if command == 'ranges':
+            data['query'] = TimeSeriesRangesQuery(**query)
+        if command == 'metrics':
+            data['query'] = TimeSeriesMetricsQuery(**query)
+        if command == 'stop':
+            data['query'] = None
+        return data
 
 
 class TimeSeriesMetricStreamData(BaseModel):
@@ -127,3 +181,12 @@ class TimeSeriesMetricStreamData(BaseModel):
 class TimeSeriesRangeStreamData(BaseModel):
     initial: bool
     ranges: list[TimeSeriesRange]
+
+
+class PingResponse(BaseModel):
+    ping: Literal['pong'] = 'pong'
+
+
+class ErrorResponse(BaseModel):
+    error: str
+    details: str
