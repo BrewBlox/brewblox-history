@@ -116,7 +116,7 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: str = Field('10m', examples=['10m', '1d'])
+    duration: str = Field('1d', examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
