@@ -67,6 +67,8 @@ def create_app() -> FastAPI:
         import debugpy
         debugpy.listen(('0.0.0.0', 5678))
         LOGGER.info('Debugger is enabled and listening on 5678')
+        debugpy.wait_for_client()
+        debugpy.breakpoint()
 
     # Call setup functions for modules
     mqtt.setup()
