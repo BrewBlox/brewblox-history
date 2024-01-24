@@ -60,6 +60,14 @@ def create_app() -> FastAPI:
     config = utils.get_config()
     setup_logging(config.debug)
 
+    if config.debugger:  # pragma: no cover
+        import faulthandler
+        faulthandler.enable()
+
+        import debugpy
+        debugpy.listen(('0.0.0.0', 5678))
+        LOGGER.info('Debugger is enabled and listening on 5678')
+
     # Call setup functions for modules
     mqtt.setup()
     redis.setup()
