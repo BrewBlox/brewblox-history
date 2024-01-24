@@ -1,4 +1,3 @@
-import debugpy
 import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from pprint import pformat
@@ -11,11 +10,6 @@ from . import (datastore_api, mqtt, redis, relays, timeseries_api, utils,
 from .models import ErrorResponse
 
 LOGGER = logging.getLogger(__name__)
-
-
-debugpy.listen(('0.0.0.0', 5678))
-debugpy.wait_for_client()
-debugpy.breakpoint()
 
 
 def setup_logging(debug: bool):
@@ -70,6 +64,8 @@ def create_app() -> FastAPI:
         import faulthandler
         faulthandler.enable()
 
+        import debugpy
+        debugpy.listen(('0.0.0.0', 5678))
         LOGGER.info('Debugger is enabled and listening on 5678')
 
     # Call setup functions for modules
