@@ -13,7 +13,7 @@ pytimeparse = "^1.1.8"
 redis = "^5.0.0"
 ujson = "^5.8.0"
 sortedcontainers = "^2.4.0"
-fastapi = "^0.104.1"
+fastapi = "^0.109.1"
 uvicorn = { extras = ["standard"], version = "^0.24.0.post1" }
 pydantic-settings = "^2.1.0"
 fastapi-mqtt = "^2.0.0"
