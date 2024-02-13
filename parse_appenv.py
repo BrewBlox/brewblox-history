@@ -23,7 +23,7 @@ if __name__ == '__main__':
     args, unknown = parse_cmd_args(sys.argv[1:])
     if unknown:
         print(f'WARNING: ignoring unknown CMD arguments: {unknown}', file=sys.stderr)
-    output = [f'brewblox_{k}={shlex.quote(str(v))}'
+    output = [f'brewblox_history_{k}={shlex.quote(str(v))}'
               for k, v in vars(args).items()
               if v is not None and v is not False]
     print(*output, sep='\n')
