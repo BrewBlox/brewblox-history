@@ -40,6 +40,7 @@ class ServiceConfig(BaseSettings):
 
     name: str = 'history'
     debug: bool = False
+    debugger: bool = False
 
     mqtt_protocol: Literal['mqtt', 'mqtts'] = 'mqtt'
     mqtt_host: str = 'eventbus'

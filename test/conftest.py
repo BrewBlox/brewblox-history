@@ -6,8 +6,8 @@ Any fixtures declared here are available to all test functions in this directory
 
 import asyncio
 import logging
-from collections.abc import Generator
 from pathlib import Path
+from typing import AsyncGenerator, Generator
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -56,7 +56,7 @@ def config(monkeypatch: pytest.MonkeyPatch,
     cfg = TestConfig(
         debug=True,
         mqtt_host='localhost',
-        mqtt_port=docker_services.port_for('mqtt', 1883),
+        mqtt_port=docker_services.port_for('eventbus', 1883),
         redis_host='localhost',
         redis_port=docker_services.port_for('redis', 6379),
         victoria_host='localhost',
@@ -101,7 +101,7 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-async def manager(app: FastAPI) -> Generator[LifespanManager, None, None]:
+async def manager(app: FastAPI) -> AsyncGenerator[LifespanManager, None]:
     """
     AsyncClient does not automatically send ASGI lifespan events to the app
     https://asgi.readthedocs.io/en/latest/specs/lifespan.html
@@ -115,7 +115,7 @@ async def manager(app: FastAPI) -> Generator[LifespanManager, None, None]:
 
 
 @pytest.fixture
-async def client(app: FastAPI, manager: LifespanManager) -> Generator[AsyncClient, None, None]:
+async def client(app: FastAPI, manager: LifespanManager) -> AsyncGenerator[AsyncClient, None]:
     """
     The default test client for making REST API calls.
     Using this fixture will also guarantee that lifespan startup has happened.

@@ -6,7 +6,6 @@ from functools import lru_cache
 import ciso8601
 from pytimeparse.timeparse import timeparse
 
-from . import utils
 from .models import ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -137,7 +136,7 @@ def select_timeframe(start: DatetimeSrc_,
 
     `duration` is formatted as `{value}s`.
     """
-    config = utils.get_config()
+    config = get_config()
     dt_start: datetime | None = None
     dt_end: datetime | None = None
 
