@@ -4,11 +4,44 @@ Pydantic data models
 
 import collections
 from datetime import datetime, timedelta
-from typing import Any, Literal, NamedTuple
+from typing import Annotated, Any, Literal, NamedTuple
 
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
+from pydantic.functional_validators import BeforeValidator
+from pydantic_core import SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pytimeparse.timeparse import timeparse
+
+DurationSrc_ = str | int | float | timedelta
+DatetimeSrc_ = str | int | float | datetime | None
+
+pydantic_timedelta_validator = SchemaValidator(core_schema.timedelta_schema())
+pydantic_datetime_validator = SchemaValidator(core_schema.datetime_schema())
+
+
+def parse_duration(value: DurationSrc_) -> timedelta:
+    if isinstance(value, timedelta):
+        return value
+
+    try:
+        value = float(value)
+    except TypeError:
+        value = None
+    except ValueError:
+        value = timeparse(value) or value
+
+    return pydantic_timedelta_validator.validate_python(value)
+
+
+def parse_datetime(value: DatetimeSrc_) -> datetime | None:
+    if value is None or value == '':
+        return None
+
+    return pydantic_datetime_validator.validate_python(value)
+
+
+loose_timedelta = Annotated[timedelta, BeforeValidator(parse_duration)]
 
 
 def flatten(d, parent_key=''):
@@ -57,11 +90,11 @@ class ServiceConfig(BaseSettings):
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
 
-    ranges_interval: timedelta = timedelta(seconds=10)
-    metrics_interval: timedelta = timedelta(seconds=10)
-    minimum_step: timedelta = timedelta(seconds=10)
+    ranges_interval: loose_timedelta = timedelta(seconds=10)
+    metrics_interval: loose_timedelta = timedelta(seconds=10)
+    minimum_step: loose_timedelta = timedelta(seconds=10)
 
-    query_duration_default: timedelta = timedelta(days=1)
+    query_duration_default: loose_timedelta = timedelta(days=1)
     query_desired_points: int = 1000
 
 
@@ -117,12 +150,14 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: str = Field('1d', examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(days=1),
+                                      examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
-    duration: str = Field('10m', examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(minutes=10),
+                                      examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):
@@ -135,7 +170,7 @@ class TimeSeriesRangesQuery(BaseModel):
     fields: list[str] = Field(examples=[['spark-one/sensor/value[degC]']])
     start: datetime | None = Field(None, examples=['2020-01-01T20:00:00.000Z'])
     end: datetime | None = Field(None, examples=['2030-01-01T20:00:00.000Z'])
-    duration: str | None = Field(None, examples=['1d'])
+    duration: loose_timedelta | None = Field(None, examples=['1d'])
 
 
 class TimeSeriesRangeValue(NamedTuple):

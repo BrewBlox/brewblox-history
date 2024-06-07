@@ -51,7 +51,7 @@ class VictoriaClient:
         return resp.json()
 
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
-        query = f'match[]={{__name__!=""}}&start={args.duration}'
+        query = f'match[]={{__name__!=""}}&start={args.duration.total_seconds()}s'
         LOGGER.debug(query)
         result = await self._json_query(query, '/api/v1/series')
         retv = [
