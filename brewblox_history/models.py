@@ -26,6 +26,8 @@ def parse_duration(value: DurationSrc_) -> timedelta:
 
     try:
         value = float(value)
+    except TypeError:
+        value = None
     except ValueError:
         value = timeparse(value) or value
 
@@ -39,7 +41,7 @@ def parse_datetime(value: DatetimeSrc_) -> datetime | None:
     return pydantic_datetime_validator.validate_python(value)
 
 
-Duration_ = Annotated[timedelta, BeforeValidator(parse_duration)]
+loose_timedelta = Annotated[timedelta, BeforeValidator(parse_duration)]
 
 
 def flatten(d, parent_key=''):
@@ -88,11 +90,11 @@ class ServiceConfig(BaseSettings):
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
 
-    ranges_interval: Duration_ = timedelta(seconds=10)
-    metrics_interval: Duration_ = timedelta(seconds=10)
-    minimum_step: Duration_ = timedelta(seconds=10)
+    ranges_interval: loose_timedelta = timedelta(seconds=10)
+    metrics_interval: loose_timedelta = timedelta(seconds=10)
+    minimum_step: loose_timedelta = timedelta(seconds=10)
 
-    query_duration_default: Duration_ = timedelta(days=1)
+    query_duration_default: loose_timedelta = timedelta(days=1)
     query_desired_points: int = 1000
 
 
@@ -148,12 +150,14 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: str = Field('1d', examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(days=1),
+                                      examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
-    duration: str = Field('10m', examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(minutes=10),
+                                      examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):
@@ -166,7 +170,7 @@ class TimeSeriesRangesQuery(BaseModel):
     fields: list[str] = Field(examples=[['spark-one/sensor/value[degC]']])
     start: datetime | None = Field(None, examples=['2020-01-01T20:00:00.000Z'])
     end: datetime | None = Field(None, examples=['2030-01-01T20:00:00.000Z'])
-    duration: str | None = Field(None, examples=['1d'])
+    duration: loose_timedelta | None = Field(None, examples=['1d'])
 
 
 class TimeSeriesRangeValue(NamedTuple):

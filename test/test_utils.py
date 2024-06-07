@@ -52,7 +52,7 @@ def test_parse_duration():
     with pytest.raises(ValidationError):
         utils.parse_duration('')
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ValidationError):
         utils.parse_duration(None)
 
 
