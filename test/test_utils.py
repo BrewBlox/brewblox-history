@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from brewblox_history import utils
 
@@ -46,8 +47,9 @@ def test_parse_duration():
     assert utils.parse_duration('2h10m') == timedelta(hours=2, minutes=10)
     assert utils.parse_duration('10') == timedelta(seconds=10)
     assert utils.parse_duration(timedelta(hours=1)) == timedelta(minutes=60)
+    assert utils.parse_duration('P1DT10M5S') == timedelta(days=1, minutes=10, seconds=5)
 
-    with pytest.raises(TypeError):
+    with pytest.raises(ValidationError):
         utils.parse_duration('')
 
     with pytest.raises(TypeError):

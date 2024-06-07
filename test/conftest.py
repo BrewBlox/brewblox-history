@@ -61,6 +61,7 @@ def config(monkeypatch: pytest.MonkeyPatch,
         redis_port=docker_services.port_for('redis', 6379),
         victoria_host='localhost',
         victoria_port=docker_services.port_for('victoria', 8428),
+        ranges_interval='10s',
     )
     monkeypatch.setattr(utils, 'get_config', lambda: cfg)
     yield cfg

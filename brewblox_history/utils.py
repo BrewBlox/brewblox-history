@@ -3,15 +3,10 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-import ciso8601
-from pytimeparse.timeparse import timeparse
-
-from .models import ServiceConfig
+from .models import (DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime,
+                     parse_duration)
 
 LOGGER = logging.getLogger(__name__)
-
-DurationSrc_ = str | int | float | timedelta
-DatetimeSrc_ = str | int | float | datetime | None
 
 
 class DuplicateFilter(logging.Filter):
@@ -45,40 +40,6 @@ def strex(ex: Exception, tb=False):
         return f'{msg}\n\n{trace}'
     else:
         return msg
-
-
-def parse_duration(value: DurationSrc_) -> timedelta:
-    if isinstance(value, timedelta):
-        return value
-
-    try:
-        total_seconds = float(value)
-    except ValueError:
-        total_seconds = timeparse(value)
-
-    return timedelta(seconds=total_seconds)
-
-
-def parse_datetime(value: DatetimeSrc_) -> datetime | None:
-    if value is None or value == '':
-        return None
-
-    elif isinstance(value, datetime):
-        return value
-
-    elif isinstance(value, str):
-        return ciso8601.parse_datetime(value)
-
-    elif isinstance(value, (int, float)):
-        # This is an educated guess
-        # 10e10 falls in 1973 if the timestamp is in milliseconds,
-        # and in 5138 if the timestamp is in seconds
-        if value > 10e10:
-            value /= 1000
-        return datetime.fromtimestamp(value, tz=timezone.utc)
-
-    else:
-        raise ValueError(str(value))
 
 
 def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:

@@ -4,11 +4,42 @@ Pydantic data models
 
 import collections
 from datetime import datetime, timedelta
-from typing import Any, Literal, NamedTuple
+from typing import Annotated, Any, Literal, NamedTuple
 
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
                       model_validator)
+from pydantic.functional_validators import BeforeValidator
+from pydantic_core import SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pytimeparse.timeparse import timeparse
+
+DurationSrc_ = str | int | float | timedelta
+DatetimeSrc_ = str | int | float | datetime | None
+
+pydantic_timedelta_validator = SchemaValidator(core_schema.timedelta_schema())
+pydantic_datetime_validator = SchemaValidator(core_schema.datetime_schema())
+
+
+def parse_duration(value: DurationSrc_) -> timedelta:
+    if isinstance(value, timedelta):
+        return value
+
+    try:
+        value = float(value)
+    except ValueError:
+        value = timeparse(value) or value
+
+    return pydantic_timedelta_validator.validate_python(value)
+
+
+def parse_datetime(value: DatetimeSrc_) -> datetime | None:
+    if value is None or value == '':
+        return None
+
+    return pydantic_datetime_validator.validate_python(value)
+
+
+Duration_ = Annotated[timedelta, BeforeValidator(parse_duration)]
 
 
 def flatten(d, parent_key=''):
@@ -57,11 +88,11 @@ class ServiceConfig(BaseSettings):
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
 
-    ranges_interval: timedelta = timedelta(seconds=10)
-    metrics_interval: timedelta = timedelta(seconds=10)
-    minimum_step: timedelta = timedelta(seconds=10)
+    ranges_interval: Duration_ = timedelta(seconds=10)
+    metrics_interval: Duration_ = timedelta(seconds=10)
+    minimum_step: Duration_ = timedelta(seconds=10)
 
-    query_duration_default: timedelta = timedelta(days=1)
+    query_duration_default: Duration_ = timedelta(days=1)
     query_desired_points: int = 1000
 
 
