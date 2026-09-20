@@ -49,8 +49,7 @@ async def timeseries_fields(query: TimeSeriesFieldsQuery) -> list[str]:
     """
     List available fields in the database.
     """
-    fields = await victoria.CV.get().fields(query)
-    return fields
+    return await victoria.CV.get().fields(query)
 
 
 @router.post('/ranges')
@@ -68,8 +67,7 @@ async def timeseries_ranges(query: TimeSeriesRangesQuery) -> list[TimeSeriesRang
     - duration:           between now() - duration and now() <br>
     - end:                between end-1d and end <br>
     """
-    ranges = [v.model_dump(by_alias=True) for v in await victoria.CV.get().ranges(query)]
-    return ranges
+    return await victoria.CV.get().ranges(query)
 
 
 @router.post('/metrics')
@@ -77,8 +75,7 @@ async def timeseries_metrics(query: TimeSeriesMetricsQuery) -> list[TimeSeriesMe
     """
     Get individual metrics from the database.
     """
-    metrics = [v.model_dump() for v in await victoria.CV.get().metrics(query)]
-    return metrics
+    return await victoria.CV.get().metrics(query)
 
 
 @router.post('/csv')

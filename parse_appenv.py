@@ -5,16 +5,33 @@ import sys
 
 def parse_cmd_args(raw_args: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser()
+    # Every argument maps to a ServiceConfig field
     parser.add_argument('-n', '--name')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--debugger', action='store_true')
 
-    parser.add_argument('--redis-url')
-    parser.add_argument('--victoria-url')
+    parser.add_argument('--mqtt-protocol')
+    parser.add_argument('--mqtt-host')
+    parser.add_argument('--mqtt-port')
+
+    parser.add_argument('--redis-host')
+    parser.add_argument('--redis-port')
+
+    parser.add_argument('--victoria-protocol')
+    parser.add_argument('--victoria-host')
+    parser.add_argument('--victoria-port')
+    parser.add_argument('--victoria-path')
+    parser.add_argument('--victoria-timeout')
+
     parser.add_argument('--history-topic')
     parser.add_argument('--datastore-topic')
+
     parser.add_argument('--ranges-interval')
     parser.add_argument('--metrics-interval')
     parser.add_argument('--minimum-step')
+
+    parser.add_argument('--query-duration-default')
+    parser.add_argument('--query-desired-points')
 
     return parser.parse_known_args(raw_args)
 

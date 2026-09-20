@@ -5,6 +5,7 @@ Tests brewblox_history.victoria
 from datetime import datetime
 
 import ciso8601
+import httpx
 import pytest
 from httpx import Request, Response
 from pytest_httpx import HTTPXMock
@@ -221,3 +222,27 @@ async def test_write_exc(vic: victoria.VictoriaClient, url: str, httpx_mock: HTT
 
     # Write errors are swallowed
     await vic.write(HistoryEvent(key='service', data={'f1': 1}))
+
+
+async def test_write_rejected(
+    vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+):
+    httpx_mock.add_response(url=f'{url}/write', method='POST', status_code=400, text='cannot parse line')
+
+    # Rejected writes are logged with the database's reason, and swallowed
+    await vic.write(HistoryEvent(key='service', data={'f1': 1}))
+    assert 'cannot parse line' in caplog.text
+
+
+async def test_query_rejected(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f'{url}/api/v1/series', method='POST', status_code=422, text='bad query')
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await vic.fields(TimeSeriesFieldsQuery())
+
+
+async def test_lifespan(vic: victoria.VictoriaClient, mocker: MockerFixture):
+    m_close = mocker.patch.object(vic, 'close', autospec=True)
+    async with victoria.lifespan():
+        m_close.assert_not_awaited()
+    m_close.assert_awaited_once()

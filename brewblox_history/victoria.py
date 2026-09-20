@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from urllib.parse import quote
 
@@ -44,7 +45,13 @@ class VictoriaClient:
         }
 
         self._cached_metrics: dict[str, TimeSeriesMetric] = {}
-        self._client = httpx.AsyncClient(base_url=self._url)
+        self._client = httpx.AsyncClient(
+            base_url=self._url,
+            timeout=httpx.Timeout(5, read=config.victoria_timeout.total_seconds()),
+        )
+
+    async def close(self):
+        await self._client.aclose()
 
     async def ping(self):
         resp = await self._client.get('/health')
@@ -53,6 +60,7 @@ class VictoriaClient:
 
     async def _json_query(self, query: str, url: str):
         resp = await self._client.post(url, content=query, headers=self._query_headers)
+        resp.raise_for_status()
         return resp.json()
 
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
@@ -141,12 +149,25 @@ class VictoriaClient:
             try:
                 line = f'{evt.key} {",".join(line_items)}'
                 LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
-                await self._client.post('/write', content=line)
+                resp = await self._client.post('/write', content=line)
+                # The database rejects the whole line on a parse error
+                resp.raise_for_status()
+
+            except httpx.HTTPStatusError as ex:
+                LOGGER.warning(f'{self} {utils.strex(ex)}: {ex.response.text}')
 
             except Exception as ex:
-                msg = utils.strex(ex)
-                LOGGER.warning(f'{self} {msg}')
+                LOGGER.warning(f'{self} {utils.strex(ex)}')
 
 
 def setup():
     CV.set(VictoriaClient())
+
+
+@asynccontextmanager
+async def lifespan():
+    client = CV.get()
+    try:
+        yield
+    finally:
+        await client.close()

@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
+        await stack.enter_async_context(victoria.lifespan())
         yield
 
 
