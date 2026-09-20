@@ -100,68 +100,41 @@ def test_select_timeframe(mocker):
     mocker.patch(TESTED + '.now').side_effect = now
 
     with pytest.raises(ValueError):
-        utils.select_timeframe(start='yesterday',
-                               duration='2d',
-                               end='tomorrow')
+        utils.select_timeframe(start='yesterday', duration='2d', end='tomorrow')
 
-    assert utils.select_timeframe(None,
-                                  None,
-                                  None
-                                  ) == (
-        fmt(datetime(2021, 7, 14, 19)),
-        '',
-        '86s'
-    )
+    assert utils.select_timeframe(None, None, None) == (fmt(datetime(2021, 7, 14, 19)), '', '86s')
 
-    assert utils.select_timeframe(start=now(),
-                                  duration='1h',
-                                  end=None
-                                  ) == (
+    assert utils.select_timeframe(start=now(), duration='1h', end=None) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
         '10s',
     )
 
-    assert utils.select_timeframe(start=now(),
-                                  duration=None,
-                                  end=datetime(2021, 7, 15, 20)
-                                  ) == (
+    assert utils.select_timeframe(start=now(), duration=None, end=datetime(2021, 7, 15, 20)) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
         '10s',
     )
 
-    assert utils.select_timeframe(start=None,
-                                  duration='1h',
-                                  end=datetime(2021, 7, 15, 20)
-                                  ) == (
+    assert utils.select_timeframe(start=None, duration='1h', end=datetime(2021, 7, 15, 20)) == (
         fmt(now()),
         fmt(datetime(2021, 7, 15, 20)),
         '10s',
     )
 
-    assert utils.select_timeframe(start=datetime(2021, 7, 15, 18),
-                                  duration=None,
-                                  end=None
-                                  ) == (
+    assert utils.select_timeframe(start=datetime(2021, 7, 15, 18), duration=None, end=None) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
         '10s',
     )
 
-    assert utils.select_timeframe(start=None,
-                                  duration='1h',
-                                  end=None
-                                  ) == (
+    assert utils.select_timeframe(start=None, duration='1h', end=None) == (
         fmt(datetime(2021, 7, 15, 18)),
         '',
         '10s',
     )
 
-    assert utils.select_timeframe(start=None,
-                                  duration=None,
-                                  end=now()
-                                  ) == (
+    assert utils.select_timeframe(start=None, duration=None, end=now()) == (
         fmt(datetime(2021, 7, 14, 19)),
         fmt(now()),
         '86s',

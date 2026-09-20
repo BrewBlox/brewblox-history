@@ -3,8 +3,7 @@ import traceback
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from .models import (DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime,
-                     parse_duration)
+from .models import DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime, parse_duration
 
 LOGGER = logging.getLogger(__name__)
 
@@ -86,10 +85,11 @@ def now() -> datetime:  # pragma: no cover
     return datetime.now(timezone.utc)
 
 
-def select_timeframe(start: DatetimeSrc_,
-                     duration: DurationSrc_,
-                     end: DatetimeSrc_,
-                     ) -> tuple[str, str, str]:
+def select_timeframe(
+    start: DatetimeSrc_,
+    duration: DurationSrc_,
+    end: DatetimeSrc_,
+) -> tuple[str, str, str]:
     """Calculate start, end, and step for given start, duration, and end
 
     The returned `start` and `end` strings are either empty,
@@ -142,8 +142,4 @@ def select_timeframe(start: DatetimeSrc_,
     desired_step = actual_duration.total_seconds() // config.query_desired_points
     step = int(max(desired_step, config.minimum_step.total_seconds()))
 
-    return (
-        format_datetime(dt_start, 's'),
-        format_datetime(dt_end, 's'),
-        f'{step}s'
-    )
+    return (format_datetime(dt_start, 's'), format_datetime(dt_end, 's'), f'{step}s')

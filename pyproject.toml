@@ -72,3 +72,36 @@ exclude = ".venv"
 
 [tool.autopep8]
 max-line-length = 120
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D211",
+    "D203",
+    "D213",
+    "D212",
+    "COM812",
+    "ISC001",
+    "Q000",
+    "Q003",
+]
+
+[tool.ruff.format]
+indent-style = "space"
+line-ending = "lf"
+quote-style = "single"
+
+[tool.ruff.lint.extend-per-file-ignores]
+"test/**/*.py" = [
+    "S101",    # asserts allowed in tests
+    "ARG",     # unused function args: fixtures are functionally relevant
+    "FBT",     # booleans as positional arguments, e.g. via @pytest.mark.parametrize()
+    "PLR2004", # magic value used in comparison
+    "S311",    # standard pseudo-random generators are not suitable for cryptographic purposes
+    "D103",    # missing docstring in public function
+    "ANN201",  # missing return type annotation
+    "SLF001",  # private member accessed
+]

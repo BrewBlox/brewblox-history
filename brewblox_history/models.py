@@ -6,8 +6,7 @@ import collections
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple
 
-from pydantic import (BaseModel, ConfigDict, Field, field_validator,
-                      model_validator)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -150,14 +149,12 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: loose_timedelta = Field(timedelta(days=1),
-                                      examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(days=1), examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
-    duration: loose_timedelta = Field(timedelta(minutes=10),
-                                      examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(minutes=10), examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):

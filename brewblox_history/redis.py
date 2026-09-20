@@ -22,7 +22,6 @@ def keycatobj(obj: DatastoreValue) -> str:
 
 
 class RedisClient:
-
     def __init__(self):
         config = utils.get_config()
         self.url = f'redis://{config.redis_host}:{config.redis_port}'
@@ -42,8 +41,7 @@ class RedisClient:
     async def _mkeys(self, namespace: str, ids: list[str] | None, filter: str | None) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
         if filter is not None:
-            keys += [key.decode()
-                     for key in await self._redis.keys(keycat(namespace, filter))]
+            keys += [key.decode() for key in await self._redis.keys(keycat(namespace, filter))]
         return keys
 
     async def _publish(self, changed: list[DatastoreValue] = None, deleted: list[str] = None):
@@ -57,14 +55,12 @@ class RedisClient:
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                fmqtt.publish(f'{self.topic}/{key}',
-                              {'changed': list((v.model_dump() for v in group))})
+                fmqtt.publish(f'{self.topic}/{key}', {'changed': list((v.model_dump() for v in group))})
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
-                fmqtt.publish(f'{self.topic}/{key}',
-                              {'deleted': list(group)})
+                fmqtt.publish(f'{self.topic}/{key}', {'deleted': list(group)})
 
     async def ping(self):
         await self._redis.ping()
@@ -80,9 +76,7 @@ class RedisClient:
         values = []
         if keys:
             values = await self._redis.mget(*keys)
-        return [DatastoreValue.model_validate_json(v)
-                for v in values
-                if v is not None]
+        return [DatastoreValue.model_validate_json(v) for v in values if v is not None]
 
     async def set(self, value: DatastoreValue) -> DatastoreValue:
         await self._redis.set(keycatobj(value), value.model_dump_json())
