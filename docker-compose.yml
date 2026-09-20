@@ -1,15 +1,13 @@
-version: "3.7"
-
 services:
   eventbus:
-    image: brewblox/mosquitto:develop
+    image: ghcr.io/brewblox/mosquitto:develop
     labels:
       - traefik.http.services.eventbus.loadbalancer.server.port=15675
     ports:
       - "1883:1883"
 
   victoria:
-    image: victoriametrics/victoria-metrics:v1.88.0
+    image: victoriametrics/victoria-metrics:v1.152.0
     labels:
       - traefik.http.services.victoria.loadbalancer.server.port=8428
     command: --envflag.enable=true --envflag.prefix=VM_
@@ -24,7 +22,7 @@ services:
         target: /victoria-metrics-data
 
   redis:
-    image: redis:6.0
+    image: redis:7.4
     labels:
       - traefik.enable=false
     volumes:

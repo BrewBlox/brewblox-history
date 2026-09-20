@@ -20,17 +20,6 @@ def testclean(ctx: Context):
 
 
 @task
-def build(ctx: Context):
-    """
-    Builds the sdist and requirements file consumed by the Dockerfile.
-    """
-    with ctx.cd(ROOT):
-        ctx.run('rm -rf dist')
-        ctx.run('uv build --sdist')
-        ctx.run('uv export --no-hashes --no-dev --no-emit-project -o dist/requirements.txt')
-
-
-@task(pre=[build])
 def image(ctx: Context, tag='local', push=False):
     with ctx.cd(ROOT):
         ctx.run(f'docker build --load -t {IMAGE}:{tag} .')
@@ -38,7 +27,7 @@ def image(ctx: Context, tag='local', push=False):
             ctx.run(f'docker push {IMAGE}:{tag}')
 
 
-@task(pre=[build])
+@task
 def buildx(ctx: Context, tag='local', push=False, platform='linux/amd64,linux/arm/v7,linux/arm64/v8'):
     # Without --push, a multi-platform build has nowhere to go and is discarded
     push_flag = '--push' if push else ''

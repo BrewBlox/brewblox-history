@@ -1,14 +1,15 @@
+name: brewblox-history-test
 services:
   eventbus:
     image: ghcr.io/brewblox/mosquitto:develop
     ports:
       - "1883"
   redis:
-    image: redis:6.0
+    image: redis:7.4
     ports:
       - "6379"
   victoria:
-    image: victoriametrics/victoria-metrics:v1.88.0
+    image: victoriametrics/victoria-metrics:v1.152.0
     command: >-
       --influxMeasurementFieldSeparator=/
       --http.pathPrefix=/victoria

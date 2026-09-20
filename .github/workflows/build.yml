@@ -59,10 +59,6 @@ jobs:
         with:
           args: "format --check --diff"
 
-      - name: Build
-        run: |
-          uv run invoke build
-
       - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
