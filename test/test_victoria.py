@@ -127,6 +127,7 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
                 'result': [result],
             },
         },
+        is_reusable=True,
     )
 
     args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3'])
@@ -192,7 +193,7 @@ async def test_write(vic: victoria.VictoriaClient, url: str, now: datetime, http
         written.append(request.read().decode())
         return Response(200)
 
-    httpx_mock.add_callback(url=f'{url}/write', method='POST', callback=handler)
+    httpx_mock.add_callback(url=f'{url}/write', method='POST', callback=handler, is_reusable=True)
 
     await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     await vic.write(HistoryEvent(key='service', data={}))

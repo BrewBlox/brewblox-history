@@ -9,8 +9,10 @@ from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
+from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 from httpx_ws import aconnect_ws
+from httpx_ws.transport import ASGIWebSocketTransport
 from pytest import approx
 from pytest_mock import MockerFixture
 
@@ -147,7 +149,7 @@ async def test_empty_csv(client: AsyncClient, m_victoria: Mock):
     assert resp.text == 'a,b,c\n'
 
 
-async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
+async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(metric='a', value=1.2, timestamp=1),
@@ -160,7 +162,10 @@ async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mo
         TimeSeriesRange(metric={'__name__': 'c'}, values=[TimeSeriesRangeValue(3456, '54321')]),
     ]
 
-    async with aconnect_ws('/timeseries/stream', client) as ws:
+    async with (
+        AsyncClient(base_url='http://test', transport=ASGIWebSocketTransport(app)) as client,
+        aconnect_ws('/timeseries/stream', client) as ws,
+    ):
         # Metrics
         await ws.send_json(
             {
@@ -235,12 +240,8 @@ async def test_stream(client: AsyncClient, config: ServiceConfig, m_victoria: Mo
             }
         )
 
-        # https://github.com/frankie567/httpx-ws/issues/49
-        await ws.close()
-        await asyncio.gather(ws._background_receive_task, ws._background_keepalive_ping_task, return_exceptions=True)
 
-
-async def test_stream_error(client: AsyncClient, config: ServiceConfig, m_victoria: Mock):
+async def test_stream_error(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
     dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
     m_victoria.ranges.side_effect = RuntimeError
@@ -248,7 +249,10 @@ async def test_stream_error(client: AsyncClient, config: ServiceConfig, m_victor
         TimeSeriesMetric(metric='a', value=1.2, timestamp=dt),
     ]
 
-    async with aconnect_ws('/timeseries/stream', client) as ws:
+    async with (
+        AsyncClient(base_url='http://test', transport=ASGIWebSocketTransport(app)) as client,
+        aconnect_ws('/timeseries/stream', client) as ws,
+    ):
         # Invalid request
         await ws.send_json({'empty': True})
         resp = await ws.receive_json()
@@ -290,7 +294,3 @@ async def test_stream_error(client: AsyncClient, config: ServiceConfig, m_victor
                 ],
             },
         }
-
-        # https://github.com/frankie567/httpx-ws/issues/49
-        await ws.close()
-        await asyncio.gather(ws._background_receive_task, ws._background_keepalive_ping_task, return_exceptions=True)
