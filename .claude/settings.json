@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest *)",
+      "Bash(pytest *)",
+      "Bash(uv run ruff *)",
+      "Bash(ruff *)",
+      "Bash(uv lock *)",
+      "Bash(uv sync *)",
+      "Bash(invoke --list)",
+      "Bash(invoke --help *)",
+      "Bash(uv run invoke --list)",
+      "Bash(uv run invoke --help *)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git blame*)",
+      "Bash(git ls-files*)",
+      "Bash(rg *)",
+      "Bash(grep *)",
+      "Bash(sed -n *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(find *)",
+      "Bash(wc *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.victoriametrics.com)"
+    ]
+  }
+}
