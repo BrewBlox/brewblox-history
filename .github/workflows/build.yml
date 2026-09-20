@@ -37,20 +37,31 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install poetry wheel
-          poetry install
+          uv sync
+
+      - name: Pull test images
+        # The session fixture that runs `docker compose up` must not spend
+        # the test run pulling images.
+        run: |
+          docker compose -f test/docker-compose.yml pull
 
       - name: Test
         run: |
-          poetry run pytest
-          poetry run flake8
+          uv run pytest
+
+      - name: Lint
+        uses: astral-sh/ruff-action@v1
+        with:
+          args: "format --check --diff"
 
       - name: Build
         run: |
-          poetry run invoke build
+          uv run invoke build
 
       - name: Build Docker image
         uses: docker/build-push-action@v5
