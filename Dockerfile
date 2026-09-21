@@ -4,7 +4,9 @@ FROM python:3.11-bookworm AS base
 ARG TARGETPLATFORM
 
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
-COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /bin/uv
+# Pinned installer: the uv release image has no linux/arm/v7 manifest.
+ADD https://astral.sh/uv/0.11.23/install.sh /uv-installer.sh
+RUN UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh /uv-installer.sh && rm /uv-installer.sh
 
 COPY ./ /app
 WORKDIR /app
