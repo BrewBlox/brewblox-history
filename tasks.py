@@ -3,6 +3,7 @@ from pathlib import Path
 from invoke import Context, task
 
 ROOT = Path(__file__).parent.resolve()
+IMAGE = 'ghcr.io/brewblox/brewblox-history'
 
 
 @task
@@ -19,14 +20,16 @@ def testclean(ctx: Context):
 
 
 @task
-def build(ctx: Context):
+def image(ctx: Context, tag='local', push=False):
     with ctx.cd(ROOT):
-        ctx.run('rm -rf dist')
-        ctx.run('poetry build --format sdist')
-        ctx.run('poetry export --without-hashes -f requirements.txt -o dist/requirements.txt')
+        ctx.run(f'docker build --load -t {IMAGE}:{tag} .')
+        if push:
+            ctx.run(f'docker push {IMAGE}:{tag}')
 
 
-@task(pre=[build])
-def image(ctx: Context, tag='local'):
+@task
+def buildx(ctx: Context, tag='local', push=False, platform='linux/amd64,linux/arm/v7,linux/arm64/v8'):
+    # Without --push, a multi-platform build has nowhere to go and is discarded
+    push_flag = '--push' if push else ''
     with ctx.cd(ROOT):
-        ctx.run(f'docker build -t ghcr.io/brewblox/brewblox-history:{tag} .')
+        ctx.run(f'docker buildx build --platform {platform} {push_flag} -t {IMAGE}:{tag} .')

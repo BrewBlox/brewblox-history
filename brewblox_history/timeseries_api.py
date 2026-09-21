@@ -11,13 +11,18 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 from brewblox_history import utils, victoria
-from brewblox_history.models import (PingResponse, TimeSeriesCsvQuery,
-                                     TimeSeriesFieldsQuery, TimeSeriesMetric,
-                                     TimeSeriesMetricsQuery,
-                                     TimeSeriesMetricStreamData,
-                                     TimeSeriesRange, TimeSeriesRangesQuery,
-                                     TimeSeriesRangeStreamData,
-                                     TimeSeriesStreamCommand)
+from brewblox_history.models import (
+    PingResponse,
+    TimeSeriesCsvQuery,
+    TimeSeriesFieldsQuery,
+    TimeSeriesMetric,
+    TimeSeriesMetricsQuery,
+    TimeSeriesMetricStreamData,
+    TimeSeriesRange,
+    TimeSeriesRangesQuery,
+    TimeSeriesRangeStreamData,
+    TimeSeriesStreamCommand,
+)
 
 CSV_CHUNK_SIZE = pow(2, 15)
 
@@ -44,8 +49,7 @@ async def timeseries_fields(query: TimeSeriesFieldsQuery) -> list[str]:
     """
     List available fields in the database.
     """
-    fields = await victoria.CV.get().fields(query)
-    return fields
+    return await victoria.CV.get().fields(query)
 
 
 @router.post('/ranges')
@@ -63,9 +67,7 @@ async def timeseries_ranges(query: TimeSeriesRangesQuery) -> list[TimeSeriesRang
     - duration:           between now() - duration and now() <br>
     - end:                between end-1d and end <br>
     """
-    ranges = [v.model_dump(by_alias=True)
-              for v in await victoria.CV.get().ranges(query)]
-    return ranges
+    return await victoria.CV.get().ranges(query)
 
 
 @router.post('/metrics')
@@ -73,9 +75,7 @@ async def timeseries_metrics(query: TimeSeriesMetricsQuery) -> list[TimeSeriesMe
     """
     Get individual metrics from the database.
     """
-    metrics = [v.model_dump()
-               for v in await victoria.CV.get().metrics(query)]
-    return metrics
+    return await victoria.CV.get().metrics(query)
 
 
 @router.post('/csv')
@@ -83,6 +83,7 @@ async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
     """
     Get value ranges formatted as CSV stream from the database.
     """
+
     async def generate():
         buffer = ''
         async for line in victoria.CV.get().csv(query):  # pragma: no branch
@@ -99,7 +100,8 @@ async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
         headers={
             'Content-Type': 'text/plain',
             'Access-Control-Allow-Origin': '*',
-        })
+        },
+    )
 
 
 @asynccontextmanager
@@ -112,21 +114,14 @@ async def protected(desc: str):
 
 async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
     config = utils.get_config()
-    open_ended = utils.is_open_ended(start=query.start,
-                                     duration=query.duration,
-                                     end=query.end)
+    open_ended = utils.is_open_ended(start=query.start, duration=query.duration, end=query.end)
     initial = True
 
     while True:
         async with protected('ranges query'):
-            data = TimeSeriesRangeStreamData(
-                initial=initial,
-                ranges=await victoria.CV.get().ranges(query))
+            data = TimeSeriesRangeStreamData(initial=initial, ranges=await victoria.CV.get().ranges(query))
 
-            await ws.send_json({
-                'id': id,
-                'data': jsonable_encoder(data, by_alias=True)
-            })
+            await ws.send_json({'id': id, 'data': jsonable_encoder(data, by_alias=True)})
 
             query.start = utils.now()
             query.duration = None
@@ -147,10 +142,12 @@ async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery)
                 metrics=await victoria.CV.get().metrics(query),
             )
 
-            await ws.send_json({
-                'id': id,
-                'data': jsonable_encoder(data),
-            })
+            await ws.send_json(
+                {
+                    'id': id,
+                    'data': jsonable_encoder(data),
+                }
+            )
 
         await asyncio.sleep(config.metrics_interval.total_seconds())
 
@@ -177,12 +174,10 @@ async def timeseries_stream(ws: WebSocket):
                 existing and existing.cancel()
 
                 if cmd.command == 'ranges':
-                    streams[cmd.id] = asyncio.create_task(
-                        _stream_ranges(ws, cmd.id, cmd.query))
+                    streams[cmd.id] = asyncio.create_task(_stream_ranges(ws, cmd.id, cmd.query))
 
                 elif cmd.command == 'metrics':
-                    streams[cmd.id] = asyncio.create_task(
-                        _stream_metrics(ws, cmd.id, cmd.query))
+                    streams[cmd.id] = asyncio.create_task(_stream_metrics(ws, cmd.id, cmd.query))
 
                 elif cmd.command == 'stop':
                     pass  # We already removed any pre-existing task from streams
@@ -194,10 +189,12 @@ async def timeseries_stream(ws: WebSocket):
 
             except Exception as ex:
                 LOGGER.error(f'Stream read error {utils.strex(ex)}')
-                await ws.send_json({
-                    'error': utils.strex(ex),
-                    'message': msg,
-                })
+                await ws.send_json(
+                    {
+                        'error': utils.strex(ex),
+                        'message': msg,
+                    }
+                )
 
     except WebSocketDisconnect:  # pragma: no cover
         pass
@@ -206,5 +203,4 @@ async def timeseries_stream(ws: WebSocket):
         # Coverage complains about next line -> exit not being covered
         for task in streams.values():  # pragma: no cover
             task.cancel()
-        await asyncio.gather(*streams.values(),
-                             return_exceptions=True)
+        await asyncio.gather(*streams.values(), return_exceptions=True)

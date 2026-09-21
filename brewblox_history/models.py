@@ -6,8 +6,7 @@ import collections
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Literal, NamedTuple
 
-from pydantic import (BaseModel, ConfigDict, Field, field_validator,
-                      model_validator)
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,7 +67,7 @@ class ServiceConfig(BaseSettings):
         env_file='.appenv',
         env_prefix='brewblox_history_',
         case_sensitive=False,
-        json_schema_extra='ignore',
+        extra='ignore',
     )
 
     name: str = 'history'
@@ -86,6 +85,10 @@ class ServiceConfig(BaseSettings):
     victoria_host: str = 'victoria'
     victoria_port: int = 8428
     victoria_path: str = Field(default='/victoria', pattern=r'^(|/.+)$')
+    # Read timeout for database requests. Must exceed the database's own
+    # query deadline (-search.maxQueryDuration, 30s by default) so that its
+    # error is reported instead of a client timeout.
+    victoria_timeout: loose_timedelta = timedelta(seconds=60)
 
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
@@ -150,14 +153,12 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: loose_timedelta = Field(timedelta(days=1),
-                                      examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(days=1), examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
-    duration: loose_timedelta = Field(timedelta(minutes=10),
-                                      examples=['10m', '1d'])
+    duration: loose_timedelta = Field(timedelta(minutes=10), examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):

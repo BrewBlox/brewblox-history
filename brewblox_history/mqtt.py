@@ -11,10 +11,9 @@ CV: ContextVar[FastMQTT] = ContextVar('mqtt.client')
 
 def setup():
     config = utils.get_config()
-    mqtt_config = MQTTConfig(host=config.mqtt_host,
-                             port=config.mqtt_port,
-                             ssl=(config.mqtt_protocol == 'mqtts'),
-                             reconnect_retries=-1)
+    mqtt_config = MQTTConfig(
+        host=config.mqtt_host, port=config.mqtt_port, ssl=(config.mqtt_protocol == 'mqtts'), reconnect_retries=-1
+    )
     fmqtt = FastMQTT(config=mqtt_config)
     CV.set(fmqtt)
 

@@ -5,30 +5,39 @@ Tests brewblox_history.victoria
 from datetime import datetime
 
 import ciso8601
+import httpx
 import pytest
 from httpx import Request, Response
 from pytest_httpx import HTTPXMock
 from pytest_mock import MockerFixture
 
 from brewblox_history import victoria
-from brewblox_history.models import (HistoryEvent, ServiceConfig,
-                                     TimeSeriesCsvQuery, TimeSeriesFieldsQuery,
-                                     TimeSeriesMetric, TimeSeriesMetricsQuery,
-                                     TimeSeriesRange, TimeSeriesRangesQuery)
+from brewblox_history.models import (
+    HistoryEvent,
+    ServiceConfig,
+    TimeSeriesCsvQuery,
+    TimeSeriesFieldsQuery,
+    TimeSeriesMetric,
+    TimeSeriesMetricsQuery,
+    TimeSeriesRange,
+    TimeSeriesRangesQuery,
+)
 
 TESTED = victoria.__name__
 
 
 @pytest.fixture
 def url(config: ServiceConfig) -> str:
-    return ''.join([
-        config.victoria_protocol,
-        '://',
-        config.victoria_host,
-        ':',
-        str(config.victoria_port),
-        config.victoria_path,
-    ])
+    return ''.join(
+        [
+            config.victoria_protocol,
+            '://',
+            config.victoria_host,
+            ':',
+            str(config.victoria_port),
+            config.victoria_path,
+        ]
+    )
 
 
 @pytest.fixture
@@ -45,38 +54,28 @@ def vic() -> victoria.VictoriaClient:
 
 
 async def test_ping(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
-    httpx_mock.add_response(url=f'{url}/health',
-                            method='GET',
-                            text='OK')
+    httpx_mock.add_response(url=f'{url}/health', method='GET', text='OK')
     await vic.ping()
 
-    httpx_mock.add_response(url=f'{url}/health',
-                            method='GET',
-                            text='NOK')
+    httpx_mock.add_response(url=f'{url}/health', method='GET', text='NOK')
     with pytest.raises(ConnectionError):
         await vic.ping()
 
 
 async def test_fields(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
-    httpx_mock.add_response(url=f'{url}/api/v1/series',
-                            method='POST',
-                            json={
-                                'status': 'success',
-                                'data': [
-                                    {
-                                        '__name__': 'spock/setpoint-sensor-pair-2/setting[degC]'
-                                    },
-                                    {
-                                        '__name__': 'spock/actuator-1/value'
-                                    },
-                                    {
-                                        '__name__': 'sparkey/HERMS MT PID/integralReset'
-                                    },
-                                    {
-                                        '__name__': 'sparkey/HERMS HLT PID/inputValue[degC]'
-                                    },
-                                ]
-                            })
+    httpx_mock.add_response(
+        url=f'{url}/api/v1/series',
+        method='POST',
+        json={
+            'status': 'success',
+            'data': [
+                {'__name__': 'spock/setpoint-sensor-pair-2/setting[degC]'},
+                {'__name__': 'spock/actuator-1/value'},
+                {'__name__': 'sparkey/HERMS MT PID/integralReset'},
+                {'__name__': 'sparkey/HERMS HLT PID/inputValue[degC]'},
+            ],
+        },
+    )
 
     args = TimeSeriesFieldsQuery(duration='1d')
     assert await vic.fields(args) == [
@@ -87,38 +86,25 @@ async def test_fields(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
     ]
 
 
-async def test_metrics(vic: victoria.VictoriaClient,
-                       url: str,
-                       now: datetime,
-                       httpx_mock: HTTPXMock):
+async def test_metrics(vic: victoria.VictoriaClient, url: str, now: datetime, httpx_mock: HTTPXMock):
     args = TimeSeriesMetricsQuery(fields=['service/f1', 'service/f2'])
 
     # No values cached yet
     assert await vic.metrics(args) == []
 
     # Don't return invalid values
-    httpx_mock.add_response(url=f'{url}/write',
-                            method='POST')
+    httpx_mock.add_response(url=f'{url}/write', method='POST')
     await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     result = await vic.metrics(args)
-    assert result == [
-        TimeSeriesMetric(metric='service/f1',
-                         value=1,
-                         timestamp=now)
-    ]
+    assert result == [TimeSeriesMetric(metric='service/f1', value=1, timestamp=now)]
 
     # Only update new values
-    httpx_mock.add_response(url=f'{url}/write',
-                            method='POST')
+    httpx_mock.add_response(url=f'{url}/write', method='POST')
     await vic.write(HistoryEvent(key='service', data={'f2': 2}))
     result = await vic.metrics(args)
     assert result == [
-        TimeSeriesMetric(metric='service/f1',
-                         value=1,
-                         timestamp=now),
-        TimeSeriesMetric(metric='service/f2',
-                         value=2,
-                         timestamp=now),
+        TimeSeriesMetric(metric='service/f1', value=1, timestamp=now),
+        TimeSeriesMetric(metric='service/f2', value=2, timestamp=now),
     ]
 
 
@@ -132,15 +118,18 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
         ],
     }
 
-    httpx_mock.add_response(url=f'{url}/api/v1/query_range',
-                            method='POST',
-                            json={
-                                'status': 'success',
-                                'data': {
-                                    'resultType': 'matrix',
-                                    'result': [result],
-                                },
-                            })
+    httpx_mock.add_response(
+        url=f'{url}/api/v1/query_range',
+        method='POST',
+        json={
+            'status': 'success',
+            'data': {
+                'resultType': 'matrix',
+                'result': [result],
+            },
+        },
+        is_reusable=True,
+    )
 
     args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3'])
     retv = await vic.ranges(args)
@@ -151,33 +140,29 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
     httpx_mock.add_response(
         url=f'{url}/api/v1/export',
         method='POST',
-        text='\n'.join([
-            '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},' +
-            '"values":[0,0,0,0,0,0,0],' +
-            '"timestamps":[1626368070381,1626368075435,1626368080487,1626368085534,' +
-            '1626368090630,1626368095687,1626368100749]}',
-
-            '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},' +
-            '"values":[0,0,0,0],' +
-            '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}',
-
-            '{"metric":{"__name__":"spock/actuator-1/value"},' +
-            '"values":[40,40,40,40,40,40,40,40,40,40,40,40,40],' +
-            '"timestamps":[1626368060379,1626368060380,1626368070380,1626368078080,1626368083130,1626368088178,' +
-            '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
-
-            '{"metric":{"__name__":"spock/pin-actuator-1/state"},' +
-            '"values":[0,0,0,0,0,0,0,0,0,0,0],' +
-            '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,' +
-            '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
-        ]))
+        text='\n'.join(
+            [
+                '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
+                + '"values":[0,0,0,0,0,0,0],'
+                + '"timestamps":[1626368070381,1626368075435,1626368080487,1626368085534,'
+                + '1626368090630,1626368095687,1626368100749]}',
+                '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
+                + '"values":[0,0,0,0],'
+                + '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}',
+                '{"metric":{"__name__":"spock/actuator-1/value"},'
+                + '"values":[40,40,40,40,40,40,40,40,40,40,40,40,40],'
+                + '"timestamps":[1626368060379,1626368060380,1626368070380,1626368078080,1626368083130,1626368088178,'
+                + '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
+                '{"metric":{"__name__":"spock/pin-actuator-1/state"},'
+                + '"values":[0,0,0,0,0,0,0,0,0,0,0],'
+                + '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,'
+                + '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
+            ]
+        ),
+    )
 
     args = TimeSeriesCsvQuery(
-        fields=[
-            'sparkey/HERMS BK PWM/setting',
-            'spock/pin-actuator-1/state',
-            'spock/actuator-1/value'
-        ],
+        fields=['sparkey/HERMS BK PWM/setting', 'spock/pin-actuator-1/state', 'spock/actuator-1/value'],
         precision='ISO8601',
     )
 
@@ -202,26 +187,19 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
     assert timestamps == sorted(timestamps)
 
 
-async def test_write(vic: victoria.VictoriaClient,
-                     url: str,
-                     now: datetime,
-                     httpx_mock: HTTPXMock):
+async def test_write(vic: victoria.VictoriaClient, url: str, now: datetime, httpx_mock: HTTPXMock):
     written = []
 
     async def handler(request: Request) -> Response:
         written.append(request.read().decode())
         return Response(200)
 
-    httpx_mock.add_callback(url=f'{url}/write',
-                            method='POST',
-                            callback=handler)
+    httpx_mock.add_callback(url=f'{url}/write', method='POST', callback=handler, is_reusable=True)
 
     await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     await vic.write(HistoryEvent(key='service', data={}))
 
-    assert written == [
-        'service f1=1.0'
-    ]
+    assert written == ['service f1=1.0']
 
     args = TimeSeriesMetricsQuery(fields=['service/f1'])
     assert await vic.metrics(args) == [
@@ -239,12 +217,32 @@ async def test_write(vic: victoria.VictoriaClient,
     ]
 
 
-async def test_write_exc(vic: victoria.VictoriaClient,
-                         url: str,
-                         httpx_mock: HTTPXMock):
-    httpx_mock.add_exception(url=f'{url}/write',
-                             method='POST',
-                             exception=RuntimeError('dummy error'))
+async def test_write_exc(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
+    httpx_mock.add_exception(url=f'{url}/write', method='POST', exception=RuntimeError('dummy error'))
 
     # Write errors are swallowed
     await vic.write(HistoryEvent(key='service', data={'f1': 1}))
+
+
+async def test_write_rejected(
+    vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
+):
+    httpx_mock.add_response(url=f'{url}/write', method='POST', status_code=400, text='cannot parse line')
+
+    # Rejected writes are logged with the database's reason, and swallowed
+    await vic.write(HistoryEvent(key='service', data={'f1': 1}))
+    assert 'cannot parse line' in caplog.text
+
+
+async def test_query_rejected(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f'{url}/api/v1/series', method='POST', status_code=422, text='bad query')
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await vic.fields(TimeSeriesFieldsQuery())
+
+
+async def test_lifespan(vic: victoria.VictoriaClient, mocker: MockerFixture):
+    m_close = mocker.patch.object(vic, 'close', autospec=True)
+    async with victoria.lifespan():
+        m_close.assert_not_awaited()
+    m_close.assert_awaited_once()

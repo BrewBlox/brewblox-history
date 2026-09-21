@@ -1,50 +1,56 @@
-[tool.poetry]
+[project]
 name = "brewblox-history"
 version = "1.0.0"
 description = "Connector service for Brewblox history data"
-authors = ["BrewPi <development@brewpi.com>"]
-license = "GPL-3.0"
 readme = "README.md"
+authors = [
+    {name = "BrewPi", email = "development@brewpi.com"},
+]
+license = {text = "GPL-3.0"}
+requires-python = ">=3.11,<4"
+dependencies = [
+    "pytimeparse>=1.1.8,<2",
+    "redis>=8,<9",
+    "ujson>=5.8.0,<7",
+    "sortedcontainers>=2.4.0,<3",
+    "fastapi>=0.141,<1",
+    "uvicorn[standard]>=0.53,<1",
+    # piwheels has no armv7l wheel for uvloop > 0.21
+    "uvloop==0.21.0",
+    "pydantic-settings>=2.15,<3",
+    "fastapi-mqtt>=2.2.0,<3",
+    # pytest-httpx pins httpx==0.28.*
+    "httpx>=0.28.1,<0.29",
+    "debugpy>=1.8.0,<2",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<4"
-ciso8601 = "^2.2.0"
-pytimeparse = "^1.1.8"
-redis = "^5.0.0"
-ujson = "^5.8.0"
-sortedcontainers = "^2.4.0"
-fastapi = "^0.109.1"
-uvicorn = { extras = ["standard"], version = "^0.24.0.post1" }
-pydantic-settings = "^2.1.0"
-fastapi-mqtt = "^2.0.0"
-httpx = "^0.25.2"
-websockets = "^12.0"
-debugpy = "^1.8.0"
-
-[tool.poetry.group.dev.dependencies]
-pytest-cov = "*"
-pytest-mock = "*"
-flake8 = "*"
-autopep8 = "*"
-flake8-quotes = "*"
-pytest = "*"
-invoke = "*"
-flake8-pyproject = "*"
-pytest-docker = "*"
-pytest-asyncio = "*"
-pytest-httpx = "*"
-asgi-lifespan = "*"
-httpx-ws = "*"
+[dependency-groups]
+dev = [
+    "pytest>=9,<10",
+    "pytest-cov>=7,<8",
+    "pytest-mock>=3.15,<4",
+    "pytest-docker>=3.2,<4",
+    "pytest-asyncio>=1.4,<2",
+    "pytest-httpx>=0.36,<0.37",
+    "pytest-timeout>=2.4,<3",
+    "asgi-lifespan>=2.1.0,<3",
+    "httpx-ws>=0.9,<1",
+    "ciso8601>=2.3,<3",
+    "invoke>=2.2,<4",
+    "ruff",
+]
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = """
-    --ignore=app/
     --ignore=victoria/
+    --timeout=10
+    --timeout_method=signal
     --cov=brewblox_history
     --cov-branch
     --cov-report=term-missing:skip-covered
@@ -66,9 +72,35 @@ exclude_lines = [
     "except asyncio.CancelledError:",
 ]
 
-[tool.flake8]
-max-line-length = 120
-exclude = ".venv"
+[tool.ruff]
+line-length = 120
 
-[tool.autopep8]
-max-line-length = 120
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D211",
+    "D203",
+    "D213",
+    "D212",
+    "COM812",
+    "ISC001",
+    "Q000",
+    "Q003",
+]
+
+[tool.ruff.format]
+indent-style = "space"
+line-ending = "lf"
+quote-style = "single"
+
+[tool.ruff.lint.extend-per-file-ignores]
+"test/**/*.py" = [
+    "S101",    # asserts allowed in tests
+    "ARG",     # unused function args: fixtures are functionally relevant
+    "FBT",     # booleans as positional arguments, e.g. via @pytest.mark.parametrize()
+    "PLR2004", # magic value used in comparison
+    "S311",    # standard pseudo-random generators are not suitable for cryptographic purposes
+    "D103",    # missing docstring in public function
+    "ANN201",  # missing return type annotation
+    "SLF001",  # private member accessed
+]

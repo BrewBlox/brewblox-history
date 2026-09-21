@@ -5,8 +5,7 @@ from pprint import pformat
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import (datastore_api, mqtt, redis, relays, timeseries_api, utils,
-               victoria)
+from . import datastore_api, mqtt, redis, relays, timeseries_api, utils, victoria
 from .models import ErrorResponse
 
 LOGGER = logging.getLogger(__name__)
@@ -36,8 +35,7 @@ def add_exception_handlers(app: FastAPI):
     async def catchall_handler(request: Request, exc: Exception) -> JSONResponse:
         short = utils.strex(exc)
         details = utils.strex(exc, tb=config.debug)
-        content = ErrorResponse(error=str(exc),
-                                details=details)
+        content = ErrorResponse(error=str(exc), details=details)
 
         logger.error(f'[{request.url}] => {short}')
         logger.debug(details)
@@ -53,6 +51,7 @@ async def lifespan(app: FastAPI):
     async with AsyncExitStack() as stack:
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
+        await stack.enter_async_context(victoria.lifespan())
         yield
 
 
@@ -62,9 +61,11 @@ def create_app() -> FastAPI:
 
     if config.debugger:  # pragma: no cover
         import faulthandler
+
         faulthandler.enable()
 
         import debugpy
+
         debugpy.listen(('0.0.0.0', 5678))
         LOGGER.info('Debugger is enabled and listening on 5678')
 
@@ -77,10 +78,12 @@ def create_app() -> FastAPI:
     # Create app
     # OpenApi endpoints are set to /api/doc for backwards compatibility
     prefix = f'/{config.name}'
-    app = FastAPI(lifespan=lifespan,
-                  docs_url=f'{prefix}/api/doc',
-                  redoc_url=f'{prefix}/api/redoc',
-                  openapi_url=f'{prefix}/openapi.json')
+    app = FastAPI(
+        lifespan=lifespan,
+        docs_url=f'{prefix}/api/doc',
+        redoc_url=f'{prefix}/api/redoc',
+        openapi_url=f'{prefix}/openapi.json',
+    )
 
     # Set standardized error response
     add_exception_handlers(app)

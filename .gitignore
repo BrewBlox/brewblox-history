@@ -76,3 +76,7 @@ victoria/*
 redis/*
 !redis/.gitkeep
 .appenv
+
+# Agent workspace
+.claude/settings.local.json
+sessions/

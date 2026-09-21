@@ -7,10 +7,15 @@ import logging
 from fastapi import APIRouter, Response
 
 from . import redis
-from .models import (DatastoreDeleteResponse, DatastoreMultiQuery,
-                     DatastoreMultiValueBox, DatastoreOptSingleValueBox,
-                     DatastoreSingleQuery, DatastoreSingleValueBox,
-                     PingResponse)
+from .models import (
+    DatastoreDeleteResponse,
+    DatastoreMultiQuery,
+    DatastoreMultiValueBox,
+    DatastoreOptSingleValueBox,
+    DatastoreSingleQuery,
+    DatastoreSingleValueBox,
+    PingResponse,
+)
 
 LOGGER = logging.getLogger(__name__)
 

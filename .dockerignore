@@ -1,2 +1,8 @@
-.venv/
-.vscode/
+.*/
+*.egg-info
+dist
+test
+docs
+bench
+victoria
+redis

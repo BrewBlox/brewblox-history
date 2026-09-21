@@ -41,3 +41,9 @@ def test_flatten():
     assert models.flatten(nested_empty_data) == {}
     assert models.flatten(flat_data) == flat_data
     assert models.flatten(flat_value) == flat_value
+
+
+def test_config_ignores_unknown_settings():
+    # Unknown settings must not prevent startup
+    config = models.ServiceConfig(_env_file=None, unknown_setting='value')
+    assert not hasattr(config, 'unknown_setting')

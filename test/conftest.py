@@ -3,7 +3,6 @@ Master file for pytest fixtures.
 Any fixtures declared here are available to all test functions in this directory.
 """
 
-
 import asyncio
 import logging
 from pathlib import Path
@@ -12,8 +11,7 @@ from typing import AsyncGenerator, Generator
 import pytest
 from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
-from httpx import AsyncClient
-from httpx_ws.transport import ASGIWebSocketTransport
+from httpx import ASGITransport, AsyncClient
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from pytest_docker.plugin import Services as DockerServices
 
@@ -50,9 +48,10 @@ def docker_compose_file():
 
 
 @pytest.fixture(autouse=True)
-def config(monkeypatch: pytest.MonkeyPatch,
-           docker_services: DockerServices,
-           ) -> Generator[ServiceConfig, None, None]:
+def config(
+    monkeypatch: pytest.MonkeyPatch,
+    docker_services: DockerServices,
+) -> Generator[ServiceConfig, None, None]:
     cfg = TestConfig(
         debug=True,
         mqtt_host='localhost',
@@ -79,6 +78,7 @@ def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
         if delay > 0.1:
             print(f'asyncio.sleep({delay}) in {request.node.name}')
         return await real_func(delay, *args, **kwargs)
+
     monkeypatch.setattr('asyncio.sleep', wrapper)
     yield
 
@@ -122,7 +122,10 @@ async def client(app: FastAPI, manager: LifespanManager) -> AsyncGenerator[Async
     """
     # AsyncClient does not automatically send ASGI lifespan events to the app
     # https://asgi.readthedocs.io/en/latest/specs/lifespan.html
-    async with AsyncClient(app=app,
-                           base_url='http://test',
-                           transport=ASGIWebSocketTransport(app)) as ac:
+    #
+    # WebSocket tests build their own client with httpx_ws.ASGIWebSocketTransport
+    # inside the test: that transport holds an anyio cancel scope, which must be
+    # entered and exited in the same task, and pytest-asyncio runs fixture setup
+    # and teardown in different tasks.
+    async with AsyncClient(base_url='http://test', transport=ASGITransport(app=app)) as ac:
         yield ac
