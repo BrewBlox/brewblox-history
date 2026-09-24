@@ -139,3 +139,10 @@ def test_select_timeframe(mocker):
         fmt(now()),
         '86s',
     )
+
+
+def test_millis():
+    dt = datetime(2021, 7, 15, 19, 0, 0, 123000, tzinfo=timezone.utc)
+    assert utils.to_millis(dt) == 1626375600123
+    assert utils.from_millis(1626375600123) == dt
+    assert utils.from_millis(utils.to_millis(dt)) == dt

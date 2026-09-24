@@ -3,6 +3,7 @@ Tests brewblox_history.timeseries_api
 """
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from time import time_ns
 from unittest.mock import ANY, AsyncMock, Mock
@@ -149,8 +150,26 @@ async def test_empty_csv(client: AsyncClient, m_victoria: Mock):
     assert resp.text == 'a,b,c\n'
 
 
+async def receive(ws, id: str, received: dict[str, list[dict]]) -> dict:
+    """
+    Receive the next message of stream `id`.
+    Streams share the socket, so messages of other streams may come first:
+    all messages are kept in `received`, by stream id.
+    """
+    try:
+        async with asyncio.timeout(1):
+            while True:
+                msg = await ws.receive_json()
+                received[msg['id']].append(msg)
+                if msg['id'] == id:
+                    return msg
+    except TimeoutError:
+        pytest.fail(f'No message for {id}, received: { {k: len(v) for k, v in received.items()} }')
+
+
 async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
+    config.metrics_interval = timedelta(milliseconds=1)
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(metric='a', value=1.2, timestamp=1),
         TimeSeriesMetric(metric='b', value=2.2, timestamp=1),
@@ -162,11 +181,13 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
         TimeSeriesRange(metric={'__name__': 'c'}, values=[TimeSeriesRangeValue(3456, '54321')]),
     ]
 
+    received = defaultdict(list)
+
     async with (
         AsyncClient(base_url='http://test', transport=ASGIWebSocketTransport(app)) as client,
         aconnect_ws('/timeseries/stream', client) as ws,
     ):
-        # Metrics
+        # Metrics are pushed every interval
         await ws.send_json(
             {
                 'id': 'test-metrics',
@@ -176,13 +197,14 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
                 },
             }
         )
-        resp = await ws.receive_json()
-        assert resp == {
-            'id': 'test-metrics',
-            'data': {
-                'metrics': [ANY, ANY, ANY],
-            },
-        }
+        for _ in range(2):
+            resp = await receive(ws, 'test-metrics', received)
+            assert resp == {
+                'id': 'test-metrics',
+                'data': {
+                    'metrics': [ANY, ANY, ANY],
+                },
+            }
 
         # Ranges
         await ws.send_json(
@@ -195,7 +217,7 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
                 },
             }
         )
-        resp = await ws.receive_json()
+        resp = await receive(ws, 'test-ranges-once', received)
         assert resp == {
             'id': 'test-ranges-once',
             'data': {
@@ -215,7 +237,7 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
                 },
             }
         )
-        resp = await ws.receive_json()
+        resp = await receive(ws, 'test-ranges-live', received)
         assert resp == {
             'id': 'test-ranges-live',
             'data': {
@@ -223,7 +245,7 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
                 'ranges': [ANY, ANY, ANY],
             },
         }
-        resp = await ws.receive_json()
+        resp = await receive(ws, 'test-ranges-live', received)
         assert resp == {
             'id': 'test-ranges-live',
             'data': {
@@ -240,9 +262,13 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
             }
         )
 
+    # A query with an end is sent once, while the live query kept going
+    assert len(received['test-ranges-once']) == 1
+
 
 async def test_stream_error(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
+    config.metrics_interval = timedelta(milliseconds=1)
     dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
     m_victoria.ranges.side_effect = RuntimeError
     m_victoria.metrics.return_value = [

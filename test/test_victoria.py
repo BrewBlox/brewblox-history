@@ -2,7 +2,10 @@
 Tests brewblox_history.victoria
 """
 
-from datetime import datetime
+import asyncio
+import json
+import logging
+from datetime import datetime, timedelta, timezone
 
 import ciso8601
 import httpx
@@ -11,7 +14,7 @@ from httpx import Request, Response
 from pytest_httpx import HTTPXMock
 from pytest_mock import MockerFixture
 
-from brewblox_history import victoria
+from brewblox_history import utils, victoria
 from brewblox_history.models import (
     HistoryEvent,
     ServiceConfig,
@@ -42,7 +45,7 @@ def url(config: ServiceConfig) -> str:
 
 @pytest.fixture
 def now(mocker: MockerFixture) -> datetime:
-    dt = datetime(2021, 7, 15, 19)
+    dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
     mocker.patch(TESTED + '.utils.now').side_effect = lambda: dt
     return dt
 
@@ -51,6 +54,18 @@ def now(mocker: MockerFixture) -> datetime:
 def vic() -> victoria.VictoriaClient:
     victoria.setup()
     return victoria.CV.get()
+
+
+@pytest.fixture
+def written(url: str, httpx_mock: HTTPXMock) -> list[str]:
+    written = []
+
+    async def handler(request: Request) -> Response:
+        written.append(request.read().decode())
+        return Response(200)
+
+    httpx_mock.add_callback(url=f'{url}/write?precision=ms', method='POST', callback=handler, is_reusable=True)
+    return written
 
 
 async def test_ping(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
@@ -86,25 +101,46 @@ async def test_fields(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
     ]
 
 
-async def test_metrics(vic: victoria.VictoriaClient, url: str, now: datetime, httpx_mock: HTTPXMock):
+async def test_metrics(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
     args = TimeSeriesMetricsQuery(fields=['service/f1', 'service/f2'])
 
     # No values cached yet
     assert await vic.metrics(args) == []
 
     # Don't return invalid values
-    httpx_mock.add_response(url=f'{url}/write', method='POST')
     await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     result = await vic.metrics(args)
     assert result == [TimeSeriesMetric(metric='service/f1', value=1, timestamp=now)]
 
     # Only update new values
-    httpx_mock.add_response(url=f'{url}/write', method='POST')
     await vic.write(HistoryEvent(key='service', data={'f2': 2}))
     result = await vic.metrics(args)
     assert result == [
         TimeSeriesMetric(metric='service/f1', value=1, timestamp=now),
         TimeSeriesMetric(metric='service/f2', value=2, timestamp=now),
+    ]
+
+    # Values carry the event's timestamp if it has one
+    sampled = now - timedelta(seconds=5)
+    await vic.write(HistoryEvent(key='service', data={'f2': 3}, timestamp=utils.to_millis(sampled)))
+    result = await vic.metrics(args)
+    assert result == [
+        TimeSeriesMetric(metric='service/f1', value=1, timestamp=now),
+        TimeSeriesMetric(metric='service/f2', value=3, timestamp=sampled),
+    ]
+
+    # Results follow the requested fields, once each
+    result = await vic.metrics(TimeSeriesMetricsQuery(fields=['service/f2', 'service/f1', 'service/f2']))
+    assert result == [
+        TimeSeriesMetric(metric='service/f2', value=3, timestamp=sampled),
+        TimeSeriesMetric(metric='service/f1', value=1, timestamp=now),
+    ]
+
+    # Values older than the query duration are left out
+    args.duration = timedelta(seconds=1)
+    result = await vic.metrics(args)
+    assert result == [
+        TimeSeriesMetric(metric='service/f1', value=1, timestamp=now),
     ]
 
 
@@ -187,15 +223,7 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
     assert timestamps == sorted(timestamps)
 
 
-async def test_write(vic: victoria.VictoriaClient, url: str, now: datetime, httpx_mock: HTTPXMock):
-    written = []
-
-    async def handler(request: Request) -> Response:
-        written.append(request.read().decode())
-        return Response(200)
-
-    httpx_mock.add_callback(url=f'{url}/write', method='POST', callback=handler, is_reusable=True)
-
+async def test_write(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
     await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
     await vic.write(HistoryEvent(key='service', data={}))
 
@@ -217,8 +245,94 @@ async def test_write(vic: victoria.VictoriaClient, url: str, now: datetime, http
     ]
 
 
+async def test_write_escaping(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
+    await vic.write(
+        HistoryEvent(
+            key='my "spark",1\\',
+            data={
+                'block, one': {'value=x': 1},
+                'back\\slash\\': 2,
+            },
+        )
+    )
+    # Backslash, comma and space in the measurement.
+    # Backslash, comma, equals sign and space in field keys.
+    assert written == ['my\\ "spark"\\,1\\\\ back\\\\slash\\\\=2.0,block\\,\\ one/value\\=x=1.0']
+
+    # The metrics cache uses the names as published
+    args = TimeSeriesMetricsQuery(fields=['my "spark",1\\/block, one/value=x'])
+    assert await vic.metrics(args) == [
+        TimeSeriesMetric(metric='my "spark",1\\/block, one/value=x', value=1, timestamp=now),
+    ]
+
+
+async def test_write_timestamp(
+    vic: victoria.VictoriaClient, now: datetime, written: list[str], caplog: pytest.LogCaptureFixture
+):
+    now_ms = utils.to_millis(now)
+    args = TimeSeriesMetricsQuery(fields=['service/f1'])
+
+    # Accepted within 10 s either way
+    await vic.write(HistoryEvent(key='service', data={'f1': 1}, timestamp=now_ms - 10_000))
+    await vic.write(HistoryEvent(key='service', data={'f1': 2}, timestamp=now_ms + 10_000))
+    assert await vic.metrics(args) == [
+        TimeSeriesMetric(metric='service/f1', value=2, timestamp=now + timedelta(seconds=10)),
+    ]
+
+    # Further off, the database stamps arrival, and the cache uses our time
+    await vic.write(HistoryEvent(key='service', data={'f1': 3}, timestamp=now_ms - 10_001))
+    assert await vic.metrics(args) == [
+        TimeSeriesMetric(metric='service/f1', value=3, timestamp=now),
+    ]
+
+    # The warning comes once per key
+    await vic.write(HistoryEvent(key='service', data={'f1': 4}, timestamp=now_ms))
+    await vic.write(HistoryEvent(key='service', data={'f1': 5}, timestamp=0))
+    await vic.write(HistoryEvent(key='other', data={'f1': 6}, timestamp=now_ms + 20_000))
+
+    assert written == [
+        f'service f1=1.0 {now_ms - 10_000}',
+        f'service f1=2.0 {now_ms + 10_000}',
+        'service f1=3.0',
+        f'service f1=4.0 {now_ms}',
+        'service f1=5.0',
+        'other f1=6.0',
+    ]
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+        'service: event timestamp is -10.0s off, using arrival time',
+        'other: event timestamp is +20.0s off, using arrival time',
+    ]
+
+
+async def test_write_database(vic: victoria.VictoriaClient):
+    # Against the real database: names as stored, and timestamps
+    key = 'itest "spark",1\\'
+    data = {'block, one': {'value=x': 1}, 'back\\slash\\': 2, 'temp[°C]': 3}
+    timestamp = utils.to_millis(utils.now()) - 2000
+
+    await vic.write(HistoryEvent(key=key, data=data, timestamp=timestamp))
+    await vic.write(HistoryEvent(key=key, data={'arrival': 4}))
+
+    stamped = {f'{key}/block, one/value=x', f'{key}/back\\slash\\', f'{key}/temp[°C]'}
+    expected = stamped | {f'{key}/arrival'}
+    rows = {}
+    for _ in range(50):  # New samples become searchable about a second after a forced flush
+        (await vic._client.get('/internal/force_flush')).raise_for_status()
+        resp = await vic._client.post('/api/v1/export', data={'match[]': '{__name__=~"itest.*"}'})
+        resp.raise_for_status()
+        rows = {row['metric']['__name__']: row for row in map(json.loads, resp.text.splitlines())}
+        if expected <= rows.keys():
+            break
+        await asyncio.sleep(0.1)
+
+    assert rows.keys() == expected
+    for name in stamped:
+        assert rows[name]['timestamps'] == [timestamp]
+    assert rows[f'{key}/arrival']['timestamps'][0] > timestamp
+
+
 async def test_write_exc(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
-    httpx_mock.add_exception(url=f'{url}/write', method='POST', exception=RuntimeError('dummy error'))
+    httpx_mock.add_exception(url=f'{url}/write?precision=ms', method='POST', exception=RuntimeError('dummy error'))
 
     # Write errors are swallowed
     await vic.write(HistoryEvent(key='service', data={'f1': 1}))
@@ -227,7 +341,7 @@ async def test_write_exc(vic: victoria.VictoriaClient, url: str, httpx_mock: HTT
 async def test_write_rejected(
     vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
 ):
-    httpx_mock.add_response(url=f'{url}/write', method='POST', status_code=400, text='cannot parse line')
+    httpx_mock.add_response(url=f'{url}/write?precision=ms', method='POST', status_code=400, text='cannot parse line')
 
     # Rejected writes are logged with the database's reason, and swallowed
     await vic.write(HistoryEvent(key='service', data={'f1': 1}))

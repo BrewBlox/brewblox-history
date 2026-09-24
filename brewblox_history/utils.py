@@ -85,6 +85,16 @@ def now() -> datetime:  # pragma: no cover
     return datetime.now(timezone.utc)
 
 
+def to_millis(dt: datetime) -> int:
+    """Milliseconds since the Unix epoch"""
+    return round(dt.timestamp() * 1000)
+
+
+def from_millis(value: int) -> datetime:
+    """UTC datetime for milliseconds since the Unix epoch"""
+    return datetime.fromtimestamp(value / 1000, timezone.utc)
+
+
 def select_timeframe(
     start: DatetimeSrc_,
     duration: DurationSrc_,

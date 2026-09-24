@@ -2,15 +2,20 @@
 Pydantic data models
 """
 
-import collections
+import logging
+import math
+from collections.abc import Iterable
 from datetime import datetime, timedelta
+from operator import itemgetter
 from typing import Annotated, Any, Literal, NamedTuple
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pytimeparse.timeparse import timeparse
+
+LOGGER = logging.getLogger(__name__)
 
 DurationSrc_ = str | int | float | timedelta
 DatetimeSrc_ = str | int | float | datetime | None
@@ -42,24 +47,37 @@ def parse_datetime(value: DatetimeSrc_) -> datetime | None:
 
 loose_timedelta = Annotated[timedelta, BeforeValidator(parse_duration)]
 
+# History fields refused since startup, so that each is logged once
+_refused_fields: set[str] = set()
 
-def flatten(d, parent_key=''):
+
+def refuse_field(name: str):
+    if name not in _refused_fields:
+        _refused_fields.add(name)
+        LOGGER.warning(f'Refused history field {name!r}: the database cannot store this name')
+
+
+def _flatten_into(items: list[tuple[str, Any]], pairs: Iterable[tuple[Any, Any]], parent_key: str):
+    for k, v in pairs:
+        key = f'{parent_key}/{k}' if parent_key else str(k)
+        if isinstance(v, dict):
+            _flatten_into(items, v.items(), key)
+        elif isinstance(v, list):
+            _flatten_into(items, enumerate(v), key)
+        else:
+            items.append((key, v))
+
+
+def flatten(d: dict) -> dict[str, Any]:
     """Flattens given dict to have a depth of 1 with all values present.
 
-    Nested keys are converted to /-separated paths.
+    Nested keys are converted to /-separated paths, and sorted.
+    List items are keyed by their index.
     """
     items: list[tuple[str, Any]] = []
-    for k, v in d.items():
-        new_key = f'{parent_key}/{k}' if parent_key else str(k)
-
-        if isinstance(v, list):
-            v = {li: lv for li, lv in enumerate(v)}
-
-        if isinstance(v, collections.abc.MutableMapping):
-            items.extend(flatten(v, new_key).items())
-        else:
-            items.append((new_key, v))
-    return dict(sorted(items, key=lambda pair: pair[0]))
+    _flatten_into(items, d.items(), '')
+    items.sort(key=itemgetter(0))
+    return dict(items)
 
 
 class ServiceConfig(BaseSettings):
@@ -94,7 +112,7 @@ class ServiceConfig(BaseSettings):
     datastore_topic: str = 'brewcast/datastore'
 
     ranges_interval: loose_timedelta = timedelta(seconds=10)
-    metrics_interval: loose_timedelta = timedelta(seconds=10)
+    metrics_interval: loose_timedelta = timedelta(seconds=1)
     minimum_step: loose_timedelta = timedelta(seconds=10)
 
     query_duration_default: loose_timedelta = timedelta(days=1)
@@ -102,18 +120,65 @@ class ServiceConfig(BaseSettings):
 
 
 class HistoryEvent(BaseModel):
+    """
+    Values to store, sanitized at ingest.
+
+    Series are named `<key>/<field>`, and written with the Influx line protocol,
+    which escapes most characters in names. It cannot express the rest:
+    an event with such a key is refused, a field with such a name is dropped.
+    """
+
     model_config = ConfigDict(
         extra='ignore',
     )
 
     key: str
-    data: dict[str, Any]  # converted to float later
+    # Flattened to /-separated field names. Only finite numbers are kept.
+    data: dict[str, float]
+    # When the values were sampled, in milliseconds since the Unix epoch.
+    # Without it, the database stamps the time the write arrives.
+    timestamp: int | None = None
+
+    @field_validator('key')
+    @classmethod
+    def check_key(cls, v: str) -> str:
+        # A leading '#' makes the line a comment, and a newline ends it
+        if not v or v.startswith('#') or '\n' in v:
+            raise ValueError('must not be empty, start with "#", or contain a newline')
+        return v
 
     @field_validator('data', mode='before')
     @classmethod
-    def flatten_data(cls, v):
+    def sanitize_data(cls, v, info: ValidationInfo):
         assert isinstance(v, dict)
-        return flatten(v)
+        data = {}
+        for field, value in flatten(v).items():
+            try:
+                value = float(value)
+            except (ValueError, TypeError, OverflowError):
+                continue
+            if not math.isfinite(value):
+                continue
+            # A '"' switches the database to quoted-value parsing for the rest of the line
+            if not field or '\n' in field or '"' in field:
+                # Without a valid key, the whole event is refused
+                if 'key' in info.data:
+                    refuse_field(f'{info.data["key"]}/{field}')
+                continue
+            data[field] = value
+        return data
+
+    @field_validator('timestamp', mode='before')
+    @classmethod
+    def parse_timestamp(cls, v):
+        # Publishers were free to send any `timestamp` while it was an unknown field.
+        # Anything but a number in float range is ignored instead of refusing the event.
+        if isinstance(v, bool) or not isinstance(v, int | float):
+            return None
+        try:
+            return round(float(v))
+        except (OverflowError, ValueError):  # huge ints, inf, nan
+            return None
 
 
 class DatastoreValue(BaseModel):

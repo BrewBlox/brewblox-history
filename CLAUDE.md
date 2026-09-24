@@ -39,10 +39,16 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   Config is `utils.get_config()`, an lru-cached `ServiceConfig` read from `BREWBLOX_HISTORY_*`
   env vars and `.appenv` (written by parse_appenv.py from the container's command-line args;
   test/test_parse_appenv.py keeps the two in sync).
-- Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`
-  (models.flatten turns the nested `data` dict into `/`-separated field paths) ->
-  victoria.write, one Influx line-protocol POST per event (`<service> field=value,...`, no
-  timestamp: the database stamps arrival). VictoriaMetrics runs with
+- Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
+  which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
+  field paths, only finite numbers are kept, and names the line protocol cannot express are
+  refused (a field named empty, or with a newline or `"`, is dropped and logged once; a key
+  that is empty, starts with `#` or holds a newline invalidates the event) ->
+  victoria.write, one Influx line-protocol POST per event to `/write?precision=ms`
+  (`<service> field=value,... [ms]`). Names are escaped, backslash first: VM rejects a line
+  with a raw `,` or a trailing `\`, stores a raw `=` in a field key as a wrong series, and
+  unescapes `\\`. The event's optional `timestamp` (int ms) is written when within 10 s of
+  our clock, else the database stamps arrival. VictoriaMetrics runs with
   `-influxMeasurementFieldSeparator=/`, so series are named `<service>/<field/path>`.
   write() also fills the in-memory cache that `metrics()` serves; that endpoint never
   queries the database.

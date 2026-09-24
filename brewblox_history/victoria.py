@@ -2,6 +2,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
+from datetime import datetime
 from urllib.parse import quote
 
 import httpx
@@ -24,6 +25,21 @@ LOGGER.addFilter(utils.DuplicateFilter())
 
 CV: ContextVar['VictoriaClient'] = ContextVar('victoria.client')
 
+# Event timestamps further than this from our own clock are replaced by arrival time
+TIMESTAMP_TOLERANCE_MS = 10_000
+
+
+# Influx line protocol escapes. The database also unescapes `\\`,
+# so a backslash is escaped as well, first: a trailing one would escape the separator.
+# HistoryEvent refuses what cannot be escaped.
+# A chain of replace() calls is several times faster than str.translate() here.
+def escape_measurement(name: str) -> str:
+    return name.replace('\\', '\\\\').replace(',', '\\,').replace(' ', '\\ ')
+
+
+def escape_field_key(name: str) -> str:
+    return name.replace('\\', '\\\\').replace(',', '\\,').replace('=', '\\=').replace(' ', '\\ ')
+
 
 class VictoriaClient:
     def __init__(self):
@@ -44,7 +60,10 @@ class VictoriaClient:
             'Accept-Encoding': 'gzip',
         }
 
-        self._cached_metrics: dict[str, TimeSeriesMetric] = {}
+        # Field name -> (value, timestamp)
+        self._cached_metrics: dict[str, tuple[float, datetime]] = {}
+        # Event keys warned about for timestamps out of tolerance (once per key)
+        self._skewed_keys: set[str] = set()
         self._client = httpx.AsyncClient(
             base_url=self._url,
             timeout=httpx.Timeout(5, read=config.victoria_timeout.total_seconds()),
@@ -73,8 +92,13 @@ class VictoriaClient:
         return retv
 
     async def metrics(self, args: TimeSeriesMetricsQuery) -> list[TimeSeriesMetric]:
-        start = utils.now() - utils.parse_duration(args.duration)
-        return list((v for k, v in self._cached_metrics.items() if k in args.fields and v.timestamp >= start))
+        start = utils.now() - args.duration
+        retv = []
+        for field in dict.fromkeys(args.fields):
+            cached = self._cached_metrics.get(field)
+            if cached and cached[1] >= start:
+                retv.append(TimeSeriesMetric(metric=field, value=cached[0], timestamp=cached[1]))
+        return retv
 
     async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
         start, end, step = utils.select_timeframe(args.start, args.duration, args.end)
@@ -122,42 +146,52 @@ class VictoriaClient:
             for timestamp, row in rows.items():
                 yield '{},{}'.format(utils.format_datetime(timestamp, args.precision), ','.join(row))
 
+    def _timestamp(self, evt: HistoryEvent, now: datetime) -> int | None:
+        """The event's timestamp in ms, or None if the database should stamp arrival."""
+        if evt.timestamp is None:
+            return None
+
+        offset = evt.timestamp - utils.to_millis(now)
+        if abs(offset) <= TIMESTAMP_TOLERANCE_MS:
+            return evt.timestamp
+
+        if evt.key not in self._skewed_keys:
+            self._skewed_keys.add(evt.key)
+            LOGGER.warning(f'{evt.key}: event timestamp is {offset / 1000:+.1f}s off, using arrival time')
+        return None
+
     async def write(self, evt: HistoryEvent):
+        if not evt.data:
+            return
+
+        now = utils.now()
+        timestamp = self._timestamp(evt, now)
+        sampled = now if timestamp is None else utils.from_millis(timestamp)
         line_items = []
 
-        for field in sorted(evt.data.keys()):
-            try:
-                value = float(evt.data[field])
-                line_key = field.replace(' ', '\\ ')
-                metrics_key = f'{evt.key}/{field}'
+        # HistoryEvent sanitized the data: sorted, finite numbers, names that can be escaped
+        for field, value in evt.data.items():
+            # Database writes are done using the Influx Line Protocol
+            # https://docs.influxdata.com/influxdb/v1.7/write_protocols/line_protocol_tutorial/
+            line_items.append(f'{escape_field_key(field)}={value}')
 
-                # Database writes are done using the Influx Line Protocol
-                # https://docs.influxdata.com/influxdb/v1.7/write_protocols/line_protocol_tutorial/
-                line_items.append(f'{line_key}={value}')
+            # Local cache used for the metrics API
+            self._cached_metrics[f'{evt.key}/{field}'] = (value, sampled)
 
-                # Local cache used for the metrics API
-                self._cached_metrics[metrics_key] = TimeSeriesMetric(
-                    metric=metrics_key,
-                    value=value,
-                    timestamp=utils.now(),
-                )
+        try:
+            line = f'{escape_measurement(evt.key)} {",".join(line_items)}'
+            if timestamp is not None:
+                line = f'{line} {timestamp}'
+            LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
+            resp = await self._client.post('/write', params={'precision': 'ms'}, content=line)
+            # The database rejects the whole line on a parse error
+            resp.raise_for_status()
 
-            except (ValueError, TypeError):
-                pass  # Skip values that can't be converted to float
+        except httpx.HTTPStatusError as ex:
+            LOGGER.warning(f'{self} {utils.strex(ex)}: {ex.response.text}')
 
-        if line_items:
-            try:
-                line = f'{evt.key} {",".join(line_items)}'
-                LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
-                resp = await self._client.post('/write', content=line)
-                # The database rejects the whole line on a parse error
-                resp.raise_for_status()
-
-            except httpx.HTTPStatusError as ex:
-                LOGGER.warning(f'{self} {utils.strex(ex)}: {ex.response.text}')
-
-            except Exception as ex:
-                LOGGER.warning(f'{self} {utils.strex(ex)}')
+        except Exception as ex:
+            LOGGER.warning(f'{self} {utils.strex(ex)}')
 
 
 def setup():
