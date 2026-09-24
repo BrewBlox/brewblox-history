@@ -3,6 +3,7 @@ Tests brewblox_history.models
 """
 
 import logging
+from datetime import timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -55,6 +56,95 @@ def test_flatten():
         'a/d',
         'b',
     ]
+
+
+@pytest.mark.parametrize(
+    'value, expected',
+    [
+        ('30d', timedelta(days=30)),
+        ('30D', timedelta(days=30)),
+        ('4w', timedelta(weeks=4)),
+        ('100y', timedelta(days=36500)),
+        ('1d12h', timedelta(hours=36)),
+        ('2d-5h', timedelta(hours=43)),  # parts after a negative one are negative too
+        ('10ms', timedelta(milliseconds=10)),
+        # Months of 31 days, as a bare number or with `M`
+        ('1', timedelta(days=31)),
+        ('1.5M', timedelta(days=46.5)),
+        (3, timedelta(days=93)),
+        (timedelta(days=2), timedelta(days=2)),
+    ],
+)
+def test_parse_retention(value, expected: timedelta):
+    # Read as VictoriaMetrics reads -retentionPeriod
+    assert models.parse_retention(value) == expected
+
+
+@pytest.mark.parametrize('value', ['30m', '1h30m', '1i', 'x', '', 'inf', 'nan', '1e400', '99999999999999999999y'])
+def test_parse_retention_invalid(value):
+    with pytest.raises(ValueError, match='Invalid retention period'):
+        models.parse_retention(value)
+
+
+def test_config_intervals():
+    config = models.ServiceConfig(_env_file=None, minimum_step='1s', sparse_interval='60s', dense_retention='30d')
+    assert config.sparse_interval == timedelta(seconds=60)
+    assert config.dense_retention == timedelta(days=30)
+
+    # The smallest values the checks allow
+    models.ServiceConfig(
+        _env_file=None,
+        dense_enabled=True,
+        minimum_step=1,
+        sparse_interval=10,
+        follow_up_step_max=10,
+        downsample_chunk=10,
+        dense_retention='1d',
+        dense_margin=0,
+        downsample_lag=16,
+    )
+
+
+@pytest.mark.parametrize(
+    'settings, match',
+    [
+        ({'query_latency': 0}, 'query_latency must be positive'),
+        ({'csv_chunk_dense': 0}, 'csv_chunk_dense must be positive'),
+        ({'csv_chunk_sparse': -1}, 'csv_chunk_sparse must be positive'),
+        ({'follow_up_step_max': 0}, 'follow_up_step_max must be positive'),
+    ],
+)
+def test_config_invalid(settings: dict, match: str):
+    # Used with or without the dense database
+    with pytest.raises(ValidationError, match=match):
+        models.ServiceConfig(_env_file=None, **settings)
+
+
+@pytest.mark.parametrize(
+    'settings, match',
+    [
+        ({'minimum_step': 0}, 'minimum_step must be positive'),
+        ({'sparse_interval': 0}, 'sparse_interval must be positive'),
+        ({'downsample_interval': 0}, 'downsample_interval must be positive'),
+        ({'downsample_chunk': -1}, 'downsample_chunk must be positive'),
+        ({'minimum_step': 1.5}, 'minimum_step and sparse_interval must be whole seconds'),
+        ({'sparse_interval': 60.5}, 'minimum_step and sparse_interval must be whole seconds'),
+        ({'minimum_step': 45}, 'sparse_interval must be a multiple of minimum_step'),
+        ({'minimum_step': 120}, 'sparse_interval must be a multiple of minimum_step'),
+        ({'sparse_interval': 5, 'minimum_step': 1}, 'follow_up_step_max must not exceed sparse_interval'),
+        ({'sparse_interval': '12h'}, 'downsample_chunk must be at least sparse_interval'),
+        ({'dense_retention': '23h'}, 'dense_retention must be at least 1d'),
+        ({'dense_margin': -1}, 'dense_margin must be at least 0'),
+        ({'dense_margin': '30d'}, 'dense_margin must be at least 0 and less than dense_retention'),
+        ({'downsample_lag': 15}, 'downsample_lag must be at least 0:00:16'),
+    ],
+)
+def test_config_dense_invalid(settings: dict, match: str):
+    # Only the dense setup uses these: without it, the service starts whatever they are
+    models.ServiceConfig(_env_file=None, **settings)
+
+    with pytest.raises(ValidationError, match=match):
+        models.ServiceConfig(_env_file=None, dense_enabled=True, **settings)
 
 
 def test_config_ignores_unknown_settings():

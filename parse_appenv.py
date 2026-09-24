@@ -23,6 +23,14 @@ def parse_cmd_args(raw_args: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument('--victoria-path')
     parser.add_argument('--victoria-timeout')
 
+    parser.add_argument('--dense-enabled', action='store_true')
+    parser.add_argument('--dense-protocol')
+    parser.add_argument('--dense-host')
+    parser.add_argument('--dense-port')
+    parser.add_argument('--dense-path')
+    parser.add_argument('--dense-retention')
+    parser.add_argument('--dense-margin')
+
     parser.add_argument('--history-topic')
     parser.add_argument('--datastore-topic')
 
@@ -32,6 +40,15 @@ def parse_cmd_args(raw_args: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
     parser.add_argument('--query-duration-default')
     parser.add_argument('--query-desired-points')
+
+    parser.add_argument('--sparse-interval')
+    parser.add_argument('--downsample-lag')
+    parser.add_argument('--downsample-interval')
+    parser.add_argument('--downsample-chunk')
+    parser.add_argument('--query-latency')
+    parser.add_argument('--csv-chunk-dense')
+    parser.add_argument('--csv-chunk-sparse')
+    parser.add_argument('--follow-up-step-max')
 
     return parser.parse_known_args(raw_args)
 

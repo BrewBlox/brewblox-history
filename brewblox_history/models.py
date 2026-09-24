@@ -4,10 +4,11 @@ Pydantic data models
 
 import logging
 import math
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from operator import itemgetter
-from typing import Annotated, Any, Literal, NamedTuple
+from typing import Annotated, Any, Literal, NamedTuple, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
@@ -46,6 +47,62 @@ def parse_datetime(value: DatetimeSrc_) -> datetime | None:
 
 
 loose_timedelta = Annotated[timedelta, BeforeValidator(parse_duration)]
+
+# One part of a metricsql duration, as in `1d12h`
+_RETENTION_PART = re.compile(r'(-?)(\d+(?:\.\d+)?)(ms|s|m|h|d|w|y)')
+_RETENTION_UNITS = {
+    'ms': timedelta(milliseconds=1),
+    's': timedelta(seconds=1),
+    'm': timedelta(minutes=1),
+    'h': timedelta(hours=1),
+    'd': timedelta(days=1),
+    'w': timedelta(weeks=1),
+    'y': timedelta(days=365),
+}
+
+
+def parse_retention(value: DurationSrc_) -> timedelta:
+    """Parses a retention period the way VictoriaMetrics reads `-retentionPeriod`.
+
+    brewblox-ctl gives the database and this service the same value,
+    and both must read it as the same duration.
+    A bare number or an `M` suffix counts months of 31 days.
+    Otherwise the value is a metricsql duration, whose parts can be combined (`1d12h`),
+    except that it must not end in `m`: the database refuses that as ambiguous.
+    """
+    if isinstance(value, timedelta):
+        return value
+
+    text = str(value)
+    try:
+        return timedelta(days=31 * float(text.removesuffix('M')))
+    except (ValueError, OverflowError):  # not a number, or beyond timedelta
+        pass
+
+    text = text.lower()
+    if text.endswith('m') or not re.fullmatch(f'(?:{_RETENTION_PART.pattern})+', text):
+        raise ValueError(f'Invalid retention period: {value!r}')
+
+    retention = timedelta()
+    negative = False  # As in metricsql: once a part is negative, the parts after it are too
+    try:
+        for sign, number, unit in _RETENTION_PART.findall(text):
+            negative = negative or sign == '-'
+            part = float(number) * _RETENTION_UNITS[unit]
+            retention += -part if negative else part
+    except OverflowError as ex:
+        raise ValueError(f'Invalid retention period: {value!r}') from ex
+    return retention
+
+
+loose_retention = Annotated[timedelta, BeforeValidator(parse_retention)]
+
+# Event timestamps further than this from our own clock are replaced by arrival time
+TIMESTAMP_TOLERANCE = timedelta(seconds=10)
+
+# The longest the database takes to make a written sample searchable.
+# Measured 2-3 s on an unloaded x86 host, 5.3 s for a new series; to re-measure on a Pi (plan B12).
+SEARCHABLE_DELAY = timedelta(seconds=6)
 
 # History fields refused since startup, so that each is logged once
 _refused_fields: set[str] = set()
@@ -99,6 +156,7 @@ class ServiceConfig(BaseSettings):
     redis_host: str = 'redis'
     redis_port: int = 6379
 
+    # The long-term database. With dense_enabled, it holds `sparse_interval` averages.
     victoria_protocol: Literal['http', 'https'] = 'http'
     victoria_host: str = 'victoria'
     victoria_port: int = 8428
@@ -107,6 +165,18 @@ class ServiceConfig(BaseSettings):
     # query deadline (-search.maxQueryDuration, 30s by default) so that its
     # error is reported instead of a client timeout.
     victoria_timeout: loose_timedelta = timedelta(seconds=60)
+
+    # The dense database: every raw sample, kept for `dense_retention`.
+    # Without it, raw samples go to the long-term database.
+    dense_enabled: bool = False
+    dense_protocol: Literal['http', 'https'] = 'http'
+    dense_host: str = 'victoria-dense'
+    dense_port: int = 8428
+    dense_path: str = Field(default='/victoria-dense', pattern=r'^(|/.+)$')
+    # The dense database's -retentionPeriod, in its format
+    dense_retention: loose_retention = timedelta(days=30)
+    # Queries starting within this of the retention limit go to the long-term database
+    dense_margin: loose_timedelta = timedelta(hours=1)
 
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
@@ -117,6 +187,56 @@ class ServiceConfig(BaseSettings):
 
     query_duration_default: loose_timedelta = timedelta(days=1)
     query_desired_points: int = 1000
+
+    # Resolution of the long-term database: its query steps are multiples of this
+    sparse_interval: loose_timedelta = timedelta(seconds=60)
+    # Each sparse_interval is averaged once it ended at least this long ago
+    downsample_lag: loose_timedelta = timedelta(seconds=30)
+    downsample_interval: loose_timedelta = timedelta(seconds=15)
+    downsample_chunk: loose_timedelta = timedelta(hours=6)
+    # Open-ended queries end this long before now, and pass it as the latency offset
+    query_latency: loose_timedelta = timedelta(seconds=3)
+    # Time per request when exporting CSV
+    csv_chunk_dense: loose_timedelta = timedelta(hours=6)
+    csv_chunk_sparse: loose_timedelta = timedelta(days=7)
+    # Largest step of live follow-up queries
+    follow_up_step_max: loose_timedelta = timedelta(seconds=10)
+
+    @model_validator(mode='after')
+    def check_intervals(self) -> Self:
+        zero = timedelta()
+        second = timedelta(seconds=1)
+
+        # Used with or without the dense database
+        for name in ['query_latency', 'csv_chunk_dense', 'csv_chunk_sparse', 'follow_up_step_max']:
+            if getattr(self, name) <= zero:
+                raise ValueError(f'{name} must be positive')
+
+        # Only the dense setup uses the others, and minimum_step predates it.
+        # Without it, the service must start whatever they are:
+        # brewblox-ctl renders sparse_interval and dense_retention either way.
+        if not self.dense_enabled:
+            return self
+
+        for name in ['minimum_step', 'sparse_interval', 'downsample_interval', 'downsample_chunk']:
+            if getattr(self, name) <= zero:
+                raise ValueError(f'{name} must be positive')
+        if self.minimum_step % second or self.sparse_interval % second:
+            raise ValueError('minimum_step and sparse_interval must be whole seconds')
+        if self.sparse_interval % self.minimum_step:
+            raise ValueError('sparse_interval must be a multiple of minimum_step')
+        if self.follow_up_step_max > self.sparse_interval:
+            raise ValueError('follow_up_step_max must not exceed sparse_interval')
+        if self.downsample_chunk < self.sparse_interval:
+            raise ValueError('downsample_chunk must be at least sparse_interval')
+        if self.dense_retention < timedelta(days=1):
+            raise ValueError('dense_retention must be at least 1d, the database minimum')
+        if not zero <= self.dense_margin < self.dense_retention:
+            raise ValueError('dense_margin must be at least 0 and less than dense_retention')
+        if self.downsample_lag < TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY:
+            # A sample accepted with the oldest allowed timestamp must be searchable by then
+            raise ValueError(f'downsample_lag must be at least {TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY}')
+        return self
 
 
 class HistoryEvent(BaseModel):

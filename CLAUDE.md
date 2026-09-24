@@ -38,7 +38,17 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   `lifespan()` enters the background features (mqtt, redis, victoria) in an AsyncExitStack.
   Config is `utils.get_config()`, an lru-cached `ServiceConfig` read from `BREWBLOX_HISTORY_*`
   env vars and `.appenv` (written by parse_appenv.py from the container's command-line args;
-  test/test_parse_appenv.py keeps the two in sync).
+  test/test_parse_appenv.py keeps the two in sync: every field has an argument).
+  `dense_retention` is read in VictoriaMetrics' `-retentionPeriod` format
+  (models.parse_retention: a bare number counts months), since ctl gives both the same value.
+- Databases: `victoria` (`victoria_*` settings) is the long-term one. With `dense_enabled`
+  (off by default; ctl turns it on) `victoria-dense` (`dense_*`) receives the raw samples,
+  and the long-term one is meant to hold `sparse_interval` averages. VictoriaClient keeps
+  one httpx client per database: raw writes go to dense when enabled, `ping` checks every
+  database, `fields` returns the union (the long-term one alone if dense fails); `ranges` and
+  `csv` still read the long-term one. Settings only the dense setup uses (and `minimum_step`,
+  which predates it) are validated only with `dense_enabled`: without it the service, which
+  also serves the datastore, must start whatever they are (ctl renders some either way).
 - Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
   which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
   field paths, only finite numbers are kept, and names the line protocol cannot express are
@@ -62,8 +72,9 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
 - Datastore (datastore_api, redis): namespaced JSON documents in Redis; changes are
   published on `brewcast/datastore/<namespace>` so the UI and services can subscribe.
 - Errors: the catch-all handler in app_factory returns `ErrorResponse` with status 500; a
-  rejected database query raises `httpx.HTTPStatusError`, a rejected write is logged with
-  the database's reason and swallowed.
+  rejected database query raises `httpx.HTTPStatusError`, a transport error (unreachable,
+  timeout) raises `ConnectionError` naming the database (victoria.named_errors), and a failed
+  write is logged with the database and its reason, and swallowed.
 
 ## Testing rules
 
