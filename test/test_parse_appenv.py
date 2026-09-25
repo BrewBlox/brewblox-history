@@ -4,6 +4,7 @@ Tests parse_appenv
 
 from brewblox_history.models import ServiceConfig
 from parse_appenv import parse_cmd_args
+from test.conftest import TestConfig
 
 
 def test_args_match_config():
@@ -36,7 +37,7 @@ def test_parse_values():
     assert args.debugger is False
     assert args.dense_enabled is True
 
-    config = ServiceConfig(_env_file=None, **{k: v for k, v in vars(args).items() if v is not None and v is not False})
+    config = TestConfig.model_validate({k: v for k, v in vars(args).items() if v is not None and v is not False})
     assert config.victoria_host == 'db'
     assert config.victoria_timeout.total_seconds() == 120
     assert config.dense_enabled is True

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from invoke import Context, task
+from invoke.context import Context
+from invoke.tasks import task
 
 ROOT = Path(__file__).parent.resolve()
 IMAGE = 'ghcr.io/brewblox/brewblox-history'
@@ -14,7 +15,7 @@ def testclean(ctx: Context) -> None:
     This is skipped if debugged tests are stopped halfway.
     """
     result = ctx.run('docker ps -aq --filter "name=pytest"', hide='stdout')
-    containers = result.stdout.strip().replace('\n', ' ')
+    containers = result.stdout.strip().replace('\n', ' ') if result is not None else ''
     if containers:
         ctx.run(f'docker rm -f {containers}')
 

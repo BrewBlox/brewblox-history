@@ -310,7 +310,7 @@ def test_plan_ranges_properties(config: ServiceConfig, seed: int):
         ((NOW - 3, NOW - 600), []),
     ],
 )
-def test_plan_export(dense: ServiceConfig, frame: tuple, expected: list):
+def test_plan_export(dense: ServiceConfig, frame: tuple[int, int], expected: list):
     assert planner.plan_export(Timeframe(*frame, 1), NOW, dense) == [ExportQuery(*q) for q in expected]
 
 

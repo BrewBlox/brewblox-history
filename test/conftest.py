@@ -30,6 +30,9 @@ class TestConfig(ServiceConfig):
     and the content of .appenv
     """
 
+    # Not a test class, although test modules import it
+    __test__ = False
+
     @classmethod
     def settings_customise_sources(
         cls,

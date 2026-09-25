@@ -54,11 +54,12 @@ jobs:
         run: |
           uv run pytest
 
-      - name: Lint
-        # The locked ruff: with all rules selected, a newer one adds rules
+      - name: Lint and type check
+        # The locked ruff and pyright: newer ones add rules and checks
         run: |
           uv run ruff format --check --diff
           uv run ruff check
+          uv run pyright
 
       - name: Build Docker image
         uses: docker/build-push-action@v5

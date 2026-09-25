@@ -97,12 +97,12 @@ async def test_ranges_seam(db: victoria.VictoriaClient, now: int):
     averages = {n: [(t * 1000, 1.0) for t in range(minute - 26 * 3600, minute - 600 + 1, 60)] for n in names}
     raw = {n: [((t + 5) * 1000, 2.0) for t in range(now - 1800, now - 10, 10)] for n in names}
     await import_samples(db._archive, averages)
-    await import_samples(db._dense, raw)
+    await import_samples(db._database('dense'), raw)
     await wait_searchable(db._archive, 'seam', averages)
-    await wait_searchable(db._dense, 'seam', raw)
+    await wait_searchable(db._database('dense'), 'seam', raw)
 
     db.cursor = minute - 1200
-    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration='1d'))
+    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(days=1)))
     assert [r.metric.name for r in result] == names
 
     # 1d gives 86 s, rounded up to a multiple of the 60 s averages
@@ -125,10 +125,10 @@ async def test_ranges_dense(db: victoria.VictoriaClient, config: ServiceConfig, 
     names = [f'dense/{n}' for n in NAMES[:2]]
     # A sample every second, in the middle of it, valued by its second
     raw = {n: [(t * 1000 + 500, float(t)) for t in range(now - 900, now - 1)] for n in names}
-    await import_samples(db._dense, raw)
-    await wait_searchable(db._dense, 'dense', raw)
+    await import_samples(db._database('dense'), raw)
+    await wait_searchable(db._database('dense'), 'dense', raw)
 
-    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration='10m'))
+    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(minutes=10)))
     assert [r.metric.name for r in result] == names
     for r in result:
         # Each point averages the ten samples of the step before it.
@@ -142,14 +142,14 @@ async def test_follow_up_database(db: victoria.VictoriaClient, now: int, monkeyp
     names = [f'follow/{n}' for n in NAMES[:2]]
     # A sample every second, in the middle of it, valued by its second
     raw = {n: [(t * 1000 + 500, float(t)) for t in range(now - 900, now - 1)] for n in names}
-    await import_samples(db._dense, raw)
-    await wait_searchable(db._dense, 'follow', raw)
+    await import_samples(db._database('dense'), raw)
+    await wait_searchable(db._database('dense'), 'follow', raw)
 
     # Ten minutes at 1 s, three seconds ago: up to query_latency (5 s) before then.
     # The clock only goes back: the database would replace points it thinks are in the last 5 s.
     frozen = utils.now()
     monkeypatch.setattr(utils, 'now', lambda: frozen - timedelta(seconds=3))
-    _, follow = await db.initial_ranges(TimeSeriesRangesQuery(fields=names, duration='10m'))
+    _, follow = await db.initial_ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(minutes=10)))
     assert follow == (now - 8, 1, now - 8)
 
     # Now: the three points after it. A point the database replaced with an older one would not match.
@@ -181,7 +181,7 @@ async def test_ranges_fallback(db: victoria.VictoriaClient, now: int):
     await import_samples(db._archive, averages)
     await wait_searchable(db._archive, 'fallback', averages)
 
-    [r] = await db.ranges(TimeSeriesRangesQuery(fields=names, duration='10m'))
+    [r] = await db.ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(minutes=10)))
     timestamps = [v.timestamp for v in r.values]
     assert all(b - a == 60 for a, b in itertools.pairwise(timestamps))
     assert {v.value for v in r.values} == {'7'}
@@ -199,11 +199,13 @@ async def test_csv_seam(db: victoria.VictoriaClient, config: ServiceConfig, now:
     # Raw samples 5 s past every 10 s of the minute grid
     raw = {n: [((t + 5) * 1000, 2.0) for t in range(minute - 3 * 3600, now - 10, 10)] for n in names}
     await import_samples(db._archive, averages)
-    await import_samples(db._dense, raw)
+    await import_samples(db._database('dense'), raw)
     await wait_searchable(db._archive, 'csv', averages)
-    await wait_searchable(db._dense, 'csv', raw)
+    await wait_searchable(db._database('dense'), 'csv', raw)
 
-    lines = [line async for line in db.csv(TimeSeriesCsvQuery(fields=names, duration='3h', precision='ms'))]
+    lines = [
+        line async for line in db.csv(TimeSeriesCsvQuery(fields=names, duration=timedelta(hours=3), precision='ms'))
+    ]
     assert lines[0] == ','.join(['time', *names])
     rows = [line.split(',') for line in lines[1:]]
     timestamps = [int(row[0]) for row in rows]
@@ -239,8 +241,8 @@ async def test_downsample_database(db: victoria.VictoriaClient, now: int, monkey
 
     # A sample every second, in the middle of it (the database exports nothing after now)
     raw = {n: [(t * 1000 + 500, value(t, i)) for t in range(minute - 1800, now - 1)] for i, n in enumerate(names)}
-    await import_samples(db._dense, raw)
-    await wait_searchable(db._dense, 'down', raw)
+    await import_samples(db._database('dense'), raw)
+    await wait_searchable(db._database('dense'), 'down', raw)
 
     def expected(until: int) -> dict[str, dict[int, float]]:
         # The interval (t - 60, t] holds the samples of seconds t - 60 to t - 1
@@ -285,8 +287,8 @@ async def test_find_dense_since_database(db: victoria.VictoriaClient, now: int):
     # The oldest sample in the dense database: other tests only write the last few hours
     downsample.setup()
     first = now - 2 * 24 * 3600 + 123
-    await import_samples(db._dense, {'since/a': [(first * 1000, 1.0), ((first + 3600) * 1000, 2.0)]})
-    await wait_searchable(db._dense, 'since', {'since/a': [0, 0]})
+    await import_samples(db._database('dense'), {'since/a': [(first * 1000, 1.0), ((first + 3600) * 1000, 2.0)]})
+    await wait_searchable(db._database('dense'), 'since', {'since/a': [0, 0]})
     assert await downsample.CV.get().find_dense_since(now) == first
 
 

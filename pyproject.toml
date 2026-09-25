@@ -38,6 +38,7 @@ dev = [
     "ciso8601>=2.3,<3",
     "invoke>=2.2,<4",
     "ruff",
+    "pyright>=1.1.414,<1.2",
 ]
 
 [build-system]
@@ -71,6 +72,14 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "except asyncio.CancelledError:",
 ]
+
+[tool.pyright]
+# Pylance reads this too, with its own pyright version: `uv run pyright` is what CI runs
+include = ["brewblox_history", "test", "tasks.py", "parse_appenv.py"]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
 
 [tool.ruff]
 line-length = 120

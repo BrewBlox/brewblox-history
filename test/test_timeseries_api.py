@@ -5,7 +5,6 @@ Tests brewblox_history.timeseries_api
 import asyncio
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from time import time_ns
 from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
@@ -33,13 +32,16 @@ TESTED = timeseries_api.__name__
 class DtEq:
     """Equal to any value that parses to the same datetime."""
 
-    __hash__ = None
-
     def __init__(self, value: utils.DatetimeSrc_) -> None:
         self.value = utils.parse_datetime(value)
 
     def __eq__(self, other: object, /) -> bool:
+        if not isinstance(other, str | int | float | datetime):
+            return NotImplemented
         return self.value == utils.parse_datetime(other)
+
+    def __hash__(self) -> int:
+        return hash(self.value)
 
 
 @pytest.fixture
@@ -119,7 +121,7 @@ async def test_ranges(client: AsyncClient, m_victoria: Mock):
 
 
 async def test_metrics(client: AsyncClient, m_victoria: Mock):
-    now = time_ns() // 1_000_000
+    now = datetime.now(UTC)
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(metric='a', value=1.2, timestamp=now),
         TimeSeriesMetric(metric='b', value=2.2, timestamp=now),
@@ -182,7 +184,10 @@ async def receive(ws, stream_id: str, received: dict[str, list[dict]]) -> dict:
 
 
 def one_range(name: str, *timestamps: int) -> TimeSeriesRange:
-    return TimeSeriesRange(metric={'__name__': name}, values=[TimeSeriesRangeValue(t, '1') for t in timestamps])
+    return TimeSeriesRange(
+        metric=TimeSeriesRangeMetric(__name__=name),
+        values=[TimeSeriesRangeValue(t, '1') for t in timestamps],
+    )
 
 
 def range_json(name: str, *timestamps: int) -> dict:
@@ -193,9 +198,9 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
     config.ranges_interval = timedelta(milliseconds=1)
     config.metrics_interval = timedelta(milliseconds=1)
     m_victoria.metrics.return_value = [
-        TimeSeriesMetric(metric='a', value=1.2, timestamp=1),
-        TimeSeriesMetric(metric='b', value=2.2, timestamp=1),
-        TimeSeriesMetric(metric='c', value=3.2, timestamp=1),
+        TimeSeriesMetric(metric='a', value=1.2, timestamp=datetime.fromtimestamp(1, UTC)),
+        TimeSeriesMetric(metric='b', value=2.2, timestamp=datetime.fromtimestamp(1, UTC)),
+        TimeSeriesMetric(metric='c', value=3.2, timestamp=datetime.fromtimestamp(1, UTC)),
     ]
     m_victoria.initial_ranges.return_value = (
         [one_range('a', 90, 100), one_range('b', 100)],

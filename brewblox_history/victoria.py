@@ -18,6 +18,7 @@ from brewblox_history.models import (
     TimeSeriesMetric,
     TimeSeriesMetricsQuery,
     TimeSeriesRange,
+    TimeSeriesRangeMetric,
     TimeSeriesRangesQuery,
 )
 
@@ -49,7 +50,7 @@ def ranges_of(values: dict[str, list], names: list[str], *, every_name: bool = F
     """The values per series as ranges, in the order of names.
     Series without values are left out, or with every_name, given no values."""
     return [
-        TimeSeriesRange(metric={'__name__': name}, values=values.get(name, []))
+        TimeSeriesRange(metric=TimeSeriesRangeMetric(__name__=name), values=values.get(name, []))
         for name in names
         if every_name or name in values
     ]
@@ -113,7 +114,11 @@ class VictoriaClient:
         self._dense_reads_failing = False
 
     def _database(self, db: planner.Database) -> httpx.AsyncClient:
-        return self._dense if db == 'dense' else self._archive
+        if db == 'archive':
+            return self._archive
+        if self._dense is None:
+            raise RuntimeError('The dense database is not enabled')
+        return self._dense
 
     async def close(self) -> None:
         # Close every client, also if one fails
@@ -178,8 +183,9 @@ class VictoriaClient:
         The points are all at least downsample_lag old: a latency offset that long
         keeps the database from replacing any with an older one."""
         config = utils.get_config()
-        with named_errors(self._dense):
-            resp = await self._dense.post(
+        dense = self._database('dense')
+        with named_errors(dense):
+            resp = await dense.post(
                 '/api/v1/query_range',
                 data={
                     'query': f'avg_over_time({{__name__!=""}}[{step}s]) keep_metric_names',

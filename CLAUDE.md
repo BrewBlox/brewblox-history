@@ -18,14 +18,15 @@ pytest --no-cov test/test_victoria.py     # one file; without --no-cov a partial
 pytest --no-cov test/test_victoria.py -k name
 ruff format --check --diff                # formatting; `ruff format` fixes
 ruff check                                # lint: all rules, minus the ignores in pyproject.toml (each with its reason)
+pyright                                   # type check, standard mode ([tool.pyright]); what CI runs
 invoke testclean                          # remove containers left by a killed pytest
 invoke image                              # build the service image locally (tag `local`)
 docker compose up                         # the service with hot reload, plus eventbus, redis and victoria
 ```
 
-The gate before every commit, as in CI: `pytest`, `ruff format --check`, `ruff check`.
-Code is lint-clean when it is committed; a deliberate exception gets `# noqa: <rule>` with the reason
-in a comment above it.
+The gate before every commit, as in CI: `pytest`, `ruff format --check`, `ruff check`, `pyright`.
+Code is clean when it is committed; a deliberate exception gets `# noqa: <rule>` or
+`# pyright: ignore[<rule>]` with the reason.
 
 Tests need Docker: pytest-docker starts the eventbus, redis, victoria and victoria-dense
 services from test/docker-compose.yml once per session. test/test_database.py runs the
@@ -127,6 +128,11 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   client with `httpx_ws.ASGIWebSocketTransport` inside the test: it holds an anyio cancel
   scope that must be entered and exited in the same task, and pytest-asyncio runs fixture
   setup and teardown in different tasks.
+- Tests build models with the declared types (the type checker does not see pydantic's
+  conversions): raw input, such as a string duration or extra fields, goes through
+  `model_validate`. Settings are built with `TestConfig` (test/conftest.py): it takes only the
+  values given, not the environment or `.appenv` (`ServiceConfig` reads both, also in
+  `model_validate`).
 - pytest-httpx responses are single-use; mark a response `is_reusable=True` when the code
   under test requests it more than once.
 - Do not loosen or skip a failing assertion to get green; the code is the suspect first.
@@ -137,8 +143,8 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
 - Discuss before building when a decision is Elco's to make; review findings are reported
   before anything is fixed; commits happen only when he asks for that commit.
 - PRs target `develop` in BrewBlox/brewblox-history. CI runs `uv run pytest`, then
-  `ruff format --check` and `ruff check` (the locked ruff), then builds the image for amd64,
-  arm/v7 and arm64. Python stays on 3.11 and arm/v7 stays supported because of wheel
-  availability on the Pi.
+  `ruff format --check`, `ruff check` and `pyright` (the locked versions), then builds the
+  image for amd64, arm/v7 and arm64. Python stays on 3.11 and arm/v7 stays supported
+  because of wheel availability on the Pi.
 - Design work in progress is in docs/ (untracked until agreed); in-flight plans and review
   records go under sessions/ (gitignored).

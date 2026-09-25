@@ -132,7 +132,7 @@ async def test_fields(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
         },
     )
 
-    args = TimeSeriesFieldsQuery(duration='1d')
+    args = TimeSeriesFieldsQuery(duration=timedelta(days=1))
     assert await vic.fields(args) == [
         'sparkey/HERMS HLT PID/inputValue[degC]',
         'sparkey/HERMS MT PID/integralReset',
@@ -150,7 +150,7 @@ async def test_fields_dense(dense_vic: victoria.VictoriaClient, url: str, dense_
             json={'status': 'success', 'data': [{'__name__': n} for n in names]},
         )
 
-    assert await dense_vic.fields(TimeSeriesFieldsQuery(duration='1d')) == ['a', 'b', 'c']
+    assert await dense_vic.fields(TimeSeriesFieldsQuery(duration=timedelta(days=1))) == ['a', 'b', 'c']
 
 
 async def test_fields_marker(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
@@ -160,7 +160,7 @@ async def test_fields_marker(vic: victoria.VictoriaClient, url: str, httpx_mock:
         method='POST',
         json={'status': 'success', 'data': [{'__name__': 'a'}, {'__name__': victoria.MARKER}]},
     )
-    assert await vic.fields(TimeSeriesFieldsQuery(duration='1d')) == ['a']
+    assert await vic.fields(TimeSeriesFieldsQuery(duration=timedelta(days=1))) == ['a']
 
 
 @pytest.mark.parametrize(
@@ -190,13 +190,13 @@ async def test_fields_dense_down(
         method='POST',
         json={'status': 'success', 'data': [{'__name__': 'a'}]},
     )
-    assert await dense_vic.fields(TimeSeriesFieldsQuery(duration='1d')) == ['a']
+    assert await dense_vic.fields(TimeSeriesFieldsQuery(duration=timedelta(days=1))) == ['a']
     assert 'Fields from the long-term database only: ' + logged.format(dense_url=dense_url) in caplog.text
 
     # Without the long-term database, the request fails
     httpx_mock.add_exception(url=f'{url}/api/v1/series', method='POST', exception=httpx.ConnectError('refused'))
     with pytest.raises(ConnectionError, match=f'{url}/: ConnectError'):
-        await dense_vic.fields(TimeSeriesFieldsQuery(duration='1d'))
+        await dense_vic.fields(TimeSeriesFieldsQuery(duration=timedelta(days=1)))
 
 
 async def test_metrics(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
@@ -206,7 +206,7 @@ async def test_metrics(vic: victoria.VictoriaClient, now: datetime, written: lis
     assert await vic.metrics(args) == []
 
     # Don't return invalid values
-    await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
+    await vic.write(HistoryEvent.model_validate({'key': 'service', 'data': {'f1': 1, 'f2': 'invalid'}}))
     result = await vic.metrics(args)
     assert result == [TimeSeriesMetric(metric='service/f1', value=1, timestamp=now)]
 
@@ -266,7 +266,7 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
     )
 
     # Results follow the requested fields, once each; fields without data are left out
-    args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3', 'f1'], duration='1h')
+    args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3', 'f1'], duration=timedelta(hours=1))
     assert await vic.ranges(args) == [TimeSeriesRange(**result('f1')), TimeSeriesRange(**result('f2'))]
 
     # One request for all fields, which ends query_latency before now and passes it as latency offset
@@ -279,6 +279,11 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
     # The start is on the grid of the step, at most a step before now - 1h
     assert int(params['start'][0]) % 3 == 0
     assert int(params['end'][0]) - int(params['start'][0]) in range(3595, 3595 + 3)
+
+
+def series(name: str, values: list) -> TimeSeriesRange:
+    """A range from the database's JSON values: [timestamp, value] pairs."""
+    return TimeSeriesRange.model_validate({'metric': {'__name__': name}, 'values': values})
 
 
 def matrix_handler(request: Request) -> Response:
@@ -309,11 +314,8 @@ async def test_ranges_seam(
             url=f'{db_url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True
         )
 
-    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration='1d'))
-    assert result == [
-        TimeSeriesRange(metric={'__name__': name}, values=[[ts - 86400, f'A-{name}'], [ts - 480, f'D-{name}']])
-        for name in ['a', 'b']
-    ]
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration=timedelta(days=1)))
+    assert result == [series(name, [[ts - 86400, f'A-{name}'], [ts - 480, f'D-{name}']]) for name in ['a', 'b']]
     assert len(httpx_mock.get_requests()) == 4
 
 
@@ -336,13 +338,13 @@ async def test_ranges_dense_down(
     httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
 
     # With a long-term part in the plan, that part is the answer
-    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='1d'))
-    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 86400, 'A-a']])]
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration=timedelta(days=1)))
+    assert result == [series('a', [[ts - 86400, 'A-a']])]
     assert 'Ranges without the dense database until it answers: ConnectionError' in caplog.text
 
     # Without one, the long-term database answers everything, at a multiple of its interval
-    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='10m'))
-    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 600, 'A-a']])]
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration=timedelta(minutes=10)))
+    assert result == [series('a', [[ts - 600, 'A-a']])]
     assert parse_qs(httpx_mock.get_requests()[-1].read().decode())['step'] == ['60s']
 
 
@@ -366,7 +368,7 @@ async def test_ranges_dense_outage_logged(
         url=f'{dense_url}/api/v1/query_range', method='POST', callback=dense_handler, is_reusable=True
     )
     httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
-    query = TimeSeriesRangesQuery(fields=['a'], duration='10m')
+    query = TimeSeriesRangesQuery(fields=['a'], duration=timedelta(minutes=10))
 
     def messages() -> list[str]:
         return [r.getMessage().split(':')[0] for r in caplog.records if r.name == victoria.__name__]
@@ -411,10 +413,8 @@ async def test_ranges_dense_partial_failure(
     )
     httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
 
-    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration='10m'))
-    assert result == [
-        TimeSeriesRange(metric={'__name__': name}, values=[[ts - 600, f'A-{name}']]) for name in ['a', 'b']
-    ]
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration=timedelta(minutes=10)))
+    assert result == [series(name, [[ts - 600, f'A-{name}']]) for name in ['a', 'b']]
 
 
 async def test_ranges_dense_since(
@@ -433,8 +433,8 @@ async def test_ranges_dense_since(
             url=f'{db_url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True
         )
 
-    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='10m'))
-    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 600, 'A-a'], [ts - 60, 'D-a']])]
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration=timedelta(minutes=10)))
+    assert result == [series('a', [[ts - 600, 'A-a'], [ts - 60, 'D-a']])]
 
 
 async def test_initial_ranges_follow_up(
@@ -476,7 +476,7 @@ async def test_initial_ranges_follow_up(
         )
 
     def query(duration: str) -> TimeSeriesRangesQuery:
-        return TimeSeriesRangesQuery(fields=['a', 'b'], duration=duration)
+        return TimeSeriesRangesQuery.model_validate({'fields': ['a', 'b'], 'duration': duration})
 
     # A day at 120 s, from both databases: after the newest point of any series
     _, follow = await dense_vic.initial_ranges(query('1d'))
@@ -490,8 +490,8 @@ async def test_initial_ranges_follow_up(
     failing = {'b'}
     result, follow = await dense_vic.initial_ranges(query('1d'))
     assert result == [
-        TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 720, 'A-a']]),
-        TimeSeriesRange(metric={'__name__': 'b'}, values=[[ts - 600, 'A-b']]),
+        series('a', [[ts - 720, 'A-a']]),
+        series('b', [[ts - 600, 'A-b']]),
     ]
     assert follow == (ts - 600, 10, ts - 5)
 
@@ -500,8 +500,8 @@ async def test_initial_ranges_follow_up(
     silent = {'D'}
     result, follow = await dense_vic.initial_ranges(query('10m'))
     assert result == [
-        TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 120, 'A-a']]),
-        TimeSeriesRange(metric={'__name__': 'b'}, values=[[ts - 60, 'A-b']]),
+        series('a', [[ts - 120, 'A-a']]),
+        series('b', [[ts - 60, 'A-b']]),
     ]
     assert follow == (ts - 60, 1, ts - 5)
 
@@ -510,7 +510,7 @@ async def test_initial_ranges_follow_up(
     assert await dense_vic.initial_ranges(query('10m')) == ([], (ts - 600, 1, ts - 5))
     # Every field, also without values
     assert await dense_vic.initial_ranges(query('10m'), every_field=True) == (
-        [TimeSeriesRange(metric={'__name__': n}, values=[]) for n in ['a', 'b']],
+        [series(n, []) for n in ['a', 'b']],
         (ts - 600, 1, ts - 5),
     )
 
@@ -540,7 +540,7 @@ async def test_follow_up_ranges(
     # The points after the last one, up to query_latency before now, ending on the last one
     follow = planner.FollowUp(ts - 37, 10, ts - 37)
     result, follow = await vic.follow_up_ranges(['a', 'b', 'a'], follow)
-    assert result == [TimeSeriesRange(metric={'__name__': n}, values=[[ts - 27, f'A-{n}']]) for n in ['a', 'b']]
+    assert result == [series(n, [[ts - 27, f'A-{n}']]) for n in ['a', 'b']]
     assert follow == (ts - 7, 10, ts - 7)
     [request] = httpx_mock.get_requests()
     params = parse_qs(request.read().decode())
@@ -583,7 +583,7 @@ async def test_follow_up_ranges_dense(
 
     down = False
     assert await dense_vic.follow_up_ranges(['a'], follow) == (
-        [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 27, 'D-a']])],
+        [series('a', [[ts - 27, 'D-a']])],
         (ts - 7, 10, ts - 7),
     )
     assert len(httpx_mock.get_requests()) == 2
@@ -602,13 +602,21 @@ async def test_csv_dense_since(
     for db_url in [url, dense_url]:
         httpx_mock.add_response(url=f'{db_url}/api/v1/export', method='POST', text='', is_reusable=True)
 
-    lines = [line async for line in dense_vic.csv(TimeSeriesCsvQuery(fields=['a'], duration='1h', precision='ms'))]
+    lines = [
+        line
+        async for line in dense_vic.csv(TimeSeriesCsvQuery(fields=['a'], duration=timedelta(hours=1), precision='ms'))
+    ]
     assert lines == ['time,a']
     exports = [(str(r.url).split('/')[3], parse_qs(r.read().decode())) for r in httpx_mock.get_requests()]
     assert [(db, int(p['start'][0]), int(p['end'][0])) for db, p in exports] == [
         ('victoria', ts - 3600, ts - 240),
         ('victoria-dense', ts - 240, ts - 5),
     ]
+
+
+async def test_dense_not_enabled(vic: victoria.VictoriaClient):
+    with pytest.raises(RuntimeError, match='not enabled'):
+        await vic.averages(0, 60, 60)
 
 
 async def test_ranges_archive_down(dense_vic: victoria.VictoriaClient, url: str, dense_url: str, httpx_mock: HTTPXMock):
@@ -619,7 +627,7 @@ async def test_ranges_archive_down(dense_vic: victoria.VictoriaClient, url: str,
     )
     dense_vic.cursor = int(utils.now().timestamp()) - 600
     with pytest.raises(ConnectionError, match=f'{url}/: ConnectError'):
-        await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='1d'))
+        await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration=timedelta(days=1)))
 
 
 async def test_csv_unreachable(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
@@ -698,14 +706,14 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
 
 async def test_csv_rejected(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     httpx_mock.add_response(url=f'{url}/api/v1/export', method='POST', status_code=422, text='bad query')
-    args = TimeSeriesCsvQuery(fields=['a'], duration='1h', precision='ISO8601')
+    args = TimeSeriesCsvQuery(fields=['a'], duration=timedelta(hours=1), precision='ISO8601')
     with pytest.raises(httpx.HTTPStatusError):
         async for _ in vic.csv(args):
             pass
 
 
 async def test_write(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
-    await vic.write(HistoryEvent(key='service', data={'f1': 1, 'f2': 'invalid'}))
+    await vic.write(HistoryEvent.model_validate({'key': 'service', 'data': {'f1': 1, 'f2': 'invalid'}}))
     await vic.write(HistoryEvent(key='service', data={}))
 
     assert written == ['service f1=1.0']
@@ -728,12 +736,14 @@ async def test_write(vic: victoria.VictoriaClient, now: datetime, written: list[
 
 async def test_write_escaping(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
     await vic.write(
-        HistoryEvent(
-            key='my "spark",1\\',
-            data={
-                'block, one': {'value=x': 1},
-                'back\\slash\\': 2,
-            },
+        HistoryEvent.model_validate(
+            {
+                'key': 'my "spark",1\\',
+                'data': {
+                    'block, one': {'value=x': 1},
+                    'back\\slash\\': 2,
+                },
+            }
         )
     )
     # Backslash, comma and space in the measurement.
@@ -826,7 +836,7 @@ async def test_close_dense(
     # A failing client does not keep the other open
     mocker.patch.object(dense_vic._archive, 'aclose', side_effect=RuntimeError('dummy'))
     await dense_vic.close()
-    assert dense_vic._dense.is_closed
+    assert dense_vic._database('dense').is_closed
     assert f'{url}/: close failed: RuntimeError(dummy)' in caplog.text
 
 

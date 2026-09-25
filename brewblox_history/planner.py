@@ -20,7 +20,7 @@ at a step capped at follow_up_step_max, from the database that receives the raw 
 
 import math
 from datetime import datetime, timedelta
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 from .models import SEARCHABLE_DELAY, DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime, parse_duration
 
@@ -66,9 +66,14 @@ def seconds(value: timedelta) -> int:
     return math.floor(value.total_seconds())
 
 
+def set_datetime(value: DatetimeSrc_) -> datetime:
+    """A start or end that is set: it parses to a datetime, or raises."""
+    return cast('datetime', parse_datetime(value))
+
+
 def select_timeframe(
     start: DatetimeSrc_,
-    duration: DurationSrc_,
+    duration: DurationSrc_ | None,
     end: DatetimeSrc_,
     now: datetime,
     config: ServiceConfig,
@@ -87,25 +92,25 @@ def select_timeframe(
         raise ValueError('At most two out of three timeframe arguments can be provided')
 
     if start and duration:
-        dt_start = parse_datetime(start)
+        dt_start = set_datetime(start)
         dt_end = dt_start + parse_duration(duration)
 
     elif start and end:
-        dt_start = parse_datetime(start)
-        dt_end = parse_datetime(end)
+        dt_start = set_datetime(start)
+        dt_end = set_datetime(end)
 
     elif duration and end:
-        dt_end = parse_datetime(end)
+        dt_end = set_datetime(end)
         dt_start = dt_end - parse_duration(duration)
 
     elif start:
-        dt_start = parse_datetime(start)
+        dt_start = set_datetime(start)
 
     elif duration:
         dt_start = now - parse_duration(duration)
 
     elif end:
-        dt_end = parse_datetime(end)
+        dt_end = set_datetime(end)
         dt_start = dt_end - config.query_duration_default
 
     else:

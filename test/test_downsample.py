@@ -312,6 +312,12 @@ async def test_downsample_catch_up(
     assert ds.cursor == NOW
 
 
+async def test_downsample_no_cursor(ds: downsample.Downsampler):
+    # tick() finds the cursor first
+    with pytest.raises(RuntimeError, match='not known'):
+        await ds.downsample(NOW)
+
+
 async def test_downsample_empty(ds: downsample.Downsampler, url: str, dense_url: str, httpx_mock: HTTPXMock):
     # No samples in the window: only the marker moves on
     httpx_mock.add_callback(url=f'{dense_url}/api/v1/query_range', method='POST', callback=lambda _: matrix([]))

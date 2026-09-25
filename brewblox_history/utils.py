@@ -70,7 +70,11 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
     raise ValueError(f'Invalid precision: {precision}')
 
 
-def is_open_ended(start: DatetimeSrc_ = None, duration: DurationSrc_ = None, end: DatetimeSrc_ = None) -> bool:
+def is_open_ended(
+    start: DatetimeSrc_ = None,
+    duration: DurationSrc_ | None = None,
+    end: DatetimeSrc_ = None,
+) -> bool:
     """Checks whether given parameters should yield a live response.
 
     Parameters are considered open-ended if no end date is set:

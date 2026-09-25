@@ -91,7 +91,7 @@ class Downsampler:
         since = self.cursor if self.cursor is not None else self.started
         return None if since is None else now - since
 
-    def _set_read_cursor(self, cursor: int | None, *, force: bool = False) -> None:
+    def _set_read_cursor(self, cursor: int, *, force: bool = False) -> None:
         vic = victoria.CV.get()
         if force or vic.cursor is None:
             vic.cursor = cursor
@@ -194,7 +194,7 @@ class Downsampler:
         self.stop()
         self.cursor = None
         self.marked = None
-        self._set_read_cursor(None, force=True)
+        vic.cursor = None
 
     async def downsample(self, now: int) -> None:
         """Averages every interval that ended at least downsample_lag ago, from the cursor on."""
@@ -207,15 +207,18 @@ class Downsampler:
         target = now - math.ceil(config.downsample_lag.total_seconds())
         target -= target % interval
 
-        while self.cursor < target:
-            end = min(self.cursor + chunk, target)
-            body = await vic.averages(self.cursor + interval, end, interval)
+        cursor = self.cursor
+        if cursor is None:
+            raise RuntimeError('The cursor is not known yet')
+        while cursor < target:
+            end = min(cursor + chunk, target)
+            body = await vic.averages(cursor + interval, end, interval)
             # json.loads holds the GIL, but the conversion after it does not block the event loop.
             # downsample_chunk keeps the parse short.
             lines = await asyncio.to_thread(import_lines, body)
             # Every import carries the marker, also when there was nothing to average
             await vic.import_archive('\n'.join([*lines, marker_line(end)]))
-            self.cursor = end
+            self.cursor = cursor = end
             self._publish_cursor(end, SEARCHABLE_DELAY.total_seconds())
 
     def max_lag(self) -> int:

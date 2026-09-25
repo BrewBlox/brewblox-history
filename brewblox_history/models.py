@@ -29,16 +29,17 @@ def parse_duration(value: DurationSrc_) -> timedelta:
     if isinstance(value, timedelta):
         return value
 
+    source: object = value
     try:
-        value = float(value)
+        source = float(value)
     except TypeError:
-        value = None
+        source = None
     except ValueError:
         # Zero ('0s') is a valid result
         parsed = timeparse(value)
-        value = value if parsed is None else parsed
+        source = value if parsed is None else parsed
 
-    return pydantic_timedelta_validator.validate_python(value)
+    return pydantic_timedelta_validator.validate_python(source)
 
 
 def parse_datetime(value: DatetimeSrc_) -> datetime | None:
@@ -373,12 +374,12 @@ class DatastoreDeleteResponse(BaseModel):
 
 
 class TimeSeriesFieldsQuery(BaseModel):
-    duration: loose_timedelta = Field(timedelta(days=1), examples=['10m', '1d'])
+    duration: loose_timedelta = Field(default=timedelta(days=1), examples=['10m', '1d'])
 
 
 class TimeSeriesMetricsQuery(BaseModel):
     fields: list[str]
-    duration: loose_timedelta = Field(timedelta(minutes=10), examples=['10m', '1d'])
+    duration: loose_timedelta = Field(default=timedelta(minutes=10), examples=['10m', '1d'])
 
 
 class TimeSeriesMetric(BaseModel):
@@ -389,9 +390,9 @@ class TimeSeriesMetric(BaseModel):
 
 class TimeSeriesRangesQuery(BaseModel):
     fields: list[str] = Field(examples=[['spark-one/sensor/value[degC]']])
-    start: datetime | None = Field(None, examples=['2020-01-01T20:00:00.000Z'])
-    end: datetime | None = Field(None, examples=['2030-01-01T20:00:00.000Z'])
-    duration: loose_timedelta | None = Field(None, examples=['1d'])
+    start: datetime | None = Field(default=None, examples=['2020-01-01T20:00:00.000Z'])
+    end: datetime | None = Field(default=None, examples=['2030-01-01T20:00:00.000Z'])
+    duration: loose_timedelta | None = Field(default=None, examples=['1d'])
 
 
 class TimeSeriesRangeValue(NamedTuple):

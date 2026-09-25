@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from brewblox_history import models
+from test.conftest import TestConfig
 
 
 def test_flatten():
@@ -88,14 +89,18 @@ def test_parse_retention_invalid(value):
         models.parse_retention(value)
 
 
+def settings(**values: object) -> models.ServiceConfig:
+    """The settings given, and the defaults: TestConfig reads neither the environment nor .appenv."""
+    return TestConfig.model_validate(values)
+
+
 def test_config_intervals():
-    config = models.ServiceConfig(_env_file=None, minimum_step='1s', sparse_interval='60s', dense_retention='30d')
+    config = settings(minimum_step='1s', sparse_interval='60s', dense_retention='30d')
     assert config.sparse_interval == timedelta(seconds=60)
     assert config.dense_retention == timedelta(days=30)
 
     # The smallest values the checks allow
-    models.ServiceConfig(
-        _env_file=None,
+    settings(
         dense_enabled=True,
         minimum_step=1,
         sparse_interval=10,
@@ -108,7 +113,7 @@ def test_config_intervals():
 
 
 @pytest.mark.parametrize(
-    ('settings', 'match'),
+    ('values', 'match'),
     [
         ({'query_latency': 0}, 'query_latency must be positive'),
         ({'csv_chunk_dense': 0}, 'csv_chunk_dense must be positive'),
@@ -116,14 +121,14 @@ def test_config_intervals():
         ({'follow_up_step_max': 0}, 'follow_up_step_max must be positive'),
     ],
 )
-def test_config_invalid(settings: dict, match: str):
+def test_config_invalid(values: dict, match: str):
     # Used with or without the dense database
     with pytest.raises(ValidationError, match=match):
-        models.ServiceConfig(_env_file=None, **settings)
+        settings(**values)
 
 
 @pytest.mark.parametrize(
-    ('settings', 'match'),
+    ('values', 'match'),
     [
         ({'minimum_step': 0}, 'minimum_step must be positive'),
         ({'sparse_interval': 0}, 'sparse_interval must be positive'),
@@ -141,26 +146,24 @@ def test_config_invalid(settings: dict, match: str):
         ({'downsample_max_lag': 0}, 'downsample_max_lag must be positive'),
     ],
 )
-def test_config_dense_invalid(settings: dict, match: str):
+def test_config_dense_invalid(values: dict, match: str):
     # Only the dense setup uses these: without it, the service starts whatever they are
-    models.ServiceConfig(_env_file=None, **settings)
+    settings(**values)
 
     with pytest.raises(ValidationError, match=match):
-        models.ServiceConfig(_env_file=None, dense_enabled=True, **settings)
+        settings(dense_enabled=True, **values)
 
 
 @pytest.mark.parametrize('sparse_interval', ['10m', '1h', '6h'])
 def test_config_dense_sparse_interval(sparse_interval: str):
     # brewblox-ctl renders sparse_interval: settings it does not render adapt to it instead of refusing it
-    config = models.ServiceConfig(
-        _env_file=None, dense_enabled=True, minimum_step='1s', sparse_interval=sparse_interval
-    )
+    config = settings(dense_enabled=True, minimum_step='1s', sparse_interval=sparse_interval)
     assert config.sparse_interval == models.parse_duration(sparse_interval)
 
 
 def test_config_ignores_unknown_settings():
     # Unknown settings must not prevent startup
-    config = models.ServiceConfig(_env_file=None, unknown_setting='value')
+    config = settings(unknown_setting='value')
     assert not hasattr(config, 'unknown_setting')
 
 
@@ -218,9 +221,9 @@ def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogC
 
 def test_history_event_data_not_object():
     with pytest.raises(ValidationError, match='Input should be an object'):
-        models.HistoryEvent(key='k', data=[1])
+        models.HistoryEvent.model_validate({'key': 'k', 'data': [1]})
     with pytest.raises(ValidationError, match='Input should be an object'):
-        models.HistoryEvent(key='k', data=MappingProxyType({'a\nb': math.inf}))
+        models.HistoryEvent.model_validate({'key': 'k', 'data': MappingProxyType({'a\nb': math.inf})})
 
 
 def test_history_event_data_json():

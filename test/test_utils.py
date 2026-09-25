@@ -56,7 +56,7 @@ def test_parse_duration():
         utils.parse_duration('')
 
     with pytest.raises(ValidationError):
-        utils.parse_duration(None)
+        utils.parse_duration(None)  # pyright: ignore[reportArgumentType]: a wrong type on purpose
 
 
 def test_parse_datetime():
@@ -72,7 +72,7 @@ def test_parse_datetime():
     assert utils.parse_datetime(None) is None
 
     with pytest.raises(ValueError, match='valid datetime'):
-        utils.parse_datetime({})
+        utils.parse_datetime({})  # pyright: ignore[reportArgumentType]: a wrong type on purpose
 
 
 def test_format_datetime():

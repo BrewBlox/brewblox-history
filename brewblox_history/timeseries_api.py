@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
@@ -192,14 +193,18 @@ async def timeseries_stream(ws: WebSocket) -> None:
             try:
                 cmd = TimeSeriesStreamCommand.model_validate_json(msg)
 
-                existing: asyncio.Task = streams.pop(cmd.id, None)
-                existing and existing.cancel()
+                existing = streams.pop(cmd.id, None)
+                if existing:
+                    existing.cancel()
 
+                # The command's validator gave the query the command's type
                 if cmd.command == 'ranges':
-                    streams[cmd.id] = asyncio.create_task(_stream_ranges(ws, cmd.id, cmd.query))
+                    query = cast('TimeSeriesRangesQuery', cmd.query)
+                    streams[cmd.id] = asyncio.create_task(_stream_ranges(ws, cmd.id, query))
 
                 elif cmd.command == 'metrics':
-                    streams[cmd.id] = asyncio.create_task(_stream_metrics(ws, cmd.id, cmd.query))
+                    query = cast('TimeSeriesMetricsQuery', cmd.query)
+                    streams[cmd.id] = asyncio.create_task(_stream_metrics(ws, cmd.id, query))
 
                 elif cmd.command == 'stop':
                     pass  # We already removed any pre-existing task from streams
