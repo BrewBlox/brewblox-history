@@ -32,7 +32,7 @@ def test_select_timeframe(config: ServiceConfig):
     def select(start=None, duration=None, end=None) -> Timeframe:
         return planner.select_timeframe(start, duration, end, now, config)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='At most two'):
         select(start='yesterday', duration='2d', end='tomorrow')
 
     # Without an end, the timeframe ends query_latency before now
@@ -80,7 +80,7 @@ def test_dense_horizon(dense: ServiceConfig):
 
 
 @pytest.mark.parametrize(
-    'frame, cursor, expected',
+    ('frame', 'cursor', 'expected'),
     [
         # Short windows in dense retention: raw samples, at their own step
         ((NOW - 600, NOW - 3, 1), NOW - 60, [('dense', NOW - 600, NOW - 3, 1)]),
@@ -295,7 +295,7 @@ def test_plan_ranges_properties(config: ServiceConfig, seed: int):
 
 
 @pytest.mark.parametrize(
-    'frame, expected',
+    ('frame', 'expected'),
     [
         # Raw samples wherever the dense database has them (30 d, minus the 1 h margin)
         ((NOW - DAY, NOW - 3), [('dense', NOW - DAY, NOW - 3, 6 * HOUR)]),
@@ -334,7 +334,7 @@ def test_plan_export_single(config: ServiceConfig):
 
 
 @pytest.mark.parametrize(
-    'start, end, chunk, expected',
+    ('start', 'end', 'chunk', 'expected'),
     [
         (0, 10, 4, [(0, 4), (4, 8), (8, 10)]),
         (0, 8, 4, [(0, 4), (4, 8)]),
@@ -348,7 +348,7 @@ def test_chunk_windows(start: int, end: int, chunk: int, expected: list):
 
 
 @pytest.mark.parametrize(
-    'value, expected',
+    ('value', 'expected'),
     [
         ('sparkey/sensor/value[degC]', '"sparkey/sensor/value[degC]"'),
         ('a "b" (c)', '"a \\"b\\" (c)"'),

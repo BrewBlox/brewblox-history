@@ -86,7 +86,7 @@ def select_timeframe(
     if all([start, duration, end]):
         raise ValueError('At most two out of three timeframe arguments can be provided')
 
-    elif start and duration:
+    if start and duration:
         dt_start = parse_datetime(start)
         dt_end = dt_start + parse_duration(duration)
 

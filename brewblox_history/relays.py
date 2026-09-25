@@ -54,12 +54,18 @@ from .models import HistoryEvent
 LOGGER = logging.getLogger(__name__)
 
 
-def setup():
+def setup() -> None:
     config = utils.get_config()
     mqtt_client = mqtt.CV.get()
 
     @mqtt_client.subscribe(config.history_topic + '/#')
-    async def on_history_message(client, topic, payload, qos, properties):
+    async def on_history_message(
+        _client: object,
+        topic: str,
+        payload: bytes,
+        _qos: int,
+        _properties: dict,
+    ) -> None:
         try:
             evt = HistoryEvent.model_validate_json(payload)
             await victoria.CV.get().write(evt)

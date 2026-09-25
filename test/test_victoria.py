@@ -4,7 +4,7 @@ Tests brewblox_history.victoria
 
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 import ciso8601
@@ -45,7 +45,7 @@ def url(config: ServiceConfig) -> str:
 
 @pytest.fixture
 def now(mocker: MockerFixture) -> datetime:
-    dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+    dt = datetime(2021, 7, 15, 19, tzinfo=UTC)
     mocker.patch(TESTED + '.utils.now').side_effect = lambda: dt
     return dt
 
@@ -164,7 +164,7 @@ async def test_fields_marker(vic: victoria.VictoriaClient, url: str, httpx_mock:
 
 
 @pytest.mark.parametrize(
-    'failure, logged',
+    ('failure', 'logged'),
     [
         ({'exception': httpx.ConnectError('refused')}, 'ConnectionError({dense_url}/: ConnectError(refused))'),
         ({'status_code': 503, 'text': 'too many requests'}, "HTTPStatusError(Server error '503 Service Unavailable'"),
@@ -632,41 +632,41 @@ async def test_csv_unreachable(vic: victoria.VictoriaClient, url: str, httpx_moc
 
 async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
     # Each 6 h window of the default 1 d gets the same response: rows are not repeated
-    httpx_mock.add_response(
-        url=f'{url}/api/v1/export',
-        method='POST',
-        is_reusable=True,
-        text='\n'.join(
-            [
-                '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
-                + '"values":[0,0,0,0,0,0,0],'
-                + '"timestamps":[1626368070381,1626368075435,1626368080487,1626368085534,'
-                + '1626368090630,1626368095687,1626368100749]}',
-                '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
-                + '"values":[0,0,0,0],'
-                + '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}',
-                '{"metric":{"__name__":"spock/actuator-1/value"},'
-                + '"values":[40,40,40,40,40,40,40,40,40,40,40,40,40],'
-                + '"timestamps":[1626368060379,1626368060380,1626368070380,1626368078080,1626368083130,1626368088178,'
-                + '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
-                '{"metric":{"__name__":"spock/pin-actuator-1/state"},'
-                + '"values":[0,0,0,0,0,0,0,0,0,0,0],'
-                + '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,'
-                + '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}',
-            ]
+    lines = [
+        (
+            '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
+            '"values":[0,0,0,0,0,0,0],'
+            '"timestamps":[1626368070381,1626368075435,1626368080487,1626368085534,'
+            '1626368090630,1626368095687,1626368100749]}'
         ),
-    )
+        (
+            '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
+            '"values":[0,0,0,0],'
+            '"timestamps":[1626368105840,1626368110891,1626368115940,1626368121034]}'
+        ),
+        (
+            '{"metric":{"__name__":"spock/actuator-1/value"},'
+            '"values":[40,40,40,40,40,40,40,40,40,40,40,40,40],'
+            '"timestamps":[1626368060379,1626368060380,1626368070380,1626368078080,1626368083130,1626368088178,'
+            '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}'
+        ),
+        (
+            '{"metric":{"__name__":"spock/pin-actuator-1/state"},'
+            '"values":[0,0,0,0,0,0,0,0,0,0,0],'
+            '"timestamps":[1626368070380,1626368078080,1626368083130,1626368088178,'
+            '1626368093272,1626368098328,1626368103383,1626368108480,1626368113533,1626368118579,1626368123669]}'
+        ),
+    ]
+    httpx_mock.add_response(url=f'{url}/api/v1/export', method='POST', is_reusable=True, text='\n'.join(lines))
 
     args = TimeSeriesCsvQuery(
         fields=['sparkey/HERMS BK PWM/setting', 'spock/pin-actuator-1/state', 'spock/actuator-1/value'],
         precision='ISO8601',
     )
 
-    result = []
-    async for line in vic.csv(args):
-        result.append(line)
+    result = [line async for line in vic.csv(args)]
     assert len(result) == 25  # headers, 13 from sparkey, 11 from spock
-    assert result[0] == ','.join(['time'] + args.fields)
+    assert result[0] == ','.join(['time', *args.fields])
 
     # line 1: values from spock
     line = result[1].split(',')
@@ -687,8 +687,10 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
     assert len(requests) == 4
     params = [parse_qs(r.read().decode()) for r in requests]
     assert params[0]['match[]'] == [
-        '{__name__="sparkey/HERMS BK PWM/setting" or __name__="spock/pin-actuator-1/state"'
-        + ' or __name__="spock/actuator-1/value"}'
+        (
+            '{__name__="sparkey/HERMS BK PWM/setting" or __name__="spock/pin-actuator-1/state"'
+            ' or __name__="spock/actuator-1/value"}'
+        )
     ]
     assert [int(p['end'][0]) - int(p['start'][0]) for p in params][:3] == [6 * 3600] * 3
     assert all(params[i]['end'] == params[i + 1]['start'] for i in range(3))

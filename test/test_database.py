@@ -5,6 +5,7 @@ Series names are unique per test: the databases live for the whole test session.
 """
 
 import asyncio
+import itertools
 import json
 from datetime import timedelta
 
@@ -109,7 +110,7 @@ async def test_ranges_seam(db: victoria.VictoriaClient, now: int):
     seam = db.cursor - db.cursor % step
     for r in result:
         timestamps = [v.timestamp for v in r.values]
-        assert all(b - a == step for a, b in zip(timestamps, timestamps[1:], strict=False))
+        assert all(b - a == step for a, b in itertools.pairwise(timestamps))
         assert timestamps[0] <= now - 24 * 3600
         assert seam in timestamps
         assert timestamps[-1] > seam
@@ -182,7 +183,7 @@ async def test_ranges_fallback(db: victoria.VictoriaClient, now: int):
 
     [r] = await db.ranges(TimeSeriesRangesQuery(fields=names, duration='10m'))
     timestamps = [v.timestamp for v in r.values]
-    assert all(b - a == 60 for a, b in zip(timestamps, timestamps[1:], strict=False))
+    assert all(b - a == 60 for a, b in itertools.pairwise(timestamps))
     assert {v.value for v in r.values} == {'7'}
 
 
@@ -218,8 +219,8 @@ async def test_csv_seam(db: victoria.VictoriaClient, config: ServiceConfig, now:
     horizon = now - 2 * 3600
     assert {v[0] for v in values[:switch]} == {'1'}
     assert {v[0] for v in values[switch:]} == {'2'}
-    assert all(b - a == 60_000 for a, b in zip(timestamps[:switch], timestamps[1:switch], strict=False))
-    assert all(b - a == 10_000 for a, b in zip(timestamps[switch:], timestamps[switch + 1 :], strict=False))
+    assert all(b - a == 60_000 for a, b in itertools.pairwise(timestamps[:switch]))
+    assert all(b - a == 10_000 for a, b in itertools.pairwise(timestamps[switch:]))
     assert timestamps[switch - 1] == (horizon + (-horizon % 60)) * 1000
     assert timestamps[switch] == timestamps[switch - 1] + 5_000
 

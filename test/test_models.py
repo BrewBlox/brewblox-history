@@ -3,7 +3,9 @@ Tests brewblox_history.models
 """
 
 import logging
+import math
 from datetime import timedelta
+from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
@@ -59,7 +61,7 @@ def test_flatten():
 
 
 @pytest.mark.parametrize(
-    'value, expected',
+    ('value', 'expected'),
     [
         ('30d', timedelta(days=30)),
         ('30D', timedelta(days=30)),
@@ -106,7 +108,7 @@ def test_config_intervals():
 
 
 @pytest.mark.parametrize(
-    'settings, match',
+    ('settings', 'match'),
     [
         ({'query_latency': 0}, 'query_latency must be positive'),
         ({'csv_chunk_dense': 0}, 'csv_chunk_dense must be positive'),
@@ -121,7 +123,7 @@ def test_config_invalid(settings: dict, match: str):
 
 
 @pytest.mark.parametrize(
-    'settings, match',
+    ('settings', 'match'),
     [
         ({'minimum_step': 0}, 'minimum_step must be positive'),
         ({'sparse_interval': 0}, 'sparse_interval must be positive'),
@@ -214,6 +216,13 @@ def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogC
     ]
 
 
+def test_history_event_data_not_object():
+    with pytest.raises(ValidationError, match='Input should be an object'):
+        models.HistoryEvent(key='k', data=[1])
+    with pytest.raises(ValidationError, match='Input should be an object'):
+        models.HistoryEvent(key='k', data=MappingProxyType({'a\nb': math.inf}))
+
+
 def test_history_event_data_json():
     # Values only JSON carries, on the path relays uses
     huge = '1' + '0' * 400
@@ -242,7 +251,7 @@ def test_history_event_key():
 
 
 @pytest.mark.parametrize(
-    'value, expected',
+    ('value', 'expected'),
     [
         (None, None),
         (1_700_000_000_000, 1_700_000_000_000),
@@ -264,7 +273,7 @@ def test_history_event_timestamp(value, expected):
 
 
 @pytest.mark.parametrize(
-    'field, expected',
+    ('field', 'expected'),
     [
         ('', None),
         (', "timestamp": 12', 12),

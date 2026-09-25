@@ -5,7 +5,7 @@ Tests brewblox_history.downsample
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 import httpx
@@ -41,7 +41,7 @@ def dense_url(config: ServiceConfig) -> str:
 def clock(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """The time, in Unix seconds: set clock[0] to move it."""
     clock = [NOW]
-    monkeypatch.setattr(utils, 'now', lambda: datetime.fromtimestamp(clock[0], timezone.utc))
+    monkeypatch.setattr(utils, 'now', lambda: datetime.fromtimestamp(clock[0], UTC))
     return clock
 
 
@@ -82,7 +82,7 @@ class FakeDense:
     """A dense database with a sample every second in each range (first, last),
     answering the per-day index and tfirst queries."""
 
-    def __init__(self, *ranges: tuple[int, int]):
+    def __init__(self, *ranges: tuple[int, int]) -> None:
         self.ranges = list(ranges)
 
     def series(self, request: Request) -> Response:
@@ -137,7 +137,7 @@ def test_import_lines():
 
 
 @pytest.mark.parametrize(
-    'ranges, expected, scans',
+    ('ranges', 'expected', 'scans'),
     [
         # Samples across the whole retention: nothing to report, found at once
         ([(NOW - RETENTION - 100, NOW)], None, 1),

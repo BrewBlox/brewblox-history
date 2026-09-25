@@ -29,14 +29,12 @@ def app() -> FastAPI:
     victoria.setup()
     mqtt.setup()
     relays.setup()
-    app = FastAPI(lifespan=lifespan)
-    return app
+    return FastAPI(lifespan=lifespan)
 
 
 @pytest.fixture
 def m_write(app: FastAPI, mocker: MockerFixture):
-    m = mocker.spy(victoria.CV.get(), 'write')
-    return m
+    return mocker.spy(victoria.CV.get(), 'write')
 
 
 async def test_mqtt_relay(client: AsyncClient, config: ServiceConfig, m_write: Mock, monkeypatch: pytest.MonkeyPatch):

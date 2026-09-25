@@ -27,6 +27,7 @@ import asyncio
 import json
 import logging
 import math
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
@@ -74,7 +75,7 @@ def fmt(timestamp: int) -> str:
 
 
 class Downsampler:
-    def __init__(self):
+    def __init__(self) -> None:
         # End of the last interval averaged into the long-term database (Unix s)
         self.cursor: int | None = None
         # When the task started (Unix s): the lag counts from there until the cursor is known
@@ -90,17 +91,17 @@ class Downsampler:
         since = self.cursor if self.cursor is not None else self.started
         return None if since is None else now - since
 
-    def _set_read_cursor(self, cursor: int | None, force: bool = False):
+    def _set_read_cursor(self, cursor: int | None, *, force: bool = False) -> None:
         vic = victoria.CV.get()
         if force or vic.cursor is None:
             vic.cursor = cursor
         else:
             vic.cursor = max(vic.cursor, cursor)
 
-    def _publish_cursor(self, cursor: int, delay: float):
+    def _publish_cursor(self, cursor: int, delay: float) -> None:
         """Reads use the cursor once the averages up to it are searchable."""
 
-        def publish():
+        def publish() -> None:
             self._pending.discard(handle)
             self._set_read_cursor(cursor)
             self.marked = cursor if self.marked is None else max(self.marked, cursor)
@@ -108,7 +109,7 @@ class Downsampler:
         handle = asyncio.get_running_loop().call_later(delay, publish)
         self._pending.add(handle)
 
-    def stop(self):
+    def stop(self) -> None:
         for handle in self._pending:
             handle.cancel()
         self._pending.clear()
@@ -161,7 +162,7 @@ class Downsampler:
             if await vic.has_series('archive', 1, now, MARKER_SELECTOR):
                 LOGGER.warning(
                     'The long-term database has averages from before the dense retention, and the dense database'
-                    + f' has samples from {fmt(start)}: the time between is not averaged'
+                    f' has samples from {fmt(start)}: the time between is not averaged'
                 )
             else:
                 LOGGER.info(f'No averages in the long-term database: averaging from {fmt(start)}')
@@ -176,7 +177,7 @@ class Downsampler:
             return start
         return cursor
 
-    async def check_archive(self, now: int):
+    async def check_archive(self, now: int) -> None:
         """After a crash, the long-term database may have lost the last imports it held in memory.
         The marker then ends before where it was seen: average again from the marker."""
         vic = victoria.CV.get()
@@ -195,7 +196,7 @@ class Downsampler:
         self.marked = None
         self._set_read_cursor(None, force=True)
 
-    async def downsample(self, now: int):
+    async def downsample(self, now: int) -> None:
         """Averages every interval that ended at least downsample_lag ago, from the cursor on."""
         config = utils.get_config()
         vic = victoria.CV.get()
@@ -224,7 +225,7 @@ class Downsampler:
         keeping_up = seconds(config.downsample_lag + 2 * config.sparse_interval + config.downsample_interval)
         return max(seconds(config.downsample_max_lag), keeping_up)
 
-    def check_lag(self, now: int):
+    def check_lag(self, now: int) -> None:
         """Warns once while the averages end more than max_lag() ago."""
         age = self.age(now)
         if age is None:
@@ -236,7 +237,7 @@ class Downsampler:
             self._lagging = False
             LOGGER.info('Downsampling caught up')
 
-    async def tick(self):
+    async def tick(self) -> None:
         now = int(utils.now().timestamp())
         vic = victoria.CV.get()
         if self._dense_since_at is None or now - self._dense_since_at >= DENSE_SINCE_REFRESH:
@@ -249,24 +250,25 @@ class Downsampler:
             self._set_read_cursor(self.cursor, force=True)
         await self.downsample(now)
 
-    async def run(self):
+    async def run(self) -> None:
         config = utils.get_config()
         self.started = int(utils.now().timestamp())
         while True:
             try:
                 await self.tick()
-            except Exception as ex:
+            # Logged, and the task goes on: the service also serves the datastore
+            except Exception as ex:  # noqa: BLE001
                 LOGGER.error(f'Downsampling failed: {utils.strex(ex)}')
             self.check_lag(int(utils.now().timestamp()))
             await asyncio.sleep(config.downsample_interval.total_seconds())
 
 
-def setup():
+def setup() -> None:
     CV.set(Downsampler())
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan() -> AsyncIterator[None]:
     config = utils.get_config()
     downsampler = CV.get()
     if not config.dense_enabled:

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from itertools import groupby
@@ -22,29 +23,29 @@ def keycatobj(obj: DatastoreValue) -> str:
 
 
 class RedisClient:
-    def __init__(self):
+    def __init__(self) -> None:
         config = utils.get_config()
         self.url = f'redis://{config.redis_host}:{config.redis_port}'
         self.topic = config.datastore_topic
         self._redis: aioredis.Redis = None
 
-    async def connect(self):
+    async def connect(self) -> None:
         await self.disconnect()
         self._redis = await aioredis.from_url(self.url)
         await self._redis.initialize()
 
-    async def disconnect(self):
+    async def disconnect(self) -> None:
         if self._redis:
             await self._redis.aclose()
             self._redis = None
 
-    async def _mkeys(self, namespace: str, ids: list[str] | None, filter: str | None) -> list[str]:
+    async def _mkeys(self, namespace: str, ids: list[str] | None, pattern: str | None) -> list[str]:
         keys = [keycat(namespace, key) for key in (ids or [])]
-        if filter is not None:
-            keys += [key.decode() for key in await self._redis.keys(keycat(namespace, filter))]
+        if pattern is not None:
+            keys += [key.decode() for key in await self._redis.keys(keycat(namespace, pattern))]
         return keys
 
-    async def _publish(self, changed: list[DatastoreValue] = None, deleted: list[str] = None):
+    async def _publish(self, changed: list[DatastoreValue] | None = None, deleted: list[str] | None = None) -> None:
         """Publish changes to documents.
 
         Objects are grouped by top-level namespace, and then published
@@ -55,24 +56,29 @@ class RedisClient:
         if changed:
             changed = sorted(changed, key=keycatobj)
             for key, group in groupby(changed, key=lambda v: keycatobj(v).split(':')[0]):
-                fmqtt.publish(f'{self.topic}/{key}', {'changed': list((v.model_dump() for v in group))})
+                fmqtt.publish(f'{self.topic}/{key}', {'changed': [v.model_dump() for v in group]})
 
         if deleted:
             deleted = sorted(deleted)
             for key, group in groupby(deleted, key=lambda v: v.split(':')[0]):
                 fmqtt.publish(f'{self.topic}/{key}', {'deleted': list(group)})
 
-    async def ping(self):
+    async def ping(self) -> None:
         await self._redis.ping()
 
-    async def get(self, namespace: str, id: str) -> DatastoreValue | None:
-        resp = await self._redis.get(keycat(namespace, id))
+    async def get(self, namespace: str, doc_id: str) -> DatastoreValue | None:
+        resp = await self._redis.get(keycat(namespace, doc_id))
         return DatastoreValue.model_validate_json(resp) if resp else None
 
-    async def mget(self, namespace: str, ids: list[str] = None, filter: str = None) -> list[DatastoreValue]:
-        if ids is None and filter is None:
-            filter = '*'
-        keys = await self._mkeys(namespace, ids, filter)
+    async def mget(
+        self,
+        namespace: str,
+        ids: list[str] | None = None,
+        pattern: str | None = None,
+    ) -> list[DatastoreValue]:
+        if ids is None and pattern is None:
+            pattern = '*'
+        keys = await self._mkeys(namespace, ids, pattern)
         values = []
         if keys:
             values = await self._redis.mget(*keys)
@@ -87,18 +93,18 @@ class RedisClient:
         if values:
             db_keys = [keycatobj(v) for v in values]
             db_values = [v.model_dump_json() for v in values]
-            await self._redis.mset(dict(zip(db_keys, db_values)))
+            await self._redis.mset(dict(zip(db_keys, db_values, strict=True)))
             await self._publish(changed=values)
         return values
 
-    async def delete(self, namespace: str, id: str) -> int:
-        key = keycat(namespace, id)
+    async def delete(self, namespace: str, doc_id: str) -> int:
+        key = keycat(namespace, doc_id)
         count = await self._redis.delete(key)
         await self._publish(deleted=[key])
         return count
 
-    async def mdelete(self, namespace: str, ids: list[str] = None, filter: str = None) -> int:
-        keys = await self._mkeys(namespace, ids, filter)
+    async def mdelete(self, namespace: str, ids: list[str] | None = None, pattern: str | None = None) -> int:
+        keys = await self._mkeys(namespace, ids, pattern)
         count = 0
         if keys:
             count = await self._redis.delete(*keys)
@@ -106,12 +112,12 @@ class RedisClient:
         return count
 
 
-def setup():
+def setup() -> None:
     CV.set(RedisClient())
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan() -> AsyncIterator[None]:
     client = CV.get()
     await client.connect()
     yield

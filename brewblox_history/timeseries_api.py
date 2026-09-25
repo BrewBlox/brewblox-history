@@ -4,6 +4,7 @@ REST endpoints for TimeSeries queries
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
@@ -81,12 +82,12 @@ async def timeseries_metrics(query: TimeSeriesMetricsQuery) -> list[TimeSeriesMe
 
 
 @router.post('/csv')
-async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
+async def timeseries_csv(query: TimeSeriesCsvQuery) -> StreamingResponse:
     """
     Get value ranges formatted as CSV stream from the database.
     """
 
-    async def generate():
+    async def generate() -> AsyncIterator[bytes]:
         buffer = ''
         async for line in victoria.CV.get().csv(query):  # pragma: no branch
             buffer = f'{buffer}{line}\n'
@@ -107,10 +108,11 @@ async def timeseries_csv(response: Response, query: TimeSeriesCsvQuery):
 
 
 @asynccontextmanager
-async def protected(desc: str):
+async def protected(desc: str) -> AsyncIterator[None]:
+    # Logged, and the stream goes on
     try:
         yield
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001
         LOGGER.error(f'{desc} error {utils.strex(ex)}')
 
 
@@ -173,7 +175,7 @@ async def _stream_metrics(ws: WebSocket, stream_id: str, query: TimeSeriesMetric
 
 
 @router.websocket('/stream')
-async def timeseries_stream(ws: WebSocket):
+async def timeseries_stream(ws: WebSocket) -> None:
     """
     Open a WebSocket to stream values from the database as they are added.
 
@@ -205,9 +207,10 @@ async def timeseries_stream(ws: WebSocket):
                 # Pydantic validates commands
                 # This path should never be reached
                 else:  # pragma: no cover
-                    raise NotImplementedError('Unknown command')
+                    raise NotImplementedError('Unknown command')  # noqa: TRY301
 
-            except Exception as ex:
+            # Reported to the client, and the socket stays open
+            except Exception as ex:  # noqa: BLE001
                 LOGGER.error(f'Stream read error {utils.strex(ex)}')
                 await ws.send_json(
                     {

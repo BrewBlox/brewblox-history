@@ -13,15 +13,19 @@ The environment is uv (`uv sync`). VS Code terminals have `.venv/bin` on PATH; e
 prefix commands with `uv run`.
 
 ```sh
-pytest                                    # full suite: the gate, 100% branch coverage required
+pytest                                    # full suite, 100% branch coverage required
 pytest --no-cov test/test_victoria.py     # one file; without --no-cov a partial run fails on coverage
 pytest --no-cov test/test_victoria.py -k name
-ruff format --check --diff                # what CI lints; `ruff format` fixes
-ruff check                                # lint (select ALL, ignores in pyproject.toml); not enforced by CI
+ruff format --check --diff                # formatting; `ruff format` fixes
+ruff check                                # lint: all rules, minus the ignores in pyproject.toml (each with its reason)
 invoke testclean                          # remove containers left by a killed pytest
 invoke image                              # build the service image locally (tag `local`)
 docker compose up                         # the service with hot reload, plus eventbus, redis and victoria
 ```
+
+The gate before every commit, as in CI: `pytest`, `ruff format --check`, `ruff check`.
+Code is lint-clean when it is committed; a deliberate exception gets `# noqa: <rule>` with the reason
+in a comment above it.
 
 Tests need Docker: pytest-docker starts the eventbus, redis, victoria and victoria-dense
 services from test/docker-compose.yml once per session. test/test_database.py runs the
@@ -133,7 +137,8 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
 - Discuss before building when a decision is Elco's to make; review findings are reported
   before anything is fixed; commits happen only when he asks for that commit.
 - PRs target `develop` in BrewBlox/brewblox-history. CI runs `uv run pytest`, then
-  `ruff format --check`, then builds the image for amd64, arm/v7 and arm64. Python stays
-  on 3.11 and arm/v7 stays supported because of wheel availability on the Pi.
+  `ruff format --check` and `ruff check` (the locked ruff), then builds the image for amd64,
+  arm/v7 and arm64. Python stays on 3.11 and arm/v7 stays supported because of wheel
+  availability on the Pi.
 - Design work in progress is in docs/ (untracked until agreed); in-flight plans and review
   records go under sessions/ (gitignored).

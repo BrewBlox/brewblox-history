@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, NamedTuple, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
-from pydantic_core import SchemaValidator, core_schema
+from pydantic_core import PydanticCustomError, SchemaValidator, core_schema
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pytimeparse.timeparse import timeparse
 
@@ -112,16 +112,18 @@ MAX_NAME_BYTES = 1024
 
 # History fields refused since startup, so that each is logged once
 _refused_fields: set[str] = set()
+# A refused name is logged up to this many characters
+REFUSED_NAME_SHOWN = 200
 
 
-def refuse_field(name: str):
+def refuse_field(name: str) -> None:
     if name not in _refused_fields:
         _refused_fields.add(name)
-        shown = name if len(name) <= 200 else f'{name[:200]}...'
+        shown = name if len(name) <= REFUSED_NAME_SHOWN else f'{name[:REFUSED_NAME_SHOWN]}...'
         LOGGER.warning(f'Refused history field {shown!r}: its name cannot be stored or queried')
 
 
-def _flatten_into(items: list[tuple[str, Any]], pairs: Iterable[tuple[Any, Any]], parent_key: str):
+def _flatten_into(items: list[tuple[str, Any]], pairs: Iterable[tuple[Any, Any]], parent_key: str) -> None:
     for k, v in pairs:
         key = f'{parent_key}/{k}' if parent_key else str(k)
         if isinstance(v, dict):
@@ -220,7 +222,6 @@ class ServiceConfig(BaseSettings):
     @model_validator(mode='after')
     def check_intervals(self) -> Self:
         zero = timedelta()
-        second = timedelta(seconds=1)
 
         # Used with or without the dense database
         for name in ['query_latency', 'csv_chunk_dense', 'csv_chunk_sparse', 'follow_up_step_max']:
@@ -230,9 +231,13 @@ class ServiceConfig(BaseSettings):
         # Only the dense setup uses the others, and minimum_step predates it.
         # Without it, the service must start whatever they are:
         # brewblox-ctl renders sparse_interval and dense_retention either way.
-        if not self.dense_enabled:
-            return self
+        if self.dense_enabled:
+            self._check_dense_intervals()
+        return self
 
+    def _check_dense_intervals(self) -> None:
+        zero = timedelta()
+        second = timedelta(seconds=1)
         for name in [
             'minimum_step',
             'sparse_interval',
@@ -255,7 +260,6 @@ class ServiceConfig(BaseSettings):
         if self.downsample_lag < TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY:
             # A sample accepted with the oldest allowed timestamp must be searchable by then
             raise ValueError(f'downsample_lag must be at least {TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY}')
-        return self
 
 
 class HistoryEvent(BaseModel):
@@ -290,16 +294,18 @@ class HistoryEvent(BaseModel):
 
     @field_validator('data', mode='before')
     @classmethod
-    def sanitize_data(cls, v, info: ValidationInfo):
-        assert isinstance(v, dict)
+    def sanitize_data(cls, v: object, info: ValidationInfo) -> dict[str, float]:
+        # Also other mappings: they would bypass the sanitizing
+        if not isinstance(v, dict):
+            raise PydanticCustomError('dict_type', 'Input should be an object')
         # Without a valid key, the whole event is refused: its fields are not checked
         key: str | None = info.data.get('key')
         # Bytes left for the field in a series name
         room = MAX_NAME_BYTES - len(key.encode()) - 1 if key is not None else 0
         data = {}
-        for field, value in flatten(v).items():
+        for field, raw in flatten(v).items():
             try:
-                value = float(value)
+                value = float(raw)
             except (ValueError, TypeError, OverflowError):
                 continue
             if not math.isfinite(value) or key is None:
@@ -319,7 +325,7 @@ class HistoryEvent(BaseModel):
 
     @field_validator('timestamp', mode='before')
     @classmethod
-    def parse_timestamp(cls, v):
+    def parse_timestamp(cls, v: object) -> int | None:
         # Publishers were free to send any `timestamp` while it was an unknown field.
         # Anything but a number in float range is ignored instead of refusing the event.
         if isinstance(v, bool) or not isinstance(v, int | float):

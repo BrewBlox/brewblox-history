@@ -86,6 +86,20 @@ ignore = [
     "ISC001",
     "Q000",
     "Q003",
+    "G003",   # logging with string concatenation, and
+    "G004",   # with f-strings: DuplicateFilter compares the formatted message (record.msg)
+    "CPY001", # copyright notice in every file
+    "D1",     # docstrings where they help, not on every public name
+    "D200",   # docstring layout: the summary may continue on the next line,
+    "D205",
+    "D209",
+    "D400",
+    "D401",
+    "D415",
+    "TRY400", # errors are logged on one line (utils.strex): tracebacks every stream tick would flood the log
+    "TRY003", # exception messages inline
+    "EM101",
+    "EM102",
 ]
 
 [tool.ruff.format]
@@ -94,6 +108,12 @@ line-ending = "lf"
 quote-style = "single"
 
 [tool.ruff.lint.extend-per-file-ignores]
+"parse_appenv.py" = [
+    "T201", # its output is the .appenv file
+]
+"tasks.py" = [
+    "FBT", # invoke turns task parameters into command-line flags
+]
 "test/**/*.py" = [
     "S101",    # asserts allowed in tests
     "ARG",     # unused function args: fixtures are functionally relevant
@@ -103,4 +123,8 @@ quote-style = "single"
     "D103",    # missing docstring in public function
     "ANN201",  # missing return type annotation
     "SLF001",  # private member accessed
+    "ANN001",  # fixture arguments: their types are the fixtures'
+    "ANN202",  # nested helpers and callbacks
+    "PLR0913", # many fixtures
+    "PLR0917",
 ]

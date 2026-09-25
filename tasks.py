@@ -7,7 +7,7 @@ IMAGE = 'ghcr.io/brewblox/brewblox-history'
 
 
 @task
-def testclean(ctx: Context):
+def testclean(ctx: Context) -> None:
     """
     Cleans up leftover test containers.
     Container cleanup is normally done in test fixtures.
@@ -20,7 +20,7 @@ def testclean(ctx: Context):
 
 
 @task
-def image(ctx: Context, tag='local', push=False):
+def image(ctx: Context, tag: str = 'local', push: bool = False) -> None:
     with ctx.cd(ROOT):
         ctx.run(f'docker build --load -t {IMAGE}:{tag} .')
         if push:
@@ -28,7 +28,12 @@ def image(ctx: Context, tag='local', push=False):
 
 
 @task
-def buildx(ctx: Context, tag='local', push=False, platform='linux/amd64,linux/arm/v7,linux/arm64/v8'):
+def buildx(
+    ctx: Context,
+    tag: str = 'local',
+    push: bool = False,
+    platform: str = 'linux/amd64,linux/arm/v7,linux/arm64/v8',
+) -> None:
     # Without --push, a multi-platform build has nowhere to go and is discarded
     push_flag = '--push' if push else ''
     with ctx.cd(ROOT):

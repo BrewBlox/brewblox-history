@@ -4,21 +4,19 @@ Tests brewblox_history.timeseries_api
 
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import time_ns
 from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
-from fastapi import FastAPI
 from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from httpx import AsyncClient
 from httpx_ws import aconnect_ws
 from httpx_ws.transport import ASGIWebSocketTransport
-from pytest import approx
 from pytest_mock import MockerFixture
 
 from brewblox_history import app_factory, downsample, timeseries_api, utils
-from brewblox_history.planner import FollowUp
 from brewblox_history.models import (
     ServiceConfig,
     TimeSeriesCsvQuery,
@@ -27,16 +25,21 @@ from brewblox_history.models import (
     TimeSeriesRangeMetric,
     TimeSeriesRangeValue,
 )
+from brewblox_history.planner import FollowUp
 
 TESTED = timeseries_api.__name__
 
 
-class dt_eq:
+class DtEq:
+    """Equal to any value that parses to the same datetime."""
+
+    __hash__ = None
+
     def __init__(self, value: utils.DatetimeSrc_) -> None:
         self.value = utils.parse_datetime(value)
 
-    def __eq__(self, __value: object) -> bool:
-        return self.value == utils.parse_datetime(__value)
+    def __eq__(self, other: object, /) -> bool:
+        return self.value == utils.parse_datetime(other)
 
 
 @pytest.fixture
@@ -67,7 +70,7 @@ async def test_ping(client: AsyncClient, m_victoria: Mock, mocker: MockerFixture
     assert resp.json() == {'ping': 'pong', 'downsample_age': None}
 
     # With the dense database: how old the long-term database's averages are
-    now = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+    now = datetime(2021, 7, 15, 19, tzinfo=UTC)
     mocker.patch(TESTED + '.utils.now').return_value = now
     downsample.CV.get().cursor = int(now.timestamp()) - 90
     resp = await client.get('/timeseries/ping')
@@ -125,9 +128,9 @@ async def test_metrics(client: AsyncClient, m_victoria: Mock):
 
     resp = await client.post('/timeseries/metrics', json={'fields': ['a', 'b', 'c']})
     assert resp.json() == [
-        {'metric': 'a', 'value': approx(1.2), 'timestamp': dt_eq(now)},
-        {'metric': 'b', 'value': approx(2.2), 'timestamp': dt_eq(now)},
-        {'metric': 'c', 'value': approx(3.2), 'timestamp': dt_eq(now)},
+        {'metric': 'a', 'value': pytest.approx(1.2), 'timestamp': DtEq(now)},
+        {'metric': 'b', 'value': pytest.approx(2.2), 'timestamp': DtEq(now)},
+        {'metric': 'c', 'value': pytest.approx(3.2), 'timestamp': DtEq(now)},
     ]
 
     resp = await client.post('/timeseries/metrics', json={})
@@ -387,7 +390,7 @@ async def test_stream_send_fails(
 async def test_stream_error(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
     config.metrics_interval = timedelta(milliseconds=1)
-    dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+    dt = datetime(2021, 7, 15, 19, tzinfo=UTC)
     m_victoria.initial_ranges.side_effect = RuntimeError
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(metric='a', value=1.2, timestamp=dt),
@@ -432,8 +435,8 @@ async def test_stream_error(app: FastAPI, manager: LifespanManager, config: Serv
                 'metrics': [
                     {
                         'metric': 'a',
-                        'value': approx(1.2),
-                        'timestamp': dt_eq(dt),
+                        'value': pytest.approx(1.2),
+                        'timestamp': DtEq(dt),
                     }
                 ],
             },

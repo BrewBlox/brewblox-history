@@ -55,9 +55,10 @@ jobs:
           uv run pytest
 
       - name: Lint
-        uses: astral-sh/ruff-action@v1
-        with:
-          args: "format --check --diff"
+        # The locked ruff: with all rules selected, a newer one adds rules
+        run: |
+          uv run ruff format --check --diff
+          uv run ruff check
 
       - name: Build Docker image
         uses: docker/build-push-action@v5

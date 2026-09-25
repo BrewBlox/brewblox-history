@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -55,7 +56,7 @@ def ranges_of(values: dict[str, list], names: list[str], *, every_name: bool = F
 
 
 @contextmanager
-def named_errors(db: httpx.AsyncClient):
+def named_errors(db: httpx.AsyncClient) -> Iterator[None]:
     """Transport errors (unreachable, timeout) become a ConnectionError naming the database."""
     try:
         yield
@@ -72,7 +73,7 @@ def make_client(protocol: str, host: str, port: int, path: str) -> httpx.AsyncCl
 
 
 class VictoriaClient:
-    def __init__(self):
+    def __init__(self) -> None:
         config = utils.get_config()
 
         # Field name -> (value, timestamp)
@@ -114,27 +115,27 @@ class VictoriaClient:
     def _database(self, db: planner.Database) -> httpx.AsyncClient:
         return self._dense if db == 'dense' else self._archive
 
-    async def close(self):
+    async def close(self) -> None:
         # Close every client, also if one fails
         results = await asyncio.gather(*[db.aclose() for db in self._databases], return_exceptions=True)
         for db, result in zip(self._databases, results, strict=True):
             if isinstance(result, BaseException):
                 LOGGER.warning(f'{db.base_url}: close failed: {utils.strex(result)}')
 
-    async def _ping(self, db: httpx.AsyncClient):
+    async def _ping(self, db: httpx.AsyncClient) -> None:
         with named_errors(db):
             resp = await db.get('/health')
         if resp.text != 'OK':
             raise ConnectionError(f'{db.base_url}: ping returned warning: "{resp.text}"')
 
-    async def ping(self):
+    async def ping(self) -> None:
         # Report every database that fails
         results = await asyncio.gather(*[self._ping(db) for db in self._databases], return_exceptions=True)
         errors = [utils.strex(result) for result in results if isinstance(result, BaseException)]
         if errors:
             raise ConnectionError(', '.join(errors))
 
-    async def _json_query(self, db: httpx.AsyncClient, url: str, params: dict):
+    async def _json_query(self, db: httpx.AsyncClient, url: str, params: dict) -> dict:
         with named_errors(db):
             resp = await db.post(url, data=params)
         resp.raise_for_status()
@@ -192,7 +193,7 @@ class VictoriaClient:
         resp.raise_for_status()
         return resp.content
 
-    async def import_archive(self, lines: str):
+    async def import_archive(self, lines: str) -> None:
         """Writes /api/v1/import JSON lines to the long-term database."""
         with named_errors(self._archive):
             resp = await self._archive.post('/api/v1/import', content=lines)
@@ -351,19 +352,18 @@ class VictoriaClient:
     async def _export_rows(
         self,
         query: planner.ExportQuery,
-        start: int,
-        end: int,
+        window: tuple[int, int],
         selectors: list[str],
         columns: dict[str, int],
         width: int,
     ) -> SortedDict:
-        """Samples between start and end, as rows of `width` by timestamp (ms)."""
+        """Samples in the window (start and end included), as rows of `width` by timestamp (ms)."""
         db = self._database(query.db)
         rows = SortedDict()
         params = {
             'match[]': selectors,
-            'start': start,
-            'end': end,
+            'start': window[0],
+            'end': window[1],
             'max_rows_per_line': 1000,
         }
 
@@ -381,7 +381,7 @@ class VictoriaClient:
                     field_idx = columns[chunk['metric']['__name__']]
                     empty_row = [''] * width
 
-                    for timestamp, value in zip(chunk['timestamps'], chunk['values']):
+                    for timestamp, value in zip(chunk['timestamps'], chunk['values'], strict=True):
                         # We want to avoid creating a new list for every call to setdefault()
                         # We'll re-use the same object until it is inserted
                         row = rows.setdefault(timestamp, empty_row)
@@ -390,7 +390,7 @@ class VictoriaClient:
                         row[field_idx] = str(value)
         return rows
 
-    async def csv(self, args: TimeSeriesCsvQuery):
+    async def csv(self, args: TimeSeriesCsvQuery) -> AsyncIterator[str]:
         config = utils.get_config()
         now = utils.now()
         frame = planner.select_timeframe(args.start, args.duration, args.end, now, config)
@@ -408,8 +408,8 @@ class VictoriaClient:
         # Adjacent windows share their boundary: rows at or before the last one are dropped.
         last = -1
         for query in planner.plan_export(frame, int(now.timestamp()), config, self.dense_since):
-            for start, end in planner.chunk_windows(query.start, query.end, query.chunk):
-                rows = await self._export_rows(query, start, end, selectors, columns, width)
+            for window in planner.chunk_windows(query.start, query.end, query.chunk):
+                rows = await self._export_rows(query, window, selectors, columns, width)
                 for timestamp, row in rows.items():
                     if timestamp > last:
                         last = timestamp
@@ -429,7 +429,7 @@ class VictoriaClient:
             LOGGER.warning(f'{evt.key}: event timestamp is {offset / 1000:+.1f}s off, using arrival time')
         return None
 
-    async def write(self, evt: HistoryEvent):
+    async def write(self, evt: HistoryEvent) -> None:
         if not evt.data:
             return
 
@@ -459,16 +459,17 @@ class VictoriaClient:
         except httpx.HTTPStatusError as ex:
             LOGGER.warning(f'{self._raw.base_url}: write failed: {utils.strex(ex)}: {ex.response.text}')
 
-        except Exception as ex:
+        # Logged and dropped: the next event is written anyway
+        except Exception as ex:  # noqa: BLE001
             LOGGER.warning(f'{self._raw.base_url}: write failed: {utils.strex(ex)}')
 
 
-def setup():
+def setup() -> None:
     CV.set(VictoriaClient())
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan() -> AsyncIterator[None]:
     client = CV.get()
     try:
         yield

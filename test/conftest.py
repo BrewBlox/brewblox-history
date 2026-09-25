@@ -5,8 +5,8 @@ Any fixtures declared here are available to all test functions in this directory
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator, Generator
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -51,7 +51,7 @@ def docker_compose_file():
 def config(
     monkeypatch: pytest.MonkeyPatch,
     docker_services: DockerServices,
-) -> Generator[ServiceConfig, None, None]:
+) -> ServiceConfig:
     cfg = TestConfig(
         debug=True,
         mqtt_host='localhost',
@@ -64,11 +64,11 @@ def config(
         dense_port=docker_services.port_for('victoria-dense', 8428),
     )
     monkeypatch.setattr(utils, 'get_config', lambda: cfg)
-    yield cfg
+    return cfg
 
 
 @pytest.fixture(autouse=True)
-def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """
     Allows keeping track of calls to asyncio sleep.
     For tests, we want to reduce all sleep durations.
@@ -76,18 +76,18 @@ def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """
     real_func = asyncio.sleep
 
-    async def wrapper(delay: float, *args, **kwargs):
+    async def wrapper(delay: float, *args: object, **kwargs: object) -> object:
         if delay > 0.1:
-            print(f'asyncio.sleep({delay}) in {request.node.name}')
+            # Shown in the test output: a long sleep means a real delay slipped into a test
+            print(f'asyncio.sleep({delay}) in {request.node.name}')  # noqa: T201
         return await real_func(delay, *args, **kwargs)
 
     monkeypatch.setattr('asyncio.sleep', wrapper)
-    yield
 
 
 @pytest.fixture(autouse=True)
 def setup_logging(config):
-    app_factory.setup_logging(True)
+    app_factory.setup_logging(debug=True)
 
 
 @pytest.fixture(autouse=True)
@@ -107,8 +107,7 @@ def app() -> FastAPI:
     IMPORTANT: This must NOT be an async fixture.
     Contextvars assigned in async fixtures are invisible to test functions.
     """
-    app = FastAPI()
-    return app
+    return FastAPI()
 
 
 @pytest.fixture

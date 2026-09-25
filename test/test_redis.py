@@ -30,7 +30,7 @@ async def lifespan(app: FastAPI):
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
         # Cleanup of data inserted by previous tests
-        await redis.CV.get().mdelete('', filter='*')
+        await redis.CV.get().mdelete('', pattern='*')
         yield
 
 
@@ -45,8 +45,7 @@ def app():
 
 @pytest.fixture
 def m_publish(app, mocker: MockerFixture):
-    m = mocker.spy(mqtt.CV.get(), 'publish')
-    return m
+    return mocker.spy(mqtt.CV.get(), 'publish')
 
 
 async def test_ping(client: AsyncClient):
@@ -102,7 +101,7 @@ async def test_mget(client: AsyncClient):
             DatastoreValue(namespace='ns2', id='0', idx=0),
         ]
     )
-    assert sort_pyvalues(await c.mget('ns2', filter='*')) == sort_pyvalues(
+    assert sort_pyvalues(await c.mget('ns2', pattern='*')) == sort_pyvalues(
         [
             DatastoreValue(namespace='ns2', id='0', idx=0),
             DatastoreValue(namespace='ns2', id='1', idx=1),
@@ -185,7 +184,7 @@ async def test_mset(client: AsyncClient, m_publish: Mock):
     resp = await client.post('/datastore/mset', json={'values': dict_values})
     assert resp.json() == {'values': dict_values}
 
-    resp = await client.post('/datastore/mset', json={'values': dict_values + [{'id': 'y'}]})
+    resp = await client.post('/datastore/mset', json={'values': [*dict_values, {'id': 'y'}]})
     assert resp.status_code == 422
 
 
