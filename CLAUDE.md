@@ -36,8 +36,9 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
 
 - Every feature module exposes `setup()`, which builds its singleton and stores it in a
   module-level `CV` ContextVar; consumers call `module.CV.get()`. `app_factory.create_app()`
-  runs the `setup()` calls in dependency order (mqtt, redis, victoria, relays), and
-  `lifespan()` enters the background features (mqtt, redis, victoria) in an AsyncExitStack.
+  runs the `setup()` calls in dependency order (mqtt, redis, victoria, downsample, relays),
+  and `lifespan()` enters the background features (mqtt, redis, victoria, downsample) in an
+  AsyncExitStack.
   Config is `utils.get_config()`, an lru-cached `ServiceConfig` read from `BREWBLOX_HISTORY_*`
   env vars and `.appenv` (written by parse_appenv.py from the container's command-line args;
   test/test_parse_appenv.py keeps the two in sync: every field has an argument).
@@ -50,6 +51,18 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   database, `fields` returns the union (the long-term one alone if dense fails). Settings only the dense setup uses (and `minimum_step`,
   which predates it) are validated only with `dense_enabled`: without it the service, which
   also serves the datastore, must start whatever they are (ctl renders some either way).
+- Downsampler (downsample.py, only with `dense_enabled`): one task that every
+  `downsample_interval` averages each `sparse_interval` ended at least `downsample_lag` ago
+  from dense into the long-term database (`/api/v1/import`, stamped at the interval's end),
+  in chunks of `downsample_chunk`. Every import carries the marker series `victoria.MARKER`
+  at the new cursor (hidden from `fields`); the cursor advances only after a successful
+  import, is found again from the marker at startup, and is rewound when the marker falls
+  behind (the long-term database lost imports it held in memory). Reads get the cursor
+  (`VictoriaClient.cursor`) `SEARCHABLE_DELAY` later. `VictoriaClient.dense_since` comes
+  from the dense database itself, at startup and hourly: the first day with series (per-day
+  index, no samples read), then its first hour with a sample. The task logs errors and
+  goes on: the service also serves the datastore. `/timeseries/ping` reports
+  `downsample_age`.
 - Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
   which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
   field paths, only finite numbers are kept, and names the line protocol cannot express are

@@ -27,6 +27,10 @@ CV: ContextVar['VictoriaClient'] = ContextVar('victoria.client')
 
 TIMESTAMP_TOLERANCE_MS = TIMESTAMP_TOLERANCE // timedelta(milliseconds=1)
 
+# Series the downsampler imports into the long-term database with every chunk: its cursor.
+# Not a field: fields() leaves it out.
+MARKER = 'brewblox-history/downsampled'
+
 
 # Influx line protocol escapes. The database also unescapes `\\`,
 # so a backslash is escaped as well, first: a trailing one would escape the separator.
@@ -126,6 +130,64 @@ class VictoriaClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def has_series(self, db: planner.Database, start: int, end: int, selector: str = '{__name__!=""}') -> bool:
+        """Whether any selected series has samples between start and end.
+        The database answers from its index, without reading samples: it rounds to whole days."""
+        resp = await self._json_query(
+            self._database(db),
+            '/api/v1/series',
+            {'match[]': selector, 'start': start, 'end': end, 'limit': 1},
+        )
+        return bool(resp['data'])
+
+    async def first_timestamp(self, db: planner.Database, window: int, now: int) -> float | None:
+        """Unix seconds of the oldest sample in the window before now, over all series."""
+        resp = await self._json_query(
+            self._database(db),
+            '/api/v1/query',
+            {'query': f'min(tfirst_over_time({{__name__!=""}}[{window}s]))', 'time': now, 'nocache': 1},
+        )
+        result = resp['data']['result']
+        return float(result[0]['value'][1]) if result else None
+
+    async def last_timestamp(self, db: planner.Database, selector: str, window: int, now: int) -> float | None:
+        """Unix seconds of the newest sample in the window before now, over the selected series."""
+        resp = await self._json_query(
+            self._database(db),
+            '/api/v1/query',
+            {'query': f'max(tlast_over_time({selector}[{window}s]))', 'time': now, 'nocache': 1},
+        )
+        result = resp['data']['result']
+        return float(result[0]['value'][1]) if result else None
+
+    async def averages(self, start: int, end: int, step: int) -> bytes:
+        """The query_range response (JSON) with every dense series' averages over each step, from start to end.
+
+        Every point from start + k * step up to end averages the step before it.
+        The points are all at least downsample_lag old: a latency offset that long
+        keeps the database from replacing any with an older one."""
+        config = utils.get_config()
+        with named_errors(self._dense):
+            resp = await self._dense.post(
+                '/api/v1/query_range',
+                data={
+                    'query': f'avg_over_time({{__name__!=""}}[{step}s]) keep_metric_names',
+                    'start': start,
+                    'end': end,
+                    'step': f'{step}s',
+                    'nocache': 1,
+                    'latency_offset': config.downsample_lag.total_seconds(),
+                },
+            )
+        resp.raise_for_status()
+        return resp.content
+
+    async def import_archive(self, lines: str):
+        """Writes /api/v1/import JSON lines to the long-term database."""
+        with named_errors(self._archive):
+            resp = await self._archive.post('/api/v1/import', content=lines)
+        resp.raise_for_status()
+
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
         query = {'match[]': '{__name__!=""}', 'start': f'{args.duration.total_seconds()}s'}
         LOGGER.debug(query)
@@ -142,6 +204,7 @@ class VictoriaClient:
                 LOGGER.warning(f'Fields from the long-term database only: {utils.strex(result)}')
             else:
                 names.update(v['__name__'] for v in result['data'])
+        names.discard(MARKER)
         return sorted(names)
 
     async def metrics(self, args: TimeSeriesMetricsQuery) -> list[TimeSeriesMetric]:

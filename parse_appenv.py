@@ -45,6 +45,7 @@ def parse_cmd_args(raw_args: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument('--downsample-lag')
     parser.add_argument('--downsample-interval')
     parser.add_argument('--downsample-chunk')
+    parser.add_argument('--downsample-max-lag')
     parser.add_argument('--query-latency')
     parser.add_argument('--csv-chunk-dense')
     parser.add_argument('--csv-chunk-sparse')

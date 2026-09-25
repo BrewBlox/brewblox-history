@@ -10,14 +10,14 @@ from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
-from brewblox_history import utils, victoria
+from brewblox_history import downsample, utils, victoria
 from brewblox_history.models import (
-    PingResponse,
     TimeSeriesCsvQuery,
     TimeSeriesFieldsQuery,
     TimeSeriesMetric,
     TimeSeriesMetricsQuery,
     TimeSeriesMetricStreamData,
+    TimeSeriesPingResponse,
     TimeSeriesRange,
     TimeSeriesRangesQuery,
     TimeSeriesRangeStreamData,
@@ -33,15 +33,16 @@ router = APIRouter(prefix='/timeseries', tags=['TimeSeries'])
 
 
 @router.get('/ping')
-async def timeseries_ping(response: Response) -> PingResponse:
+async def timeseries_ping(response: Response) -> TimeSeriesPingResponse:
     """
-    Ping the Victoria Metrics database.
+    Ping the Victoria Metrics databases.
+    With the dense database, also report how old the long-term database's averages are.
     """
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     await victoria.CV.get().ping()
-    return PingResponse()
+    return TimeSeriesPingResponse(downsample_age=downsample.CV.get().age(int(utils.now().timestamp())))
 
 
 @router.post('/fields')

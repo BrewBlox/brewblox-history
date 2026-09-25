@@ -11,7 +11,7 @@ from datetime import timedelta
 import httpx
 import pytest
 
-from brewblox_history import utils, victoria
+from brewblox_history import downsample, utils, victoria
 from brewblox_history.models import HistoryEvent, ServiceConfig, TimeSeriesCsvQuery, TimeSeriesRangesQuery
 
 # Names the escaping on the way in and out must keep intact
@@ -185,3 +185,83 @@ async def test_csv_seam(db: victoria.VictoriaClient, config: ServiceConfig, now:
     assert all(b - a == 10_000 for a, b in zip(timestamps[switch:], timestamps[switch + 1 :], strict=False))
     assert timestamps[switch - 1] == (horizon + (-horizon % 60)) * 1000
     assert timestamps[switch] == timestamps[switch - 1] + 5_000
+
+
+async def test_downsample_database(db: victoria.VictoriaClient, now: int, monkeypatch: pytest.MonkeyPatch):
+    # Averages in the long-term database equal the raw samples' averages, with names intact.
+    # A new downsampler finds where they end, and averaging the same time again changes nothing.
+    monkeypatch.setattr(downsample, 'SEARCHABLE_DELAY', timedelta(0))
+    names = [f'down/{n}' for n in NAMES]
+    minute = now - now % 60
+    # The first passes run a minute early, the last one at now: a minute further
+    target = now - 90 - (now - 90) % 60
+
+    def value(second: int, idx: int) -> float:
+        return (second % 97) * 1.25 + idx
+
+    # A sample every second, in the middle of it (the database exports nothing after now)
+    raw = {n: [(t * 1000 + 500, value(t, i)) for t in range(minute - 1800, now - 1)] for i, n in enumerate(names)}
+    await import_samples(db._dense, raw)
+    await wait_searchable(db._dense, 'down', raw)
+
+    def expected(until: int) -> dict[str, dict[int, float]]:
+        # The interval (t - 60, t] holds the samples of seconds t - 60 to t - 1
+        return {
+            name: {
+                t * 1000: sum(value(s, i) for s in range(t - 60, t)) / 60 for t in range(minute - 1740, until + 1, 60)
+            }
+            for i, name in enumerate(names)
+        }
+
+    downsample.setup()
+    ds = downsample.CV.get()
+    ds.cursor = minute - 1800
+    await ds.downsample(now - 60)
+    assert ds.cursor == target
+    await wait_searchable(db._archive, 'down', {n: list(p) for n, p in expected(target).items()})
+
+    # A new downsampler finds the cursor from the marker, and has nothing to do
+    downsample.setup()
+    ds = downsample.CV.get()
+    await wait_searchable(db._archive, victoria.MARKER, {victoria.MARKER: [0]})
+    assert await ds.discover_cursor(now, None) == target
+    ds.cursor = target
+    await ds.downsample(now - 60)
+    assert ds.cursor == target
+
+    # Averaging from the start again, a minute later: the new minute shows the import is searchable,
+    # and the minutes averaged before are unchanged
+    ds.cursor = minute - 1800
+    await ds.downsample(now)
+    assert ds.cursor == target + 60
+    points = expected(target + 60)
+    await wait_searchable(db._archive, 'down', {n: list(p) for n, p in points.items()})
+    rows = await exported(db._archive, 'down')
+    assert rows.keys() == set(names)
+    for name, series in points.items():
+        assert rows[name]['timestamps'] == list(series)
+        assert rows[name]['values'] == pytest.approx(list(series.values()), abs=1e-9)
+
+
+async def test_find_dense_since_database(db: victoria.VictoriaClient, now: int):
+    # The oldest sample in the dense database: other tests only write the last few hours
+    downsample.setup()
+    first = now - 2 * 24 * 3600 + 123
+    await import_samples(db._dense, {'since/a': [(first * 1000, 1.0), ((first + 3600) * 1000, 2.0)]})
+    await wait_searchable(db._dense, 'since', {'since/a': [0, 0]})
+    assert await downsample.CV.get().find_dense_since(now) == first
+
+
+async def test_has_series_database(db: victoria.VictoriaClient, now: int):
+    # The whole index (start=1: the database takes 0 as not set) finds a series older than the dense retention
+    old = now - 40 * 24 * 3600
+    await import_samples(db._archive, {'old/a': [(old * 1000, 1.0)]})
+    for _ in range(50):
+        (await db._archive.get('/internal/force_flush')).raise_for_status()
+        if await db.has_series('archive', 1, now, '{__name__="old/a"}'):
+            break
+        await asyncio.sleep(0.1)
+    assert await db.has_series('archive', 1, now, '{__name__="old/a"}')
+    assert not await db.has_series('archive', 1, now, '{__name__="old/none"}')
+    # A day's lookup only finds series with samples that day
+    assert not await db.has_series('archive', now - 24 * 3600, now, '{__name__="old/a"}')

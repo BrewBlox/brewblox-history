@@ -132,11 +132,11 @@ def test_config_invalid(settings: dict, match: str):
         ({'minimum_step': 45}, 'sparse_interval must be a multiple of minimum_step'),
         ({'minimum_step': 120}, 'sparse_interval must be a multiple of minimum_step'),
         ({'sparse_interval': 5, 'minimum_step': 1}, 'follow_up_step_max must not exceed sparse_interval'),
-        ({'sparse_interval': '12h'}, 'downsample_chunk must be at least sparse_interval'),
         ({'dense_retention': '23h'}, 'dense_retention must be at least 1d'),
         ({'dense_margin': -1}, 'dense_margin must be at least 0'),
         ({'dense_margin': '30d'}, 'dense_margin must be at least 0 and less than dense_retention'),
         ({'downsample_lag': 15}, 'downsample_lag must be at least 0:00:16'),
+        ({'downsample_max_lag': 0}, 'downsample_max_lag must be positive'),
     ],
 )
 def test_config_dense_invalid(settings: dict, match: str):
@@ -145,6 +145,15 @@ def test_config_dense_invalid(settings: dict, match: str):
 
     with pytest.raises(ValidationError, match=match):
         models.ServiceConfig(_env_file=None, dense_enabled=True, **settings)
+
+
+@pytest.mark.parametrize('sparse_interval', ['10m', '1h', '6h'])
+def test_config_dense_sparse_interval(sparse_interval: str):
+    # brewblox-ctl renders sparse_interval: settings it does not render adapt to it instead of refusing it
+    config = models.ServiceConfig(
+        _env_file=None, dense_enabled=True, minimum_step='1s', sparse_interval=sparse_interval
+    )
+    assert config.sparse_interval == models.parse_duration(sparse_interval)
 
 
 def test_config_ignores_unknown_settings():

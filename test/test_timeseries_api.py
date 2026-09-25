@@ -17,7 +17,7 @@ from httpx_ws.transport import ASGIWebSocketTransport
 from pytest import approx
 from pytest_mock import MockerFixture
 
-from brewblox_history import app_factory, timeseries_api, utils
+from brewblox_history import app_factory, downsample, timeseries_api, utils
 from brewblox_history.models import (
     ServiceConfig,
     TimeSeriesCsvQuery,
@@ -51,16 +51,24 @@ async def m_victoria(mocker: MockerFixture) -> Mock:
 
 @pytest.fixture
 def app() -> FastAPI:
+    downsample.setup()
     app = FastAPI()
     app.include_router(timeseries_api.router)
     app_factory.add_exception_handlers(app)
     return app
 
 
-async def test_ping(client: AsyncClient, m_victoria: Mock):
+async def test_ping(client: AsyncClient, m_victoria: Mock, mocker: MockerFixture):
     resp = await client.get('/timeseries/ping')
     assert resp.status_code == 200
-    assert resp.json() == {'ping': 'pong'}
+    assert resp.json() == {'ping': 'pong', 'downsample_age': None}
+
+    # With the dense database: how old the long-term database's averages are
+    now = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+    mocker.patch(TESTED + '.utils.now').return_value = now
+    downsample.CV.get().cursor = int(now.timestamp()) - 90
+    resp = await client.get('/timeseries/ping')
+    assert resp.json() == {'ping': 'pong', 'downsample_age': 90}
 
     m_victoria.ping.side_effect = RuntimeError
     with pytest.raises(RuntimeError):

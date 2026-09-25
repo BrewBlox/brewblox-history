@@ -200,7 +200,12 @@ class ServiceConfig(BaseSettings):
     # Each sparse_interval is averaged once it ended at least this long ago
     downsample_lag: loose_timedelta = timedelta(seconds=30)
     downsample_interval: loose_timedelta = timedelta(seconds=15)
-    downsample_chunk: loose_timedelta = timedelta(hours=6)
+    # Time per query when catching up (at least sparse_interval). Parsing a chunk blocks the event loop
+    # (json.loads holds the GIL): an hour of 200 series takes ~6 ms on x86, ~80 ms on a Pi 3.
+    downsample_chunk: loose_timedelta = timedelta(hours=1)
+    # A warning is logged while the averages end further back than this
+    # (at least twice sparse_interval more than they do when keeping up)
+    downsample_max_lag: loose_timedelta = timedelta(minutes=10)
     # Open-ended queries end this long before now, and pass it as the latency offset
     query_latency: loose_timedelta = timedelta(seconds=3)
     # Time per request when exporting CSV
@@ -225,7 +230,13 @@ class ServiceConfig(BaseSettings):
         if not self.dense_enabled:
             return self
 
-        for name in ['minimum_step', 'sparse_interval', 'downsample_interval', 'downsample_chunk']:
+        for name in [
+            'minimum_step',
+            'sparse_interval',
+            'downsample_interval',
+            'downsample_chunk',
+            'downsample_max_lag',
+        ]:
             if getattr(self, name) <= zero:
                 raise ValueError(f'{name} must be positive')
         if self.minimum_step % second or self.sparse_interval % second:
@@ -234,8 +245,6 @@ class ServiceConfig(BaseSettings):
             raise ValueError('sparse_interval must be a multiple of minimum_step')
         if self.follow_up_step_max > self.sparse_interval:
             raise ValueError('follow_up_step_max must not exceed sparse_interval')
-        if self.downsample_chunk < self.sparse_interval:
-            raise ValueError('downsample_chunk must be at least sparse_interval')
         if self.dense_retention < timedelta(days=1):
             raise ValueError('dense_retention must be at least 1d, the database minimum')
         if not zero <= self.dense_margin < self.dense_retention:
@@ -424,6 +433,12 @@ class TimeSeriesRangeStreamData(BaseModel):
 
 class PingResponse(BaseModel):
     ping: Literal['pong'] = 'pong'
+
+
+class TimeSeriesPingResponse(PingResponse):
+    # Seconds since the end of the last averages in the long-term database.
+    # None without the dense database, or before the downsampler found them.
+    downsample_age: float | None = None
 
 
 class ErrorResponse(BaseModel):

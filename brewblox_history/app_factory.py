@@ -5,7 +5,7 @@ from pprint import pformat
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import datastore_api, mqtt, redis, relays, timeseries_api, utils, victoria
+from . import datastore_api, downsample, mqtt, redis, relays, timeseries_api, utils, victoria
 from .models import ErrorResponse
 
 LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ async def lifespan(app: FastAPI):
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
         await stack.enter_async_context(victoria.lifespan())
+        await stack.enter_async_context(downsample.lifespan())
         yield
 
 
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
     mqtt.setup()
     redis.setup()
     victoria.setup()
+    downsample.setup()
     relays.setup()
 
     # Create app

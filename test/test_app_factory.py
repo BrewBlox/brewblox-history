@@ -22,4 +22,4 @@ async def test_endpoints(client: AsyncClient, app):
 
     resp = await client.get('/history/timeseries/ping')
     assert resp.status_code == 200
-    assert resp.json() == {'ping': 'pong'}
+    assert resp.json() == {'ping': 'pong', 'downsample_age': None}
