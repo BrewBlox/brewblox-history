@@ -11,7 +11,7 @@ from datetime import timedelta
 import httpx
 import pytest
 
-from brewblox_history import downsample, utils, victoria
+from brewblox_history import downsample, planner, utils, victoria
 from brewblox_history.models import HistoryEvent, ServiceConfig, TimeSeriesCsvQuery, TimeSeriesRangesQuery
 
 # Names the escaping on the way in and out must keep intact
@@ -113,13 +113,14 @@ async def test_ranges_seam(db: victoria.VictoriaClient, now: int):
         assert timestamps[0] <= now - 24 * 3600
         assert seam in timestamps
         assert timestamps[-1] > seam
-        assert timestamps[-1] <= now - 3
+        assert timestamps[-1] <= now - 5
         assert {v.value for v in r.values if v.timestamp <= seam} == {'1'}
         assert {v.value for v in r.values if v.timestamp > seam} == {'2'}
 
 
-async def test_ranges_dense(db: victoria.VictoriaClient, now: int):
+async def test_ranges_dense(db: victoria.VictoriaClient, config: ServiceConfig, now: int):
     # Ten minutes: raw samples, at the requested step
+    config.minimum_step = timedelta(seconds=10)
     names = [f'dense/{n}' for n in NAMES[:2]]
     # A sample every second, in the middle of it, valued by its second
     raw = {n: [(t * 1000 + 500, float(t)) for t in range(now - 900, now - 1)] for n in names}
@@ -132,7 +133,43 @@ async def test_ranges_dense(db: victoria.VictoriaClient, now: int):
         # Each point averages the ten samples of the step before it.
         # A point the database replaced with an older one (latency offset) would not match.
         assert [float(v.value) for v in r.values] == [v.timestamp - 5.5 for v in r.values]
-        assert r.values[-1].timestamp >= now - 3 - 10
+        assert r.values[-1].timestamp >= now - 5 - 10
+
+
+async def test_follow_up_database(db: victoria.VictoriaClient, now: int, monkeypatch: pytest.MonkeyPatch):
+    # A live stream: the follow-ups continue exactly after the initial points, with real averages
+    names = [f'follow/{n}' for n in NAMES[:2]]
+    # A sample every second, in the middle of it, valued by its second
+    raw = {n: [(t * 1000 + 500, float(t)) for t in range(now - 900, now - 1)] for n in names}
+    await import_samples(db._dense, raw)
+    await wait_searchable(db._dense, 'follow', raw)
+
+    # Ten minutes at 1 s, three seconds ago: up to query_latency (5 s) before then.
+    # The clock only goes back: the database would replace points it thinks are in the last 5 s.
+    frozen = utils.now()
+    monkeypatch.setattr(utils, 'now', lambda: frozen - timedelta(seconds=3))
+    _, follow = await db.initial_ranges(TimeSeriesRangesQuery(fields=names, duration='10m'))
+    assert follow == (now - 8, 1, now - 8)
+
+    # Now: the three points after it. A point the database replaced with an older one would not match.
+    monkeypatch.setattr(utils, 'now', lambda: frozen)
+    result, follow = await db.follow_up_ranges(names, follow)
+    assert [r.metric.name for r in result] == names
+    assert follow == (now - 5, 1, now - 5)
+    for r in result:
+        assert r.values == [(t, str(t - 1)) for t in range(now - 7, now - 4)]
+
+    # A follow-up at 10 s after a point off that grid, of over 50 points: the database keeps its start
+    last = now - 700 - (now - 700) % 10 + 7
+    result, follow = await db.follow_up_ranges(names, planner.FollowUp(last, 10, last))
+    points = list(range(last + 10, now - 5 + 1, 10))
+    assert len(points) >= 50
+    assert [r.metric.name for r in result] == names
+    assert follow == (points[-1], 10, points[-1])
+    for r in result:
+        # Each point averages the ten samples of the step before it
+        assert [v.timestamp for v in r.values] == points
+        assert [float(v.value) for v in r.values] == [t - 5.5 for t in points]
 
 
 async def test_ranges_fallback(db: victoria.VictoriaClient, now: int):

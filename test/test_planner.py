@@ -3,7 +3,7 @@ Tests brewblox_history.planner
 """
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -25,9 +25,9 @@ def dense(config: ServiceConfig) -> ServiceConfig:
 
 
 def test_select_timeframe(config: ServiceConfig):
-    now = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
+    now = datetime(2021, 7, 15, 19, tzinfo=UTC)
     ts = int(now.timestamp())
-    latency = 3  # default query_latency
+    latency = 5  # default query_latency
 
     def select(start=None, duration=None, end=None) -> Timeframe:
         return planner.select_timeframe(start, duration, end, now, config)
@@ -37,20 +37,29 @@ def test_select_timeframe(config: ServiceConfig):
 
     # Without an end, the timeframe ends query_latency before now
     assert select() == (ts - DAY, ts - latency, 86)
-    assert select(start=now - timedelta(hours=1)) == (ts - HOUR, ts - latency, 10)
-    assert select(duration='1h') == (ts - HOUR, ts - latency, 10)
+    assert select(start=now - timedelta(hours=1)) == (ts - HOUR, ts - latency, 3)
+    assert select(duration='1h') == (ts - HOUR, ts - latency, 3)
 
-    assert select(start=now, duration='1h') == (ts, ts + HOUR, 10)
-    assert select(start=now, end=now + timedelta(hours=1)) == (ts, ts + HOUR, 10)
-    assert select(duration='1h', end=now) == (ts - HOUR, ts, 10)
-    assert select(end=now) == (ts - DAY, ts, 86)
+    earlier = now - timedelta(hours=2)
+    assert select(start=earlier, duration='1h') == (ts - 2 * HOUR, ts - HOUR, 3)
+    assert select(start=earlier, end=earlier + timedelta(hours=1)) == (ts - 2 * HOUR, ts - HOUR, 3)
+    assert select(duration='1h', end=earlier) == (ts - 3 * HOUR, ts - 2 * HOUR, 3)
+    assert select(end=earlier) == (ts - DAY - 2 * HOUR, ts - 2 * HOUR, 86)
+
+    # An end, also one without a time zone, ends query_latency before now at the latest
+    assert select(duration='1h', end=now) == (ts - HOUR, ts - latency, 3)
+    assert select(start=now - timedelta(hours=1), end=now + timedelta(hours=1)) == (ts - HOUR, ts - latency, 3)
+    assert select(end='2021-07-17T00:00:00').end == ts - latency
+    # It may then end before it starts
+    assert select(start=now, duration='1h') == (ts, ts - latency, 1)
 
     # Fractions of seconds are dropped
-    assert select(start=now + timedelta(seconds=0.7), duration='1h') == (ts, ts + HOUR, 10)
+    assert select(start=earlier + timedelta(seconds=0.7), duration='1h') == (ts - 2 * HOUR, ts - HOUR, 3)
 
     # The step gives about query_desired_points, at least minimum_step, and at least 1 s
-    config.minimum_step = timedelta(seconds=1)
     assert select(duration='10m') == (ts - 600, ts - latency, 1)
+    config.minimum_step = timedelta(seconds=10)
+    assert select(duration='1h').step == 10
     config.minimum_step = timedelta(seconds=0.5)
     assert select(duration='10m').step == 1
 
@@ -153,6 +162,82 @@ def test_plan_fallback(dense: ServiceConfig):
     assert planner.plan_fallback(Timeframe(NOW - DAY, NOW - 3, 86), dense) == [
         RangeQuery('archive', NOW - DAY, NOW - 120, 120),
     ]
+
+
+def test_follow_up_after(dense: ServiceConfig):
+    # After the newest point sent, at the frame's step, capped at follow_up_step_max (10 s)
+    day = Timeframe(NOW - DAY, NOW - 5, 86)
+    assert planner.follow_up_after(day, NOW - 120, dense) == (NOW - 120, 10, NOW - 5)
+    assert planner.follow_up_after(Timeframe(NOW - 600, NOW - 5, 1), NOW - 7, dense) == (NOW - 7, 1, NOW - 5)
+    # Nothing sent: after the frame's start
+    assert planner.follow_up_after(day, None, dense) == (NOW - DAY, 10, NOW - 5)
+    assert planner.follow_up_after(Timeframe(NOW, NOW - 5, 1), None, dense) == (NOW, 1, NOW - 5)
+
+    # minimum_step wins over the cap
+    dense.minimum_step = timedelta(seconds=20)
+    assert planner.follow_up_after(day, NOW - 120, dense) == (NOW - 120, 20, NOW - 5)
+    # At least 1 s
+    dense.minimum_step = timedelta(seconds=0.5)
+    dense.follow_up_step_max = timedelta(seconds=0.5)
+    assert planner.follow_up_after(day, NOW - 120, dense) == (NOW - 120, 1, NOW - 5)
+
+
+def at(offset: float) -> datetime:
+    return datetime.fromtimestamp(NOW + offset, UTC)
+
+
+def test_plan_follow_up(config: ServiceConfig):
+    follow = planner.FollowUp(NOW - 14, 10, NOW - 14)
+    # Due once the next point is query_latency (5 s) old
+    assert planner.plan_follow_up(follow, at(0.9), config) is None
+    assert planner.plan_follow_up(follow, at(1), config) == ('archive', NOW - 4, NOW - 4, 10)
+    # Every point up to then, ending on the last one
+    assert planner.plan_follow_up(follow, at(30.5), config) == ('archive', NOW - 4, NOW + 16, 10)
+    # At most FOLLOW_UP_MAX_POINTS (1000), on the same grid: the older ones are skipped
+    assert planner.plan_follow_up(follow, at(DAY), config) == ('archive', NOW + DAY - 10004, NOW + DAY - 14, 10)
+    # A latency in fractions of seconds
+    config.query_latency = timedelta(seconds=2.5)
+    assert planner.plan_follow_up(follow, at(-1.6), config) is None
+    assert planner.plan_follow_up(follow, at(-1.5), config) == ('archive', NOW - 4, NOW - 4, 10)
+    # With the dense database, from it
+    config.dense_enabled = True
+    assert planner.plan_follow_up(follow, at(0), config) == ('dense', NOW - 4, NOW - 4, 10)
+
+
+def test_clock_went_back(config: ServiceConfig):
+    # When a follow-up would end more than CLOCK_STEP_TOLERANCE (60 s) before the last query ended
+    follow = planner.FollowUp(NOW - 20, 10, NOW - 10)
+    assert not planner.clock_went_back(follow, at(-65), config)
+    assert planner.clock_went_back(follow, at(-65.1), config)
+    # Less: the follow-ups wait for the clock to catch up
+    assert planner.plan_follow_up(follow, at(-65), config) is None
+
+
+@pytest.mark.parametrize('seed', range(5))
+def test_follow_up_properties(config: ServiceConfig, seed: int):
+    # Follow-ups at random moments: every point after the first last one, once, in order, up to query_latency ago
+    # (until the clock went back too far: the stream then starts over)
+    rand = random.Random(seed)
+    for _ in range(100):
+        config.query_latency = timedelta(seconds=rand.choice([1, 2.5, 5]))
+        step = rand.choice([1, 3, 10, 14])
+        first = NOW + rand.randrange(-600, 600)
+        follow = planner.FollowUp(first, step, first)
+        now = float(first + 5)
+        points = []
+        for _ in range(50):
+            # Also small steps back, as NTP makes them
+            now += rand.choice([0, rand.uniform(0, 3), rand.uniform(0, 60), -rand.uniform(0, 5)])
+            if planner.clock_went_back(follow, datetime.fromtimestamp(now, UTC), config):
+                break
+            query = planner.plan_follow_up(follow, datetime.fromtimestamp(now, UTC), config)
+            if query is not None:
+                assert query.start == follow.last + step
+                points.extend(range(query.start, query.end + 1, step))
+                follow = follow._replace(last=query.end, until=query.end)
+        assert points == list(range(first + step, follow.last + 1, step))
+        # Nothing due is left out
+        assert follow.last + step > now - config.query_latency.total_seconds()
 
 
 @pytest.mark.parametrize('seed', range(20))

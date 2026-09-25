@@ -188,9 +188,10 @@ class ServiceConfig(BaseSettings):
     history_topic: str = 'brewcast/history'
     datastore_topic: str = 'brewcast/datastore'
 
-    ranges_interval: loose_timedelta = timedelta(seconds=10)
+    # Live ranges streams send the new points this often
+    ranges_interval: loose_timedelta = timedelta(seconds=1)
     metrics_interval: loose_timedelta = timedelta(seconds=1)
-    minimum_step: loose_timedelta = timedelta(seconds=10)
+    minimum_step: loose_timedelta = timedelta(seconds=1)
 
     query_duration_default: loose_timedelta = timedelta(days=1)
     query_desired_points: int = 1000
@@ -206,12 +207,14 @@ class ServiceConfig(BaseSettings):
     # A warning is logged while the averages end further back than this
     # (at least twice sparse_interval more than they do when keeping up)
     downsample_max_lag: loose_timedelta = timedelta(minutes=10)
-    # Open-ended queries end this long before now, and pass it as the latency offset
-    query_latency: loose_timedelta = timedelta(seconds=3)
+    # Open-ended queries end this long before now, and pass it as the latency offset.
+    # A point queried before its samples are searchable misses them; a live stream does not send it again.
+    # Samples are searchable 2-3 s after the write, and Spark samples arrive up to ~1.3 s after their timestamp.
+    query_latency: loose_timedelta = timedelta(seconds=5)
     # Time per request when exporting CSV
     csv_chunk_dense: loose_timedelta = timedelta(hours=6)
     csv_chunk_sparse: loose_timedelta = timedelta(days=7)
-    # Largest step of live follow-up queries
+    # Largest step of live follow-ups: long graphs still advance this often
     follow_up_step_max: loose_timedelta = timedelta(seconds=10)
 
     @model_validator(mode='after')

@@ -18,6 +18,7 @@ from pytest import approx
 from pytest_mock import MockerFixture
 
 from brewblox_history import app_factory, downsample, timeseries_api, utils
+from brewblox_history.planner import FollowUp
 from brewblox_history.models import (
     ServiceConfig,
     TimeSeriesCsvQuery,
@@ -45,6 +46,8 @@ async def m_victoria(mocker: MockerFixture) -> Mock:
     m.fields = AsyncMock()
     m.metrics = AsyncMock()
     m.ranges = AsyncMock()
+    m.initial_ranges = AsyncMock()
+    m.follow_up_ranges = AsyncMock()
     m.csv = AsyncMock()
     return m
 
@@ -158,9 +161,9 @@ async def test_empty_csv(client: AsyncClient, m_victoria: Mock):
     assert resp.text == 'a,b,c\n'
 
 
-async def receive(ws, id: str, received: dict[str, list[dict]]) -> dict:
+async def receive(ws, stream_id: str, received: dict[str, list[dict]]) -> dict:
     """
-    Receive the next message of stream `id`.
+    Receive the next message of stream `stream_id`.
     Streams share the socket, so messages of other streams may come first:
     all messages are kept in `received`, by stream id.
     """
@@ -169,10 +172,18 @@ async def receive(ws, id: str, received: dict[str, list[dict]]) -> dict:
             while True:
                 msg = await ws.receive_json()
                 received[msg['id']].append(msg)
-                if msg['id'] == id:
+                if msg['id'] == stream_id:
                     return msg
     except TimeoutError:
-        pytest.fail(f'No message for {id}, received: { {k: len(v) for k, v in received.items()} }')
+        pytest.fail(f'No message for {stream_id}, received: { {k: len(v) for k, v in received.items()} }')
+
+
+def one_range(name: str, *timestamps: int) -> TimeSeriesRange:
+    return TimeSeriesRange(metric={'__name__': name}, values=[TimeSeriesRangeValue(t, '1') for t in timestamps])
+
+
+def range_json(name: str, *timestamps: int) -> dict:
+    return {'metric': {'__name__': name}, 'values': [[t, '1'] for t in timestamps]}
 
 
 async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
@@ -183,11 +194,22 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
         TimeSeriesMetric(metric='b', value=2.2, timestamp=1),
         TimeSeriesMetric(metric='c', value=3.2, timestamp=1),
     ]
-    m_victoria.ranges.return_value = [
-        TimeSeriesRange(metric={'__name__': 'a'}, values=[TimeSeriesRangeValue(1234, '54321')]),
-        TimeSeriesRange(metric={'__name__': 'b'}, values=[TimeSeriesRangeValue(2345, '54321')]),
-        TimeSeriesRange(metric={'__name__': 'c'}, values=[TimeSeriesRangeValue(3456, '54321')]),
-    ]
+    m_victoria.initial_ranges.return_value = (
+        [one_range('a', 90, 100), one_range('b', 100)],
+        FollowUp(100, 10, 100),
+    )
+
+    # The fields and where each follow-up was asked to continue
+    asked: list[tuple[list[str], FollowUp]] = []
+
+    async def follow_up(fields: list[str], follow: FollowUp) -> tuple[list, FollowUp]:
+        asked.append((fields, follow))
+        # Every other tick, nothing new
+        if fields != ['a', 'b'] or len(asked) % 2:
+            return [], follow
+        return [one_range('b', follow.last + 10)], follow._replace(last=follow.last + 10, until=follow.last + 10)
+
+    m_victoria.follow_up_ranges.side_effect = follow_up
 
     received = defaultdict(list)
 
@@ -214,13 +236,13 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
                 },
             }
 
-        # Ranges
+        # Ranges with an end: sent once
         await ws.send_json(
             {
                 'id': 'test-ranges-once',
                 'command': 'ranges',
                 'query': {
-                    'fields': ['a', 'b', 'c'],
+                    'fields': ['c'],
                     'end': '2021-07-15T14:29:30.000Z',
                 },
             }
@@ -230,37 +252,32 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
             'id': 'test-ranges-once',
             'data': {
                 'initial': True,
-                'ranges': [ANY, ANY, ANY],
+                'ranges': [range_json('a', 90, 100), range_json('b', 100)],
             },
         }
 
-        # Live ranges
+        # Live ranges: then the new points, each once, in messages only when there are any
         await ws.send_json(
             {
                 'id': 'test-ranges-live',
                 'command': 'ranges',
                 'query': {
-                    'fields': ['a', 'b', 'c'],
+                    'fields': ['a', 'b'],
                     'duration': '30m',
                 },
             }
         )
         resp = await receive(ws, 'test-ranges-live', received)
-        assert resp == {
-            'id': 'test-ranges-live',
-            'data': {
-                'initial': True,
-                'ranges': [ANY, ANY, ANY],
-            },
-        }
-        resp = await receive(ws, 'test-ranges-live', received)
-        assert resp == {
-            'id': 'test-ranges-live',
-            'data': {
-                'initial': False,
-                'ranges': [ANY, ANY, ANY],
-            },
-        }
+        assert resp['data']['initial'] is True
+        for timestamp in [110, 120]:
+            resp = await receive(ws, 'test-ranges-live', received)
+            assert resp == {
+                'id': 'test-ranges-live',
+                'data': {
+                    'initial': False,
+                    'ranges': [range_json('b', timestamp)],
+                },
+            }
 
         # Stop live ranges
         await ws.send_json(
@@ -270,15 +287,108 @@ async def test_stream(app: FastAPI, manager: LifespanManager, config: ServiceCon
             }
         )
 
-    # A query with an end is sent once, while the live query kept going
+    # Each follow-up continues where the previous one ended
+    assert [follow for _, follow in asked[:4]] == [(100, 10, 100), (100, 10, 100), (110, 10, 110), (110, 10, 110)]
+    # The query with an end had no follow-ups, while the live one had several
     assert len(received['test-ranges-once']) == 1
+    assert all(fields == ['a', 'b'] for fields, _ in asked)
+
+
+async def test_stream_retry(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
+    # A failed query is asked again at the next interval: the initial one as initial, a follow-up from the same point.
+    # When the clock went back, the initial ranges again.
+    config.ranges_interval = timedelta(milliseconds=1)
+    m_victoria.initial_ranges.side_effect = [
+        RuntimeError('down'),
+        ([], FollowUp(100, 10, 100)),
+        ([one_range('a', 50)], FollowUp(50, 10, 50)),
+    ]
+    asked: list[FollowUp] = []
+
+    async def follow_up(fields: list[str], follow: FollowUp) -> tuple[list, FollowUp | None]:
+        asked.append(follow)
+        if len(asked) == 1:
+            raise RuntimeError('down')
+        if len(asked) == 2:
+            return [one_range('a', follow.last + 10)], follow._replace(last=follow.last + 10, until=follow.last + 10)
+        if len(asked) == 3:
+            return [], None
+        return [], follow
+
+    m_victoria.follow_up_ranges.side_effect = follow_up
+    received = defaultdict(list)
+
+    async with (
+        AsyncClient(base_url='http://test', transport=ASGIWebSocketTransport(app)) as client,
+        aconnect_ws('/timeseries/stream', client) as ws,
+    ):
+        await ws.send_json({'id': 'live', 'command': 'ranges', 'query': {'fields': ['a']}})
+        resp = await receive(ws, 'live', received)
+        assert resp['data'] == {'initial': True, 'ranges': []}
+        resp = await receive(ws, 'live', received)
+        assert resp['data'] == {'initial': False, 'ranges': [range_json('a', 110)]}
+        resp = await receive(ws, 'live', received)
+        assert resp['data'] == {'initial': True, 'ranges': [range_json('a', 50)]}
+        await ws.send_json({'id': 'live', 'command': 'stop'})
+
+    assert m_victoria.initial_ranges.await_count == 3
+    # Starting over, with every field: the UI drops what it holds only for an initial message with ranges
+    assert [c.kwargs for c in m_victoria.initial_ranges.await_args_list] == [{}, {}, {'every_field': True}]
+    assert asked[:3] == [(100, 10, 100), (100, 10, 100), (110, 10, 110)]
+
+
+async def test_stream_send_fails(
+    app: FastAPI,
+    manager: LifespanManager,
+    config: ServiceConfig,
+    m_victoria: Mock,
+    mocker: MockerFixture,
+):
+    # The stream moves on only after the send: the initial ranges are sent again as initial,
+    # and a follow-up is asked again from the same point
+    config.ranges_interval = timedelta(milliseconds=1)
+    m_victoria.initial_ranges.return_value = ([one_range('a', 100)], FollowUp(100, 10, 100))
+    asked: list[FollowUp] = []
+
+    async def follow_up(fields: list[str], follow: FollowUp) -> tuple[list, FollowUp]:
+        asked.append(follow)
+        return [one_range('a', follow.last + 10)], follow._replace(last=follow.last + 10, until=follow.last + 10)
+
+    m_victoria.follow_up_ranges.side_effect = follow_up
+
+    send = timeseries_api._send_ranges
+    sent: list[bool] = []
+
+    async def failing_send(ws, stream_id: str, ranges: list, *, initial: bool) -> None:
+        # The first initial and the first follow-up fail
+        sent.append(initial)
+        if sent.count(initial) == 1:
+            raise RuntimeError('closing')
+        await send(ws, stream_id, ranges, initial=initial)
+
+    mocker.patch(TESTED + '._send_ranges', failing_send)
+    received = defaultdict(list)
+
+    async with (
+        AsyncClient(base_url='http://test', transport=ASGIWebSocketTransport(app)) as client,
+        aconnect_ws('/timeseries/stream', client) as ws,
+    ):
+        await ws.send_json({'id': 'live', 'command': 'ranges', 'query': {'fields': ['a']}})
+        resp = await receive(ws, 'live', received)
+        assert resp['data'] == {'initial': True, 'ranges': [range_json('a', 100)]}
+        resp = await receive(ws, 'live', received)
+        assert resp['data'] == {'initial': False, 'ranges': [range_json('a', 110)]}
+        await ws.send_json({'id': 'live', 'command': 'stop'})
+
+    assert m_victoria.initial_ranges.await_count == 2
+    assert asked[:2] == [(100, 10, 100), (100, 10, 100)]
 
 
 async def test_stream_error(app: FastAPI, manager: LifespanManager, config: ServiceConfig, m_victoria: Mock):
     config.ranges_interval = timedelta(milliseconds=1)
     config.metrics_interval = timedelta(milliseconds=1)
     dt = datetime(2021, 7, 15, 19, tzinfo=timezone.utc)
-    m_victoria.ranges.side_effect = RuntimeError
+    m_victoria.initial_ranges.side_effect = RuntimeError
     m_victoria.metrics.return_value = [
         TimeSeriesMetric(metric='a', value=1.2, timestamp=dt),
     ]
@@ -328,3 +438,8 @@ async def test_stream_error(app: FastAPI, manager: LifespanManager, config: Serv
                 ],
             },
         }
+
+        # The query with an end is not asked again, however many intervals pass
+        for _ in range(10):
+            await ws.receive_json()
+        assert m_victoria.initial_ranges.await_count == 1

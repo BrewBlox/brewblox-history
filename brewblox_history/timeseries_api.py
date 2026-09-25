@@ -10,7 +10,7 @@ from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
-from brewblox_history import downsample, utils, victoria
+from brewblox_history import downsample, planner, utils, victoria
 from brewblox_history.models import (
     TimeSeriesCsvQuery,
     TimeSeriesFieldsQuery,
@@ -67,6 +67,7 @@ async def timeseries_ranges(query: TimeSeriesRangesQuery) -> list[TimeSeriesRang
     - start:              between start and now() <br>
     - duration:           between now() - duration and now() <br>
     - end:                between end-1d and end <br>
+    The period ends query_latency (5s) before now at the latest: newer samples may not be searchable yet.
     """
     return await victoria.CV.get().ranges(query)
 
@@ -113,20 +114,38 @@ async def protected(desc: str):
         LOGGER.error(f'{desc} error {utils.strex(ex)}')
 
 
-async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
+async def _send_ranges(ws: WebSocket, stream_id: str, ranges: list[TimeSeriesRange], *, initial: bool) -> None:
+    data = TimeSeriesRangeStreamData(initial=initial, ranges=ranges)
+    await ws.send_json({'id': stream_id, 'data': jsonable_encoder(data, by_alias=True)})
+
+
+async def _stream_ranges(ws: WebSocket, stream_id: str, query: TimeSeriesRangesQuery) -> None:
+    """
+    Sends the ranges once (initial). While the query is open-ended, sends the points after the last one sent
+    every ranges_interval, if there are any: each point is sent once.
+    A failed query or send is tried again at the next interval.
+    When the clock went back, the stream starts over with the initial ranges of every field,
+    also those without values: the UI then drops what it holds.
+    """
     config = utils.get_config()
+    vic = victoria.CV.get()
     open_ended = utils.is_open_ended(start=query.start, duration=query.duration, end=query.end)
-    initial = True
+    # Where follow-ups continue, once the initial ranges are sent
+    follow: planner.FollowUp | None = None
 
     while True:
         async with protected('ranges query'):
-            data = TimeSeriesRangeStreamData(initial=initial, ranges=await victoria.CV.get().ranges(query))
-
-            await ws.send_json({'id': id, 'data': jsonable_encoder(data, by_alias=True)})
-
-            query.start = utils.now()
-            query.duration = None
-            initial = False
+            if follow is None:
+                ranges, next_follow = await vic.initial_ranges(query)
+                await _send_ranges(ws, stream_id, ranges, initial=True)
+            else:
+                ranges, next_follow = await vic.follow_up_ranges(query.fields, follow)
+                if next_follow is None:
+                    ranges, next_follow = await vic.initial_ranges(query, every_field=True)
+                    await _send_ranges(ws, stream_id, ranges, initial=True)
+                elif ranges:
+                    await _send_ranges(ws, stream_id, ranges, initial=False)
+            follow = next_follow
 
         if not open_ended:
             break
@@ -134,7 +153,7 @@ async def _stream_ranges(ws: WebSocket, id: str, query: TimeSeriesRangesQuery):
         await asyncio.sleep(config.ranges_interval.total_seconds())
 
 
-async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery):
+async def _stream_metrics(ws: WebSocket, stream_id: str, query: TimeSeriesMetricsQuery) -> None:
     config = utils.get_config()
 
     while True:
@@ -145,7 +164,7 @@ async def _stream_metrics(ws: WebSocket, id: str, query: TimeSeriesMetricsQuery)
 
             await ws.send_json(
                 {
-                    'id': id,
+                    'id': stream_id,
                     'data': jsonable_encoder(data),
                 }
             )

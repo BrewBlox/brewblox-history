@@ -26,7 +26,8 @@ docker compose up                         # the service with hot reload, plus ev
 Tests need Docker: pytest-docker starts the eventbus, redis, victoria and victoria-dense
 services from test/docker-compose.yml once per session. test/test_database.py runs the
 client against both databases; series names must be unique per test, since the databases
-live for the whole session. Every test has a 10s timeout (`--timeout`) that
+live for the whole session. Its `now` fixture freezes history's clock: never move it past
+real time, or the database replaces the points it sees within the latency offset. Every test has a 10s timeout (`--timeout`) that
 also covers fixture setup, so on a machine without the images the first test errors while
 `docker compose up` is still pulling: run `docker compose -f test/docker-compose.yml pull`
 first (CI does). `asyncio.sleep` calls over 0.1s print the test name: config intervals in
@@ -78,7 +79,8 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   write() also fills the in-memory cache that `metrics()` serves; that endpoint never
   queries the database.
 - Read path (timeseries_api -> victoria -> planner, pure functions in integer Unix seconds):
-  `select_timeframe` gives start, end (open-ended: `now - query_latency`) and
+  `select_timeframe` gives start, end (`now - query_latency` when open-ended, and at the
+  latest: VM replaces points within its latency offset with copies) and
   `step = max(duration / query_desired_points, minimum_step, 1s)`; `plan_ranges` splits it
   into queries per database: with dense, a step below `sparse_interval` where dense has
   samples (its retention, or from `dense_since` if later) reads dense; otherwise the step
@@ -94,9 +96,17 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   (dense from the first `sparse_interval` grid point where it has them, averages before) in
   windows of `csv_chunk_*`, drops rows at or before the last one, and fails if dense does.
   `fields` lists series. The WebSocket `/timeseries/stream` runs one task per command id:
-  `ranges` sends the window once (`initial: true`), then re-queries from `start = now()`
-  every `ranges_interval` while the query is open-ended (utils.is_open_ended); `metrics`
-  pushes the cache every `metrics_interval`.
+  `ranges` sends the window once (`initial: true`, `VictoriaClient.initial_ranges`); while
+  the query is open-ended (utils.is_open_ended), every `ranges_interval` it sends the points
+  after the newest one sent (`follow_up_ranges`, planner.plan_follow_up), if there are any: at
+  the frame's step capped at `follow_up_step_max` (at least `minimum_step`), from the
+  database with the raw samples and never the fallback, with `nocache` (from 50 points VM
+  rounds a cacheable query's start to its step's grid), at most `FOLLOW_UP_MAX_POINTS` (VM
+  refuses over 30000 per series). A failed query or send is asked again from the same point;
+  when the clock went back more than a minute, the stream starts over with an initial message
+  listing every field (the UI clears only for one with ranges). When a dense batch
+  fails, the dense part of a plan is left out for every field. `metrics` pushes the cache
+  every `metrics_interval`.
 - Datastore (datastore_api, redis): namespaced JSON documents in Redis; changes are
   published on `brewcast/datastore/<namespace>` so the UI and services can subscribe.
 - Errors: the catch-all handler in app_factory returns `ErrorResponse` with status 500; a

@@ -13,6 +13,9 @@ averaging the long-term averages at any other step would alias.
 The long-term database then answers up to the cursor, and the dense database the rest.
 
 Without dense_enabled, the long-term database holds the raw samples and answers everything.
+
+A live stream sends the initial ranges once, then follow-ups: the points after the last one it sent,
+at a step capped at follow_up_step_max, from the database that receives the raw samples.
 """
 
 import math
@@ -27,6 +30,15 @@ Database = Literal['archive', 'dense']
 # the database refuses queries over 16 KiB (-search.maxQueryLen)
 SELECTOR_MAX_NAMES = 100
 SELECTOR_MAX_BYTES = 8 * 1024
+
+# A live follow-up asks for at most this many points: after a long wait (the database was down,
+# the clock jumped forward) or for the first follow-up of a very long graph, it skips the older ones.
+# The database refuses more than 30000 points per series (-search.maxPointsPerTimeseries).
+FOLLOW_UP_MAX_POINTS = 1000
+
+# A live stream starts over when the clock went back further than this (seconds), and otherwise waits
+# for the clock to catch up: an NTP correction goes unnoticed, a wrong time zone set right does not freeze it.
+CLOCK_STEP_TOLERANCE = 60
 
 
 class Timeframe(NamedTuple):
@@ -63,8 +75,9 @@ def select_timeframe(
 ) -> Timeframe:
     """Start, end and step for given start, duration and end.
 
-    Without an end, the timeframe ends query_latency before now:
-    the database may not have made newer samples searchable yet.
+    The timeframe ends query_latency before now at the latest:
+    the database may not have made newer samples searchable yet,
+    and replaces points in the last query_latency with a copy of an older one.
     The step gives about query_desired_points points, and at least minimum_step.
     """
     dt_start: datetime
@@ -98,9 +111,10 @@ def select_timeframe(
     else:
         dt_start = now - config.query_duration_default
 
-    dt_end = dt_end or now - config.query_latency
     frame_start = math.floor(dt_start.timestamp())
-    frame_end = math.floor(dt_end.timestamp())
+    frame_end = live_end(now, config)
+    if dt_end is not None:
+        frame_end = min(frame_end, math.floor(dt_end.timestamp()))
     desired_step = (frame_end - frame_start) // config.query_desired_points
     step = max(desired_step, seconds(config.minimum_step), 1)
     return Timeframe(frame_start, frame_end, step)
@@ -169,6 +183,53 @@ def plan_fallback(frame: Timeframe, config: ServiceConfig) -> list[RangeQuery]:
     interval = seconds(config.sparse_interval)
     step = max(frame.step, interval)
     return plan_ranges(frame._replace(step=step), frame.end, config, cursor=frame.end)
+
+
+class FollowUp(NamedTuple):
+    """Where a live stream continues: with the points after last, at step.
+    until is where the last query ended."""
+
+    last: int
+    step: int
+    until: int
+
+
+def live_end(now: datetime, config: ServiceConfig) -> int:
+    """Where an open-ended query ends: query_latency before now."""
+    return math.floor((now - config.query_latency).timestamp())
+
+
+def follow_up_after(frame: Timeframe, sent: int | None, config: ServiceConfig) -> FollowUp:
+    """Where live follow-ups continue after the initial ranges for frame: after the newest point sent,
+    or after the frame's start if none was. Not after the planned end: a part may have failed,
+    or the fallback may have had nothing towards the end, and the follow-ups fill that in.
+
+    Their step is the frame's step, capped at follow_up_step_max so that long graphs still advance,
+    and at least minimum_step, which wins over the cap."""
+    step = max(seconds(config.minimum_step), min(frame.step, seconds(config.follow_up_step_max)), 1)
+    return FollowUp(frame.start if sent is None else sent, step, frame.end)
+
+
+def clock_went_back(follow: FollowUp, now: datetime, config: ServiceConfig) -> bool:
+    """Whether the clock went back further than CLOCK_STEP_TOLERANCE since the last query ended.
+    The points after follow.last would then come after it only when the clock catches up."""
+    return live_end(now, config) < follow.until - CLOCK_STEP_TOLERANCE
+
+
+def plan_follow_up(follow: FollowUp, now: datetime, config: ServiceConfig) -> RangeQuery | None:
+    """The live follow-up: the points after follow.last, up to query_latency before now,
+    at most FOLLOW_UP_MAX_POINTS of them. None while the next point is not due,
+    also while the clock catches up after it went back a little: the points stay in order.
+
+    It reads the database that receives the raw samples, which has them first.
+    It ends on its last point, where the next follow-up continues."""
+    end = live_end(now, config)
+    start = follow.last + follow.step
+    if start > end:
+        return None
+    end -= (end - start) % follow.step
+    start = max(start, end - (FOLLOW_UP_MAX_POINTS - 1) * follow.step)
+    return RangeQuery('dense' if config.dense_enabled else 'archive', start, end, follow.step)
 
 
 def plan_export(

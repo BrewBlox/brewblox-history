@@ -44,6 +44,16 @@ def escape_field_key(name: str) -> str:
     return name.replace('\\', '\\\\').replace(',', '\\,').replace('=', '\\=').replace(' ', '\\ ')
 
 
+def ranges_of(values: dict[str, list], names: list[str], *, every_name: bool = False) -> list[TimeSeriesRange]:
+    """The values per series as ranges, in the order of names.
+    Series without values are left out, or with every_name, given no values."""
+    return [
+        TimeSeriesRange(metric={'__name__': name}, values=values.get(name, []))
+        for name in names
+        if every_name or name in values
+    ]
+
+
 @contextmanager
 def named_errors(db: httpx.AsyncClient):
     """Transport errors (unreachable, timeout) become a ConnectionError naming the database."""
@@ -220,10 +230,16 @@ class VictoriaClient:
         self,
         queries: list[planner.RangeQuery],
         names: list[str],
+        *,
+        nocache: bool = False,
     ) -> tuple[dict[str, list], bool]:
         """Values per series, merged over the queries,
-        and whether queries to the dense database failed: those are left out."""
+        and whether queries to the dense database failed: then all of the dense database's are left out.
+
+        From 50 points, the database rounds the start of a query it may cache down to the grid of its step:
+        nocache keeps a start that is not on it."""
         config = utils.get_config()
+        extra = {'nocache': 1} if nocache else {}
         requests = [
             (
                 idx,
@@ -237,6 +253,7 @@ class VictoriaClient:
                         'step': f'{query.step}s',
                         # Points in the last query_latency would be replaced by a copy of an older one
                         'latency_offset': config.query_latency.total_seconds(),
+                        **extra,
                     },
                 ),
             )
@@ -259,6 +276,11 @@ class VictoriaClient:
             for result in resp['data']['result']:
                 parts[idx][result['metric']['__name__']] = result['values']
 
+        # A field whose batch answered would get points after those of the others:
+        # the long-term part answers for all of them
+        if dense_error:
+            parts = [part for part, query in zip(parts, queries, strict=True) if query.db != 'dense']
+
         # One warning per outage: every graph would repeat it at every refresh
         if dense_error and not self._dense_reads_failing:
             self._dense_reads_failing = True
@@ -269,7 +291,14 @@ class VictoriaClient:
 
         return planner.merge_values(parts), dense_error is not None
 
-    async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
+    async def initial_ranges(
+        self,
+        args: TimeSeriesRangesQuery,
+        *,
+        every_field: bool = False,
+    ) -> tuple[list[TimeSeriesRange], planner.FollowUp]:
+        """The ranges, and where live follow-ups continue.
+        With every_field, a field without values is in the ranges too, without values."""
         config = utils.get_config()
         now = utils.now()
         frame = planner.select_timeframe(args.start, args.duration, args.end, now, config)
@@ -281,9 +310,43 @@ class VictoriaClient:
         # The long-term database answers when the dense database has none of the fields, or fails.
         # With a long-term part in the plan, that part is the answer.
         if queries and all(q.db == 'dense' for q in queries) and (dense_failed or not values):
-            values, _ = await self._query_ranges(planner.plan_fallback(frame, config), names)
+            queries = planner.plan_fallback(frame, config)
+            values, _ = await self._query_ranges(queries, names)
 
-        return [TimeSeriesRange(metric={'__name__': name}, values=values[name]) for name in names if name in values]
+        ranges = ranges_of(values, names, every_name=every_field)
+        sent = max((int(r.values[-1].timestamp) for r in ranges if r.values), default=None)
+        return ranges, planner.follow_up_after(frame, sent, config)
+
+    async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
+        ranges, _ = await self.initial_ranges(args)
+        return ranges
+
+    async def follow_up_ranges(
+        self,
+        fields: list[str],
+        follow: planner.FollowUp,
+    ) -> tuple[list[TimeSeriesRange], planner.FollowUp | None]:
+        """The points after the last one a live stream sent, and where the next follow-up continues.
+
+        Nothing while the next point is not due, or while the dense database fails: the next follow-up
+        asks again. Never the fallback: the long-term database would answer at another step.
+        None instead of where to continue when the clock went back: the stream starts over."""
+        config = utils.get_config()
+        now = utils.now()
+        if planner.clock_went_back(follow, now, config):
+            LOGGER.warning('The clock went back: live ranges start over')
+            return [], None
+
+        query = planner.plan_follow_up(follow, now, config)
+        if query is None:
+            return [], follow
+
+        names = list(dict.fromkeys(fields))
+        # The points continue the initial ones, which need not be on the grid of this step
+        values, dense_failed = await self._query_ranges([query], names, nocache=True)
+        if dense_failed:
+            return [], follow
+        return ranges_of(values, names), follow._replace(last=query.end, until=query.end)
 
     async def _export_rows(
         self,

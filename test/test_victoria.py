@@ -272,14 +272,13 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
     # One request for all fields, which ends query_latency before now and passes it as latency offset
     [request] = httpx_mock.get_requests()
     params = parse_qs(request.read().decode())
-    assert params['query'] == [
-        'avg_over_time({__name__="f1" or __name__="f2" or __name__="f3"}[10s]) keep_metric_names'
-    ]
-    assert params['step'] == ['10s']
-    assert params['latency_offset'] == ['3.0']
+    assert params['query'] == ['avg_over_time({__name__="f1" or __name__="f2" or __name__="f3"}[3s]) keep_metric_names']
+    assert params['step'] == ['3s']
+    assert params['latency_offset'] == ['5.0']
+    assert 'nocache' not in params
     # The start is on the grid of the step, at most a step before now - 1h
-    assert int(params['start'][0]) % 10 == 0
-    assert int(params['end'][0]) - int(params['start'][0]) in range(3597, 3597 + 10)
+    assert int(params['start'][0]) % 3 == 0
+    assert int(params['end'][0]) - int(params['start'][0]) in range(3595, 3595 + 3)
 
 
 def matrix_handler(request: Request) -> Response:
@@ -438,6 +437,158 @@ async def test_ranges_dense_since(
     assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 600, 'A-a'], [ts - 60, 'D-a']])]
 
 
+async def test_initial_ranges_follow_up(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Follow-ups continue after the newest point sent, at the frame's step, capped at 10 s
+    monkeypatch.setattr(planner, 'SELECTOR_MAX_NAMES', 1)
+    ts = int(now.timestamp())
+    dense_vic.cursor = ts - 600
+    # Names whose dense batch fails, and databases that have none of the names
+    failing: set[str] = set()
+    silent: set[str] = set()
+
+    def last_point(request: Request) -> Response:
+        """One point per selected name, at the query's last point, valued by database and name.
+        Series 'a' ends a step earlier."""
+        params = parse_qs(request.read().decode())
+        db = 'D' if '/victoria-dense/' in str(request.url) else 'A'
+        names = re.findall(r'__name__="(\w+)"', params['query'][0])
+        if db == 'D' and failing & set(names):
+            raise httpx.ReadTimeout('slow')
+        start, end, step = int(params['start'][0]), int(params['end'][0]), int(params['step'][0][:-1])
+        last = start + (end - start) // step * step
+        result = [
+            {'metric': {'__name__': n}, 'values': [[last - step if n == 'a' else last, f'{db}-{n}']]}
+            for n in names
+            if db not in silent
+        ]
+        return Response(200, json={'status': 'success', 'data': {'resultType': 'matrix', 'result': result}})
+
+    for db_url in [url, dense_url]:
+        httpx_mock.add_callback(
+            url=f'{db_url}/api/v1/query_range', method='POST', callback=last_point, is_reusable=True
+        )
+
+    def query(duration: str) -> TimeSeriesRangesQuery:
+        return TimeSeriesRangesQuery(fields=['a', 'b'], duration=duration)
+
+    # A day at 120 s, from both databases: after the newest point of any series
+    _, follow = await dense_vic.initial_ranges(query('1d'))
+    assert follow == (ts - 120, 10, ts - 5)
+    # Ten minutes at 1 s
+    result, follow = await dense_vic.initial_ranges(query('10m'))
+    assert [r.values[-1].timestamp for r in result] == [ts - 6, ts - 5]
+    assert follow == (ts - 5, 1, ts - 5)
+
+    # One dense batch fails: the long-term part answers for every field, and the follow-ups fill in the rest
+    failing = {'b'}
+    result, follow = await dense_vic.initial_ranges(query('1d'))
+    assert result == [
+        TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 720, 'A-a']]),
+        TimeSeriesRange(metric={'__name__': 'b'}, values=[[ts - 600, 'A-b']]),
+    ]
+    assert follow == (ts - 600, 10, ts - 5)
+
+    # The dense database has none of the fields: after the fallback's newest point, at the frame's step
+    failing = set()
+    silent = {'D'}
+    result, follow = await dense_vic.initial_ranges(query('10m'))
+    assert result == [
+        TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 120, 'A-a']]),
+        TimeSeriesRange(metric={'__name__': 'b'}, values=[[ts - 60, 'A-b']]),
+    ]
+    assert follow == (ts - 60, 1, ts - 5)
+
+    # Nothing sent: after the frame's start
+    silent = {'A', 'D'}
+    assert await dense_vic.initial_ranges(query('10m')) == ([], (ts - 600, 1, ts - 5))
+    # Every field, also without values
+    assert await dense_vic.initial_ranges(query('10m'), every_field=True) == (
+        [TimeSeriesRange(metric={'__name__': n}, values=[]) for n in ['a', 'b']],
+        (ts - 600, 1, ts - 5),
+    )
+
+
+async def test_follow_up_ranges(
+    vic: victoria.VictoriaClient,
+    url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+):
+    ts = int(now.timestamp())
+    httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler)
+
+    # Not due: no query
+    follow = planner.FollowUp(ts - 14, 10, ts - 14)
+    assert await vic.follow_up_ranges(['a'], follow) == ([], follow)
+    # The clock went back up to a minute: wait for it to catch up
+    follow = planner.FollowUp(ts - 14, 10, ts + 55)
+    assert await vic.follow_up_ranges(['a'], follow) == ([], follow)
+    # Further: start over
+    assert 'The clock went back' not in caplog.text
+    assert await vic.follow_up_ranges(['a'], planner.FollowUp(ts - 14, 10, ts + 56)) == ([], None)
+    assert 'The clock went back: live ranges start over' in caplog.text
+    assert not httpx_mock.get_requests()
+
+    # The points after the last one, up to query_latency before now, ending on the last one
+    follow = planner.FollowUp(ts - 37, 10, ts - 37)
+    result, follow = await vic.follow_up_ranges(['a', 'b', 'a'], follow)
+    assert result == [TimeSeriesRange(metric={'__name__': n}, values=[[ts - 27, f'A-{n}']]) for n in ['a', 'b']]
+    assert follow == (ts - 7, 10, ts - 7)
+    [request] = httpx_mock.get_requests()
+    params = parse_qs(request.read().decode())
+    assert params['query'] == ['avg_over_time({__name__="a" or __name__="b"}[10s]) keep_metric_names']
+    assert (params['start'], params['end'], params['step']) == ([str(ts - 27)], [str(ts - 7)], ['10s'])
+    assert params['latency_offset'] == ['5.0']
+    # The start need not be on the grid of the step: the database must not round it
+    assert params['nocache'] == ['1']
+
+    # Without the dense database, a failure is raised: the stream asks again from the same point
+    httpx_mock.add_exception(url=f'{url}/api/v1/query_range', method='POST', exception=httpx.ConnectError('refused'))
+    with pytest.raises(ConnectionError):
+        await vic.follow_up_ranges(['a'], planner.FollowUp(ts - 37, 10, ts - 37))
+
+
+async def test_follow_up_ranges_dense(
+    dense_vic: victoria.VictoriaClient,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+):
+    # From the dense database, and never from the long-term one
+    ts = int(now.timestamp())
+    follow = planner.FollowUp(ts - 37, 10, ts - 37)
+    down = True
+
+    def dense_handler(request: Request) -> Response:
+        if down:
+            raise httpx.ConnectError('refused')
+        return matrix_handler(request)
+
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=dense_handler, is_reusable=True
+    )
+
+    # While it fails: nothing, and the next follow-up continues from the same point
+    assert await dense_vic.follow_up_ranges(['a'], follow) == ([], follow)
+    assert 'Ranges without the dense database until it answers' in caplog.text
+
+    down = False
+    assert await dense_vic.follow_up_ranges(['a'], follow) == (
+        [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 27, 'D-a']])],
+        (ts - 7, 10, ts - 7),
+    )
+    assert len(httpx_mock.get_requests()) == 2
+
+
 async def test_csv_dense_since(
     dense_vic: victoria.VictoriaClient,
     url: str,
@@ -456,7 +607,7 @@ async def test_csv_dense_since(
     exports = [(str(r.url).split('/')[3], parse_qs(r.read().decode())) for r in httpx_mock.get_requests()]
     assert [(db, int(p['start'][0]), int(p['end'][0])) for db, p in exports] == [
         ('victoria', ts - 3600, ts - 240),
-        ('victoria-dense', ts - 240, ts - 3),
+        ('victoria-dense', ts - 240, ts - 5),
     ]
 
 
