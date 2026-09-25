@@ -2,10 +2,10 @@
 Tests brewblox_history.victoria
 """
 
-import asyncio
-import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs
 
 import ciso8601
 import httpx
@@ -14,7 +14,7 @@ from httpx import Request, Response
 from pytest_httpx import HTTPXMock
 from pytest_mock import MockerFixture
 
-from brewblox_history import utils, victoria
+from brewblox_history import planner, utils, victoria
 from brewblox_history.models import (
     HistoryEvent,
     ServiceConfig,
@@ -233,14 +233,15 @@ async def test_metrics(vic: victoria.VictoriaClient, now: datetime, written: lis
 
 
 async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
-    result = {
-        'metric': {'__name__': 'sparkey/sensor'},
-        'values': [
-            [1626367339.856, '1'],
-            [1626367349.856, '2'],
-            [1626367359.856, '3'],
-        ],
-    }
+    def result(name: str) -> dict:
+        return {
+            'metric': {'__name__': name},
+            'values': [
+                [1626367339.856, '1'],
+                [1626367349.856, '2'],
+                [1626367359.856, '3'],
+            ],
+        }
 
     httpx_mock.add_response(
         url=f'{url}/api/v1/query_range',
@@ -249,15 +250,215 @@ async def test_ranges(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXM
             'status': 'success',
             'data': {
                 'resultType': 'matrix',
-                'result': [result],
+                'result': [result('f2'), result('f1')],
             },
         },
-        is_reusable=True,
     )
 
-    args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3'])
-    retv = await vic.ranges(args)
-    assert retv == [TimeSeriesRange(**result)] * 3
+    # Results follow the requested fields, once each; fields without data are left out
+    args = TimeSeriesRangesQuery(fields=['f1', 'f2', 'f3', 'f1'], duration='1h')
+    assert await vic.ranges(args) == [TimeSeriesRange(**result('f1')), TimeSeriesRange(**result('f2'))]
+
+    # One request for all fields, which ends query_latency before now and passes it as latency offset
+    [request] = httpx_mock.get_requests()
+    params = parse_qs(request.read().decode())
+    assert params['query'] == [
+        'avg_over_time({__name__="f1" or __name__="f2" or __name__="f3"}[10s]) keep_metric_names'
+    ]
+    assert params['step'] == ['10s']
+    assert params['latency_offset'] == ['3.0']
+    # The start is on the grid of the step, at most a step before now - 1h
+    assert int(params['start'][0]) % 10 == 0
+    assert int(params['end'][0]) - int(params['start'][0]) in range(3597, 3597 + 10)
+
+
+def matrix_handler(request: Request) -> Response:
+    """A query_range answer: one point per selected name, at the query's start, valued by database and name."""
+    params = parse_qs(request.read().decode())
+    db = 'D' if '/victoria-dense/' in str(request.url) else 'A'
+    result = [
+        {'metric': {'__name__': name}, 'values': [[int(params['start'][0]), f'{db}-{name}']]}
+        for name in re.findall(r'__name__="(\w+)"', params['query'][0])
+    ]
+    return Response(200, json={'status': 'success', 'data': {'resultType': 'matrix', 'result': result}})
+
+
+async def test_ranges_seam(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Several name batches over a long-term and a dense part: each series gets both, in order
+    monkeypatch.setattr(planner, 'SELECTOR_MAX_NAMES', 1)
+    ts = int(now.timestamp())
+    dense_vic.cursor = ts - 600
+    for db_url in [url, dense_url]:
+        httpx_mock.add_callback(
+            url=f'{db_url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True
+        )
+
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration='1d'))
+    assert result == [
+        TimeSeriesRange(metric={'__name__': name}, values=[[ts - 86400, f'A-{name}'], [ts - 480, f'D-{name}']])
+        for name in ['a', 'b']
+    ]
+    assert len(httpx_mock.get_requests()) == 4
+
+
+async def test_ranges_dense_down(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+):
+    ts = int(now.timestamp())
+    dense_vic.cursor = ts - 600
+    httpx_mock.add_exception(
+        url=f'{dense_url}/api/v1/query_range',
+        method='POST',
+        exception=httpx.ConnectError('refused'),
+        is_reusable=True,
+    )
+    httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
+
+    # With a long-term part in the plan, that part is the answer
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='1d'))
+    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 86400, 'A-a']])]
+    assert 'Ranges without the dense database until it answers: ConnectionError' in caplog.text
+
+    # Without one, the long-term database answers everything, at a multiple of its interval
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='10m'))
+    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 600, 'A-a']])]
+    assert parse_qs(httpx_mock.get_requests()[-1].read().decode())['step'] == ['60s']
+
+
+async def test_ranges_dense_outage_logged(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+):
+    # One warning per outage, however many graphs query in the meantime
+    caplog.set_level(logging.INFO, logger=victoria.__name__)
+    down = True
+
+    def dense_handler(request: Request) -> Response:
+        if down:
+            raise httpx.ConnectError('refused')
+        return matrix_handler(request)
+
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=dense_handler, is_reusable=True
+    )
+    httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
+    query = TimeSeriesRangesQuery(fields=['a'], duration='10m')
+
+    def messages() -> list[str]:
+        return [r.getMessage().split(':')[0] for r in caplog.records if r.name == victoria.__name__]
+
+    await dense_vic.ranges(query)
+    await dense_vic.ranges(query)
+    assert messages() == ['Ranges without the dense database until it answers']
+
+    down = False
+    await dense_vic.ranges(query)
+    await dense_vic.ranges(query)
+    assert messages() == ['Ranges without the dense database until it answers', 'Ranges from the dense database again']
+
+    down = True
+    await dense_vic.ranges(query)
+    assert messages() == [
+        'Ranges without the dense database until it answers',
+        'Ranges from the dense database again',
+        'Ranges without the dense database until it answers',
+    ]
+
+
+async def test_ranges_dense_partial_failure(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A dense-only plan of which one name batch fails: the long-term database answers all fields
+    monkeypatch.setattr(planner, 'SELECTOR_MAX_NAMES', 1)
+    ts = int(now.timestamp())
+
+    def dense_handler(request: Request) -> Response:
+        if '__name__="b"' in parse_qs(request.read().decode())['query'][0]:
+            raise httpx.ReadTimeout('slow')
+        return matrix_handler(request)
+
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=dense_handler, is_reusable=True
+    )
+    httpx_mock.add_callback(url=f'{url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True)
+
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a', 'b'], duration='10m'))
+    assert result == [
+        TimeSeriesRange(metric={'__name__': name}, values=[[ts - 600, f'A-{name}']]) for name in ['a', 'b']
+    ]
+
+
+async def test_ranges_dense_since(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+):
+    # Before the dense database's samples start, the long-term database answers
+    ts = int(now.timestamp())
+    dense_vic.cursor = ts - 120
+    dense_vic.dense_since = ts - 300
+    for db_url in [url, dense_url]:
+        httpx_mock.add_callback(
+            url=f'{db_url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True
+        )
+
+    result = await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='10m'))
+    assert result == [TimeSeriesRange(metric={'__name__': 'a'}, values=[[ts - 600, 'A-a'], [ts - 60, 'D-a']])]
+
+
+async def test_csv_dense_since(
+    dense_vic: victoria.VictoriaClient,
+    url: str,
+    dense_url: str,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+):
+    # The switch is on the interval's grid, at or after where the dense database's samples start
+    ts = int(now.timestamp())
+    dense_vic.dense_since = ts - 270
+    for db_url in [url, dense_url]:
+        httpx_mock.add_response(url=f'{db_url}/api/v1/export', method='POST', text='', is_reusable=True)
+
+    lines = [line async for line in dense_vic.csv(TimeSeriesCsvQuery(fields=['a'], duration='1h', precision='ms'))]
+    assert lines == ['time,a']
+    exports = [(str(r.url).split('/')[3], parse_qs(r.read().decode())) for r in httpx_mock.get_requests()]
+    assert [(db, int(p['start'][0]), int(p['end'][0])) for db, p in exports] == [
+        ('victoria', ts - 3600, ts - 240),
+        ('victoria-dense', ts - 240, ts - 3),
+    ]
+
+
+async def test_ranges_archive_down(dense_vic: victoria.VictoriaClient, url: str, dense_url: str, httpx_mock: HTTPXMock):
+    # The long-term database has no stand-in
+    httpx_mock.add_exception(url=f'{url}/api/v1/query_range', method='POST', exception=httpx.ConnectError('refused'))
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=matrix_handler, is_reusable=True
+    )
+    dense_vic.cursor = int(utils.now().timestamp()) - 600
+    with pytest.raises(ConnectionError, match=f'{url}/: ConnectError'):
+        await dense_vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration='1d'))
 
 
 async def test_csv_unreachable(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
@@ -269,9 +470,11 @@ async def test_csv_unreachable(vic: victoria.VictoriaClient, url: str, httpx_moc
 
 
 async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
+    # Each 6 h window of the default 1 d gets the same response: rows are not repeated
     httpx_mock.add_response(
         url=f'{url}/api/v1/export',
         method='POST',
+        is_reusable=True,
         text='\n'.join(
             [
                 '{"metric":{"__name__":"sparkey/HERMS BK PWM/setting"},'
@@ -317,6 +520,25 @@ async def test_csv(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock
     # Assert that result is sorted by time
     timestamps = [v[0] for v in [ln.split(',') for ln in result[1:]]]
     assert timestamps == sorted(timestamps)
+
+    # One export per window, matching the fields exactly
+    requests = httpx_mock.get_requests()
+    assert len(requests) == 4
+    params = [parse_qs(r.read().decode()) for r in requests]
+    assert params[0]['match[]'] == [
+        '{__name__="sparkey/HERMS BK PWM/setting" or __name__="spock/pin-actuator-1/state"'
+        + ' or __name__="spock/actuator-1/value"}'
+    ]
+    assert [int(p['end'][0]) - int(p['start'][0]) for p in params][:3] == [6 * 3600] * 3
+    assert all(params[i]['end'] == params[i + 1]['start'] for i in range(3))
+
+
+async def test_csv_rejected(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(url=f'{url}/api/v1/export', method='POST', status_code=422, text='bad query')
+    args = TimeSeriesCsvQuery(fields=['a'], duration='1h', precision='ISO8601')
+    with pytest.raises(httpx.HTTPStatusError):
+        async for _ in vic.csv(args):
+            pass
 
 
 async def test_write(vic: victoria.VictoriaClient, now: datetime, written: list[str]):
@@ -398,33 +620,6 @@ async def test_write_timestamp(
         'service: event timestamp is -10.0s off, using arrival time',
         'other: event timestamp is +20.0s off, using arrival time',
     ]
-
-
-async def test_write_database(vic: victoria.VictoriaClient):
-    # Against the real database: names as stored, and timestamps
-    key = 'itest "spark",1\\'
-    data = {'block, one': {'value=x': 1}, 'back\\slash\\': 2, 'temp[°C]': 3}
-    timestamp = utils.to_millis(utils.now()) - 2000
-
-    await vic.write(HistoryEvent(key=key, data=data, timestamp=timestamp))
-    await vic.write(HistoryEvent(key=key, data={'arrival': 4}))
-
-    stamped = {f'{key}/block, one/value=x', f'{key}/back\\slash\\', f'{key}/temp[°C]'}
-    expected = stamped | {f'{key}/arrival'}
-    rows = {}
-    for _ in range(50):  # New samples become searchable about a second after a forced flush
-        (await vic._archive.get('/internal/force_flush')).raise_for_status()
-        resp = await vic._archive.post('/api/v1/export', data={'match[]': '{__name__=~"itest.*"}'})
-        resp.raise_for_status()
-        rows = {row['metric']['__name__']: row for row in map(json.loads, resp.text.splitlines())}
-        if expected <= rows.keys():
-            break
-        await asyncio.sleep(0.1)
-
-    assert rows.keys() == expected
-    for name in stamped:
-        assert rows[name]['timestamps'] == [timestamp]
-    assert rows[f'{key}/arrival']['timestamps'][0] > timestamp
 
 
 async def test_write_dense(dense_vic: victoria.VictoriaClient, dense_url: str, httpx_mock: HTTPXMock):

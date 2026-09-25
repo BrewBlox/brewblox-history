@@ -13,5 +13,15 @@ services:
     command: >-
       --influxMeasurementFieldSeparator=/
       --http.pathPrefix=/victoria
+      --dedup.minScrapeInterval=1ms
+    ports:
+      - "8428"
+  victoria-dense:
+    image: victoriametrics/victoria-metrics:v1.152.0
+    command: >-
+      --influxMeasurementFieldSeparator=/
+      --http.pathPrefix=/victoria-dense
+      --dedup.minScrapeInterval=1ms
+      --retentionPeriod=30d
     ports:
       - "8428"

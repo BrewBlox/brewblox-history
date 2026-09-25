@@ -60,6 +60,8 @@ def config(
         redis_port=docker_services.port_for('redis', 6379),
         victoria_host='localhost',
         victoria_port=docker_services.port_for('victoria', 8428),
+        dense_host='localhost',
+        dense_port=docker_services.port_for('victoria-dense', 8428),
     )
     monkeypatch.setattr(utils, 'get_config', lambda: cfg)
     yield cfg
@@ -86,6 +88,15 @@ def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
 @pytest.fixture(autouse=True)
 def setup_logging(config):
     app_factory.setup_logging(True)
+
+
+@pytest.fixture(autouse=True)
+def reset_duplicate_filters():
+    """DuplicateFilter remembers the last message: without a reset,
+    a test's first message is dropped if the previous test ended with it."""
+    loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+    for flt in [f for logger in loggers for f in logger.filters if isinstance(f, utils.DuplicateFilter)]:
+        flt.__dict__.pop('last_log', None)
 
 
 @pytest.fixture

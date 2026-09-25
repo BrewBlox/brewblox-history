@@ -3,13 +3,12 @@ import logging
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
-from urllib.parse import quote
 
 import httpx
 import ujson
 from sortedcontainers import SortedDict
 
-from brewblox_history import utils
+from brewblox_history import planner, utils
 from brewblox_history.models import (
     TIMESTAMP_TOLERANCE,
     HistoryEvent,
@@ -62,11 +61,6 @@ class VictoriaClient:
     def __init__(self):
         config = utils.get_config()
 
-        self._query_headers = {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Accept-Encoding': 'gzip',
-        }
-
         # Field name -> (value, timestamp)
         self._cached_metrics: dict[str, tuple[float, datetime]] = {}
         # Event keys warned about for timestamps out of tolerance (once per key)
@@ -94,6 +88,18 @@ class VictoriaClient:
             self._databases.append(self._dense)
             self._raw = self._dense
 
+        # Unix seconds up to which the long-term database holds averages,
+        # once the downsampler knows. Until then, reads assume it keeps up.
+        self.cursor: int | None = None
+        # Unix seconds from which the dense database has samples, if later than its retention:
+        # after it was first enabled or wiped. The long-term database answers before that.
+        self.dense_since: int | None = None
+        # Reads from the dense database are failing: warned once per outage
+        self._dense_reads_failing = False
+
+    def _database(self, db: planner.Database) -> httpx.AsyncClient:
+        return self._dense if db == 'dense' else self._archive
+
     async def close(self):
         # Close every client, also if one fails
         results = await asyncio.gather(*[db.aclose() for db in self._databases], return_exceptions=True)
@@ -114,14 +120,14 @@ class VictoriaClient:
         if errors:
             raise ConnectionError(', '.join(errors))
 
-    async def _json_query(self, db: httpx.AsyncClient, url: str, query: str):
+    async def _json_query(self, db: httpx.AsyncClient, url: str, params: dict):
         with named_errors(db):
-            resp = await db.post(url, content=query, headers=self._query_headers)
+            resp = await db.post(url, data=params)
         resp.raise_for_status()
         return resp.json()
 
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
-        query = f'match[]={{__name__!=""}}&start={args.duration.total_seconds()}s'
+        query = {'match[]': '{__name__!=""}', 'start': f'{args.duration.total_seconds()}s'}
         LOGGER.debug(query)
         results = await asyncio.gather(
             *[self._json_query(db, '/api/v1/series', query) for db in self._databases],
@@ -147,40 +153,106 @@ class VictoriaClient:
                 retv.append(TimeSeriesMetric(metric=field, value=cached[0], timestamp=cached[1]))
         return retv
 
-    async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
-        start, end, step = utils.select_timeframe(args.start, args.duration, args.end)
-        queries = [
-            f'query=avg_over_time({{__name__="{quote(f)}"}}[{step}])&step={step}&start={start}&end={end}'
-            for f in args.fields
+    async def _query_ranges(
+        self,
+        queries: list[planner.RangeQuery],
+        names: list[str],
+    ) -> tuple[dict[str, list], bool]:
+        """Values per series, merged over the queries,
+        and whether queries to the dense database failed: those are left out."""
+        config = utils.get_config()
+        requests = [
+            (
+                idx,
+                self._json_query(
+                    self._database(query.db),
+                    '/api/v1/query_range',
+                    {
+                        'query': f'avg_over_time({selector}[{query.step}s]) keep_metric_names',
+                        'start': query.start,
+                        'end': query.end,
+                        'step': f'{query.step}s',
+                        # Points in the last query_latency would be replaced by a copy of an older one
+                        'latency_offset': config.query_latency.total_seconds(),
+                    },
+                ),
+            )
+            for idx, query in enumerate(queries)
+            for selector in planner.series_selectors(names)
         ]
         LOGGER.debug(queries)
-        query_responses = await asyncio.gather(
-            *[self._json_query(self._archive, '/api/v1/query_range', q) for q in queries]
-        )
-        retv = [TimeSeriesRange(**(resp['data']['result'][0])) for resp in query_responses if resp['data']['result']]
+        responses = await asyncio.gather(*[request for _, request in requests], return_exceptions=True)
 
-        return retv
+        dense_error: BaseException | None = None
+        dense_answered = False
+        parts = [{} for _ in queries]
+        for (idx, _), resp in zip(requests, responses, strict=True):
+            if isinstance(resp, BaseException):
+                if queries[idx].db != 'dense':
+                    raise resp
+                dense_error = resp
+                continue
+            dense_answered = dense_answered or queries[idx].db == 'dense'
+            for result in resp['data']['result']:
+                parts[idx][result['metric']['__name__']] = result['values']
 
-    async def csv(self, args: TimeSeriesCsvQuery):
-        start, end, _ = utils.select_timeframe(args.start, args.duration, args.end)
-        matches = '&'.join([f'match[]={{__name__="{quote(f)}"}}' for f in args.fields])
-        query = f'{matches}&start={start}&end={end}'
-        query += '&max_rows_per_line=1000'
+        # One warning per outage: every graph would repeat it at every refresh
+        if dense_error and not self._dense_reads_failing:
+            self._dense_reads_failing = True
+            LOGGER.warning(f'Ranges without the dense database until it answers: {utils.strex(dense_error)}')
+        elif dense_answered and not dense_error and self._dense_reads_failing:
+            self._dense_reads_failing = False
+            LOGGER.info('Ranges from the dense database again')
 
-        width = len(args.fields)
+        return planner.merge_values(parts), dense_error is not None
+
+    async def ranges(self, args: TimeSeriesRangesQuery) -> list[TimeSeriesRange]:
+        config = utils.get_config()
+        now = utils.now()
+        frame = planner.select_timeframe(args.start, args.duration, args.end, now, config)
+        names = list(dict.fromkeys(args.fields))
+
+        queries = planner.plan_ranges(frame, int(now.timestamp()), config, self.cursor, self.dense_since)
+        values, dense_failed = await self._query_ranges(queries, names)
+
+        # The long-term database answers when the dense database has none of the fields, or fails.
+        # With a long-term part in the plan, that part is the answer.
+        if queries and all(q.db == 'dense' for q in queries) and (dense_failed or not values):
+            values, _ = await self._query_ranges(planner.plan_fallback(frame, config), names)
+
+        return [TimeSeriesRange(metric={'__name__': name}, values=values[name]) for name in names if name in values]
+
+    async def _export_rows(
+        self,
+        query: planner.ExportQuery,
+        start: int,
+        end: int,
+        selectors: list[str],
+        columns: dict[str, int],
+        width: int,
+    ) -> SortedDict:
+        """Samples between start and end, as rows of `width` by timestamp (ms)."""
+        db = self._database(query.db)
         rows = SortedDict()
+        params = {
+            'match[]': selectors,
+            'start': start,
+            'end': end,
+            'max_rows_per_line': 1000,
+        }
 
-        with named_errors(self._archive):
-            async with self._archive.stream(
-                'POST', '/api/v1/export', content=query, headers=self._query_headers
-            ) as resp:
+        with named_errors(db):
+            async with db.stream('POST', '/api/v1/export', data=params) as resp:
+                if resp.is_error:
+                    await resp.aread()
+                    resp.raise_for_status()
+
                 # Objects are returned as newline-separated JSON objects.
                 # Metrics may be returned in multiple chunks.
                 # We need to transpose incoming (column-based) data to rows.
                 async for line in resp.aiter_lines():
                     chunk = ujson.loads(line)
-                    field = chunk['metric']['__name__']
-                    field_idx = args.fields.index(field)
+                    field_idx = columns[chunk['metric']['__name__']]
                     empty_row = [''] * width
 
                     for timestamp, value in zip(chunk['timestamps'], chunk['values']):
@@ -190,13 +262,32 @@ class VictoriaClient:
                         if row is empty_row:
                             empty_row = [''] * width
                         row[field_idx] = str(value)
+        return rows
+
+    async def csv(self, args: TimeSeriesCsvQuery):
+        config = utils.get_config()
+        now = utils.now()
+        frame = planner.select_timeframe(args.start, args.duration, args.end, now, config)
+        # Column per field; a repeated field fills its first column
+        columns: dict[str, int] = {}
+        for idx, field in enumerate(args.fields):
+            columns.setdefault(field, idx)
+        width = len(args.fields)
+        selectors = planner.series_selectors(list(columns))
 
         # CSV headers
         yield ','.join(['time', *args.fields])
 
-        # CSV values
-        for timestamp, row in rows.items():
-            yield '{},{}'.format(utils.format_datetime(timestamp, args.precision), ','.join(row))
+        # CSV values, a window at a time to bound memory.
+        # Adjacent windows share their boundary: rows at or before the last one are dropped.
+        last = -1
+        for query in planner.plan_export(frame, int(now.timestamp()), config, self.dense_since):
+            for start, end in planner.chunk_windows(query.start, query.end, query.chunk):
+                rows = await self._export_rows(query, start, end, selectors, columns, width)
+                for timestamp, row in rows.items():
+                    if timestamp > last:
+                        last = timestamp
+                        yield '{},{}'.format(utils.format_datetime(timestamp, args.precision), ','.join(row))
 
     def _timestamp(self, evt: HistoryEvent, now: datetime) -> int | None:
         """The event's timestamp in ms, or None if the database should stamp arrival."""

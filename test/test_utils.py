@@ -48,6 +48,9 @@ def test_parse_duration():
     assert utils.parse_duration('10') == timedelta(seconds=10)
     assert utils.parse_duration(timedelta(hours=1)) == timedelta(minutes=60)
     assert utils.parse_duration('P1DT10M5S') == timedelta(days=1, minutes=10, seconds=5)
+    # Zero with a unit parses to zero
+    assert utils.parse_duration('0s') == timedelta()
+    assert utils.parse_duration('0m') == timedelta()
 
     with pytest.raises(ValidationError):
         utils.parse_duration('')
@@ -88,57 +91,6 @@ def test_format_datetime():
 
     with pytest.raises(ValueError):
         utils.format_datetime(time_s, 'jiffies')
-
-
-def test_select_timeframe(mocker):
-    def now() -> datetime:
-        return datetime(2021, 7, 15, 19)
-
-    def fmt(dt: datetime) -> str:
-        return str(int(dt.timestamp()))
-
-    mocker.patch(TESTED + '.now').side_effect = now
-
-    with pytest.raises(ValueError):
-        utils.select_timeframe(start='yesterday', duration='2d', end='tomorrow')
-
-    assert utils.select_timeframe(None, None, None) == (fmt(datetime(2021, 7, 14, 19)), '', '86s')
-
-    assert utils.select_timeframe(start=now(), duration='1h', end=None) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=now(), duration=None, end=datetime(2021, 7, 15, 20)) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration='1h', end=datetime(2021, 7, 15, 20)) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=datetime(2021, 7, 15, 18), duration=None, end=None) == (
-        fmt(datetime(2021, 7, 15, 18)),
-        '',
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration='1h', end=None) == (
-        fmt(datetime(2021, 7, 15, 18)),
-        '',
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration=None, end=now()) == (
-        fmt(datetime(2021, 7, 14, 19)),
-        fmt(now()),
-        '86s',
-    )
 
 
 def test_millis():

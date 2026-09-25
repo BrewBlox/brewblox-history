@@ -34,7 +34,9 @@ def parse_duration(value: DurationSrc_) -> timedelta:
     except TypeError:
         value = None
     except ValueError:
-        value = timeparse(value) or value
+        # Zero ('0s') is a valid result
+        parsed = timeparse(value)
+        value = value if parsed is None else parsed
 
     return pydantic_timedelta_validator.validate_python(value)
 
@@ -104,6 +106,10 @@ TIMESTAMP_TOLERANCE = timedelta(seconds=10)
 # Measured 2-3 s on an unloaded x86 host, 5.3 s for a new series; to re-measure on a Pi (plan B12).
 SEARCHABLE_DELAY = timedelta(seconds=6)
 
+# Longest series name (`<key>/<field>`) in UTF-8. Real names stay under ~300 characters
+# (the UI allows 200 for a block name); much longer ones would not fit the database's queries.
+MAX_NAME_BYTES = 1024
+
 # History fields refused since startup, so that each is logged once
 _refused_fields: set[str] = set()
 
@@ -111,7 +117,8 @@ _refused_fields: set[str] = set()
 def refuse_field(name: str):
     if name not in _refused_fields:
         _refused_fields.add(name)
-        LOGGER.warning(f'Refused history field {name!r}: the database cannot store this name')
+        shown = name if len(name) <= 200 else f'{name[:200]}...'
+        LOGGER.warning(f'Refused history field {shown!r}: its name cannot be stored or queried')
 
 
 def _flatten_into(items: list[tuple[str, Any]], pairs: Iterable[tuple[Any, Any]], parent_key: str):
@@ -265,25 +272,35 @@ class HistoryEvent(BaseModel):
         # A leading '#' makes the line a comment, and a newline ends it
         if not v or v.startswith('#') or '\n' in v:
             raise ValueError('must not be empty, start with "#", or contain a newline')
+        if len(v.encode()) > MAX_NAME_BYTES:
+            raise ValueError(f'must not be longer than {MAX_NAME_BYTES} bytes')
         return v
 
     @field_validator('data', mode='before')
     @classmethod
     def sanitize_data(cls, v, info: ValidationInfo):
         assert isinstance(v, dict)
+        # Without a valid key, the whole event is refused: its fields are not checked
+        key: str | None = info.data.get('key')
+        # Bytes left for the field in a series name
+        room = MAX_NAME_BYTES - len(key.encode()) - 1 if key is not None else 0
         data = {}
         for field, value in flatten(v).items():
             try:
                 value = float(value)
             except (ValueError, TypeError, OverflowError):
                 continue
-            if not math.isfinite(value):
+            if not math.isfinite(value) or key is None:
                 continue
-            # A '"' switches the database to quoted-value parsing for the rest of the line
-            if not field or '\n' in field or '"' in field:
-                # Without a valid key, the whole event is refused
-                if 'key' in info.data:
-                    refuse_field(f'{info.data["key"]}/{field}')
+            if (
+                not field
+                or '\n' in field
+                # A '"' switches the database to quoted-value parsing for the rest of the line
+                or '"' in field
+                # UTF-8 takes at most 4 bytes per character: encode only names that could be too long
+                or (len(field) * 4 > room and len(field.encode()) > room)
+            ):
+                refuse_field(f'{key}/{field}')
                 continue
             data[field] = value
         return data

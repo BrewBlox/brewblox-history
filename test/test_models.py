@@ -168,6 +168,13 @@ def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogC
         'new\nline': 2,
         'q"uote': 3,
         'q"text': 'text',  # not a number: ignored before its name matters
+        # Names up to MAX_NAME_BYTES (UTF-8) with the key: 'k/' is 2 bytes, 'é' is 2 bytes
+        'x' * 1022: 5,
+        'y' * 1023: 6,
+        'é' * 511: 7,
+        'é' * 512: 8,
+        '😀' * 255 + 'xx': 9,  # 4 bytes per character
+        '😀' * 256: 10,
     }
 
     evt = models.HistoryEvent(key='k', data=data)
@@ -177,13 +184,24 @@ def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogC
         'nest/ed/values/3': 0.0,
         'nest/ed/values/4': 8.0,
         'ok,=\\ ': 4.0,
+        'x' * 1022: 5.0,
+        'é' * 511: 7.0,
+        '😀' * 255 + 'xx': 9.0,
     }
 
     # Each refused name is logged once
     models.HistoryEvent(key='k', data=data)
+    # Long names are shortened in the log
     assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
-        f'Refused history field {name!r}: the database cannot store this name'
-        for name in ['k/', 'k/new\nline', 'k/q"uote']
+        f'Refused history field {name!r}: its name cannot be stored or queried'
+        for name in [
+            'k/',
+            'k/new\nline',
+            'k/q"uote',
+            'k/' + 'y' * 198 + '...',
+            'k/' + 'é' * 198 + '...',
+            'k/' + '😀' * 198 + '...',
+        ]
     ]
 
 
@@ -197,7 +215,7 @@ def test_history_event_data_json():
     assert evt.data == {'flag': 0.0, 'ok': 1.5, 'text': 8.0}
 
 
-@pytest.mark.parametrize('key', ['', '#comment', 'new\nline'])
+@pytest.mark.parametrize('key', ['', '#comment', 'new\nline', 'k' * 1025])
 def test_history_event_key_refused(key: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
     monkeypatch.setattr(models, '_refused_fields', set())
     with pytest.raises(ValidationError):

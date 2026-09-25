@@ -1,9 +1,9 @@
 import logging
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from functools import lru_cache
 
-from .models import DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime, parse_duration
+from .models import DatetimeSrc_, ServiceConfig, parse_datetime, parse_duration  # noqa: F401 (re-exported)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -93,63 +93,3 @@ def to_millis(dt: datetime) -> int:
 def from_millis(value: int) -> datetime:
     """UTC datetime for milliseconds since the Unix epoch"""
     return datetime.fromtimestamp(value / 1000, timezone.utc)
-
-
-def select_timeframe(
-    start: DatetimeSrc_,
-    duration: DurationSrc_,
-    end: DatetimeSrc_,
-) -> tuple[str, str, str]:
-    """Calculate start, end, and step for given start, duration, and end
-
-    The returned `start` and `end` strings are either empty,
-    or contain Unix seconds.
-
-    `duration` is formatted as `{value}s`.
-    """
-    config = get_config()
-    dt_start: datetime | None = None
-    dt_end: datetime | None = None
-
-    if all([start, duration, end]):
-        raise ValueError('At most two out of three timeframe arguments can be provided')
-
-    elif not any([start, duration, end]):
-        dt_start = now() - config.query_duration_default
-        dt_end = None
-
-    elif start and duration:
-        dt_start = parse_datetime(start)
-        dt_end = dt_start + parse_duration(duration)
-
-    elif start and end:
-        dt_start = parse_datetime(start)
-        dt_end = parse_datetime(end)
-
-    elif duration and end:
-        dt_end = parse_datetime(end)
-        dt_start = dt_end - parse_duration(duration)
-
-    elif start:
-        dt_start = parse_datetime(start)
-        dt_end = None
-
-    elif duration:
-        dt_start = now() - parse_duration(duration)
-        dt_end = None
-
-    elif end:
-        dt_end = parse_datetime(end)
-        dt_start = dt_end - config.query_duration_default
-
-    # This path should never be reached
-    else:  # pragma: no cover
-        raise RuntimeError('Unexpected code path while determining time frame!')
-
-    # Calculate optimal step interval
-    # We want a decent resolution without flooding the front-end with data
-    actual_duration: timedelta = (dt_end or now()) - dt_start
-    desired_step = actual_duration.total_seconds() // config.query_desired_points
-    step = int(max(desired_step, config.minimum_step.total_seconds()))
-
-    return (format_datetime(dt_start, 's'), format_datetime(dt_end, 's'), f'{step}s')

@@ -23,8 +23,10 @@ invoke image                              # build the service image locally (tag
 docker compose up                         # the service with hot reload, plus eventbus, redis and victoria
 ```
 
-Tests need Docker: pytest-docker starts the eventbus, redis and victoria services from
-test/docker-compose.yml once per session. Every test has a 10s timeout (`--timeout`) that
+Tests need Docker: pytest-docker starts the eventbus, redis, victoria and victoria-dense
+services from test/docker-compose.yml once per session. test/test_database.py runs the
+client against both databases; series names must be unique per test, since the databases
+live for the whole session. Every test has a 10s timeout (`--timeout`) that
 also covers fixture setup, so on a machine without the images the first test errors while
 `docker compose up` is still pulling: run `docker compose -f test/docker-compose.yml pull`
 first (CI does). `asyncio.sleep` calls over 0.1s print the test name: config intervals in
@@ -45,15 +47,15 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   (off by default; ctl turns it on) `victoria-dense` (`dense_*`) receives the raw samples,
   and the long-term one is meant to hold `sparse_interval` averages. VictoriaClient keeps
   one httpx client per database: raw writes go to dense when enabled, `ping` checks every
-  database, `fields` returns the union (the long-term one alone if dense fails); `ranges` and
-  `csv` still read the long-term one. Settings only the dense setup uses (and `minimum_step`,
+  database, `fields` returns the union (the long-term one alone if dense fails). Settings only the dense setup uses (and `minimum_step`,
   which predates it) are validated only with `dense_enabled`: without it the service, which
   also serves the datastore, must start whatever they are (ctl renders some either way).
 - Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
   which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
   field paths, only finite numbers are kept, and names the line protocol cannot express are
-  refused (a field named empty, or with a newline or `"`, is dropped and logged once; a key
-  that is empty, starts with `#` or holds a newline invalidates the event) ->
+  refused (a field named empty, with a newline or `"`, or making a series name over 1 KiB is
+  dropped and logged once; a key that is empty, starts with `#`, holds a newline or is over
+  1 KiB invalidates the event) ->
   victoria.write, one Influx line-protocol POST per event to `/write?precision=ms`
   (`<service> field=value,... [ms]`). Names are escaped, backslash first: VM rejects a line
   with a raw `,` or a trailing `\`, stores a raw `=` in a field key as a wrong series, and
@@ -62,19 +64,33 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   `-influxMeasurementFieldSeparator=/`, so series are named `<service>/<field/path>`.
   write() also fills the in-memory cache that `metrics()` serves; that endpoint never
   queries the database.
-- Read path (timeseries_api): `ranges` issues one `avg_over_time` query_range per field
-  with `step = max(duration / query_desired_points, minimum_step)` (utils.select_timeframe);
-  `csv` streams `/api/v1/export` and transposes per timestamp; `fields` lists series. The
-  WebSocket `/timeseries/stream` runs one task per command id: `ranges` sends the window
-  once (`initial: true`), then re-queries from `start = now()` every `ranges_interval` while
-  the query is open-ended (utils.is_open_ended); `metrics` pushes the cache every
-  `metrics_interval`.
+- Read path (timeseries_api -> victoria -> planner, pure functions in integer Unix seconds):
+  `select_timeframe` gives start, end (open-ended: `now - query_latency`) and
+  `step = max(duration / query_desired_points, minimum_step, 1s)`; `plan_ranges` splits it
+  into queries per database: with dense, a step below `sparse_interval` where dense has
+  samples (its retention, or from `dense_since` if later) reads dense; otherwise the step
+  rounds up to a multiple of `sparse_interval` on the epoch grid, the long-term database
+  answers up to the downsampler's `cursor` (until known: `steady_cursor`, which lags by
+  lag + tick + searchable delay) and dense the rest. Every start is on its step's grid (VM
+  rounds too, from 50 points). `ranges` sends `avg_over_time` with exact-name `or`
+  selectors (planner.quote escapes `\` and `"`; batches stay under VM's 16 KiB query limit)
+  and `latency_offset=query_latency`. When dense fails, a plan with a long-term part answers
+  with that part; a dense-only plan that fails or finds none of the fields is answered by the
+  long-term database at `sparse_interval` (plan_fallback). A dense read outage is warned once,
+  and its end logged. `csv` exports raw samples
+  (dense from the first `sparse_interval` grid point where it has them, averages before) in
+  windows of `csv_chunk_*`, drops rows at or before the last one, and fails if dense does.
+  `fields` lists series. The WebSocket `/timeseries/stream` runs one task per command id:
+  `ranges` sends the window once (`initial: true`), then re-queries from `start = now()`
+  every `ranges_interval` while the query is open-ended (utils.is_open_ended); `metrics`
+  pushes the cache every `metrics_interval`.
 - Datastore (datastore_api, redis): namespaced JSON documents in Redis; changes are
   published on `brewcast/datastore/<namespace>` so the UI and services can subscribe.
 - Errors: the catch-all handler in app_factory returns `ErrorResponse` with status 500; a
   rejected database query raises `httpx.HTTPStatusError`, a transport error (unreachable,
   timeout) raises `ConnectionError` naming the database (victoria.named_errors), and a failed
-  write is logged with the database and its reason, and swallowed.
+  write is logged with the database and its reason, and swallowed. Dense failures in `ranges`
+  and `fields` degrade to the long-term database instead of raising (see Read path).
 
 ## Testing rules
 
