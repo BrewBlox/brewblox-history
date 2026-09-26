@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from pytest_docker.plugin import Services as DockerServices
 
 from brewblox_history import app_factory, utils
-from brewblox_history.models import ServiceConfig
+from brewblox_history.models import DatastoreValue, ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +45,36 @@ class TestConfig(ServiceConfig):
         return (init_settings,)
 
 
+class FakeDatastore:
+    """The datastore (brewblox_history.redis), with the documents as JSON, as Redis holds them.
+    The next `failures` calls raise."""
+
+    def __init__(self) -> None:
+        self.docs: dict[tuple[str, str], str] = {}
+        self.failures = 0
+
+    async def _call(self) -> None:
+        # Other tasks run while Redis answers
+        await asyncio.sleep(0)
+        if self.failures:
+            self.failures -= 1
+            raise ConnectionError('datastore down')
+
+    async def get(self, namespace: str, doc_id: str) -> DatastoreValue | None:
+        await self._call()
+        raw = self.docs.get((namespace, doc_id))
+        return None if raw is None else DatastoreValue.model_validate_json(raw)
+
+    async def set(self, value: DatastoreValue) -> DatastoreValue:
+        await self._call()
+        self.docs[(value.namespace, value.id)] = value.model_dump_json()
+        return value
+
+    async def delete(self, namespace: str, doc_id: str) -> int:
+        await self._call()
+        return 1 if self.docs.pop((namespace, doc_id), None) else 0
+
+
 @pytest.fixture(scope='session')
 def docker_compose_file():
     return Path('./test/docker-compose.yml').resolve()
@@ -68,6 +98,12 @@ def config(
     )
     monkeypatch.setattr(utils, 'get_config', lambda: cfg)
     return cfg
+
+
+@pytest.fixture
+def legacy_url(docker_services: DockerServices) -> str:
+    """The legacy database: a migration's source."""
+    return f'http://localhost:{docker_services.port_for("victoria-legacy", 8428)}/victoria-legacy'
 
 
 @pytest.fixture(autouse=True)

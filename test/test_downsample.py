@@ -49,6 +49,8 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 def ds(config: ServiceConfig, clock: list[int]) -> downsample.Downsampler:
     config.dense_enabled = True
     victoria.setup()
+    # No migration state to wait for
+    victoria.CV.get().legacy_end_known = True
     downsample.setup()
     return downsample.CV.get()
 
@@ -133,7 +135,7 @@ def test_import_lines():
         {'metric': {'__name__': 'a "b"'}, 'values': [1.5, 2.0], 'timestamps': [1626375540000, 1626375600000]},
         {'metric': {'__name__': 'c'}, 'values': [3.0], 'timestamps': [1626375600000]},
     ]
-    assert json.loads(downsample.marker_line(NOW)) == marker(NOW)
+    assert json.loads(downsample.marker_line(victoria.MARKER, NOW)) == marker(NOW)
 
 
 @pytest.mark.parametrize(
@@ -202,6 +204,14 @@ async def test_discover_cursor(
     # The whole index is asked for the marker, without reading samples
     p = params(httpx_mock.get_requests(url=f'{url}/api/v1/series')[-1])
     assert p == {'match[]': f'{{__name__="{victoria.MARKER}"}}', 'start': '1', 'end': str(NOW), 'limit': '1'}
+
+
+async def test_discover_cursor_before_state(ds: downsample.Downsampler, url: str, httpx_mock: HTTPXMock):
+    # With a marker, averaging goes on from it before the migration state is read:
+    # a restart while the datastore does not answer yet
+    victoria.CV.get().legacy_end_known = False
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 120))
+    assert await ds.discover_cursor(NOW, None) == NOW - 120
 
 
 async def test_discover_cursor_old_marker(
@@ -454,6 +464,23 @@ async def test_tick(
     clock[0] = NOW + HOUR
     await ds.tick()
     assert vic.dense_since == NOW - 200
+
+
+async def test_tick_waits(
+    ds: downsample.Downsampler,
+    url: str,
+    dense_url: str,
+    httpx_mock: HTTPXMock,
+):
+    # No averages yet, and the migration state is not read: nothing is averaged until it is
+    dense = FakeDense((NOW - DAY, NOW + 2 * HOUR))
+    httpx_mock.add_callback(url=f'{dense_url}/api/v1/series', method='POST', callback=dense.series, is_reusable=True)
+    httpx_mock.add_callback(url=f'{dense_url}/api/v1/query', method='POST', callback=dense.query, is_reusable=True)
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(None))
+    victoria.CV.get().legacy_end_known = False
+    await ds.tick()
+    assert ds.cursor is None
+    assert not httpx_mock.get_requests(url=f'{url}/api/v1/import')
 
 
 async def test_tick_rewind(

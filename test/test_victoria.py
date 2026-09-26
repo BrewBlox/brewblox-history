@@ -154,11 +154,12 @@ async def test_fields_dense(dense_vic: victoria.VictoriaClient, url: str, dense_
 
 
 async def test_fields_marker(vic: victoria.VictoriaClient, url: str, httpx_mock: HTTPXMock):
-    # The downsampler's marker is not a field
+    # The downsampler's and the migration's markers are not fields
+    names = ['a', victoria.MARKER, victoria.MIGRATION_MARKER]
     httpx_mock.add_response(
         url=f'{url}/api/v1/series',
         method='POST',
-        json={'status': 'success', 'data': [{'__name__': 'a'}, {'__name__': victoria.MARKER}]},
+        json={'status': 'success', 'data': [{'__name__': n} for n in names]},
     )
     assert await vic.fields(TimeSeriesFieldsQuery(duration=timedelta(days=1))) == ['a']
 

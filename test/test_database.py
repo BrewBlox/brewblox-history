@@ -11,9 +11,18 @@ from datetime import timedelta
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
-from brewblox_history import downsample, planner, utils, victoria
-from brewblox_history.models import HistoryEvent, ServiceConfig, TimeSeriesCsvQuery, TimeSeriesRangesQuery
+from brewblox_history import downsample, migrate, planner, redis, utils, victoria
+from brewblox_history.models import (
+    HistoryEvent,
+    MigrationArgs,
+    MigrationState,
+    ServiceConfig,
+    TimeSeriesCsvQuery,
+    TimeSeriesRangesQuery,
+)
+from test.conftest import FakeDatastore
 
 # Names the escaping on the way in and out must keep intact
 NAMES = ['plain', 'a "quoted" (x)', 'back\\slash\\', 'temp[degC]', "tab\tit's °"]
@@ -46,10 +55,19 @@ async def import_samples(client: httpx.AsyncClient, series: dict[str, list[tuple
     (await client.post('/api/v1/import', content='\n'.join(lines))).raise_for_status()
 
 
-async def exported(client: httpx.AsyncClient, prefix: str) -> dict[str, dict]:
-    resp = await client.post('/api/v1/export', data={'match[]': f'{{__name__=~"{prefix}.*"}}'})
+async def exported(client: httpx.AsyncClient, prefix: str, end: int | None = None) -> dict[str, dict]:
+    """Each series' samples, by name, up to end (default: now).
+    The database may export a series in several lines: they are merged."""
+    params = {'match[]': f'{{__name__=~"{prefix}.*"}}'} | ({} if end is None else {'end': str(end)})
+    resp = await client.post('/api/v1/export', data=params)
     resp.raise_for_status()
-    return {row['metric']['__name__']: row for row in map(json.loads, resp.text.splitlines())}
+    samples: dict[str, list[tuple[int, float]]] = {}
+    for row in map(json.loads, resp.text.splitlines()):
+        samples.setdefault(row['metric']['__name__'], []).extend(zip(row['timestamps'], row['values'], strict=True))
+    return {
+        name: {'timestamps': [t for t, _ in sorted(pairs)], 'values': [v for _, v in sorted(pairs)]}
+        for name, pairs in samples.items()
+    }
 
 
 async def wait_searchable(client: httpx.AsyncClient, prefix: str, series: dict[str, list]):
@@ -305,3 +323,89 @@ async def test_has_series_database(db: victoria.VictoriaClient, now: int):
     assert not await db.has_series('archive', 1, now, '{__name__="old/none"}')
     # A day's lookup only finds series with samples that day
     assert not await db.has_series('archive', now - 24 * 3600, now, '{__name__="old/a"}')
+
+
+async def test_migrate_database(
+    db: victoria.VictoriaClient,
+    config: ServiceConfig,
+    now: int,
+    legacy_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+):
+    # A legacy database as release 1 left it (v1.129.1): its history averaged into the long-term database,
+    # its last day of raw samples copied into the dense database, with names intact
+    monkeypatch.setattr(migrate, 'PAUSE_FACTOR', 0)
+    monkeypatch.setattr(migrate, 'SEARCHABLE_DELAY', timedelta())
+    mocker.patch.object(redis, 'CV').get.return_value = FakeDatastore()
+    migrate.setup()
+    migrator = migrate.CV.get()
+
+    # Below a minute, the database replaces points newer than the latency offset: the legacy one must not.
+    # The last interval ends 6-16 s before now, within the database's default offset (30 s), not after now.
+    interval = 10
+    config.sparse_interval = timedelta(seconds=interval)
+    names = [f'migrate/{n}' for n in NAMES]
+    earliest = now - now % 60 - 3 * 3600
+    legacy_end = (now - 6) - (now - 6) % interval
+
+    def value(second: int, idx: int) -> float:
+        return (second % 97) * 1.25 + idx
+
+    # Two samples an interval: 2 and 7 s past it
+    seconds = range(earliest + 2, legacy_end - 2, 5)
+    raw = {n: [(t * 1000, value(t, i)) for t in seconds] for i, n in enumerate(names)}
+
+    async with httpx.AsyncClient(base_url=legacy_url) as legacy, victoria.make_client(legacy_url) as source:
+        await import_samples(legacy, raw)
+        await wait_searchable(legacy, 'migrate', raw)
+
+        migrator.state = await migrator.plan(
+            MigrationArgs(source_url=legacy_url, earliest=utils.from_millis(earliest * 1000), dense_days=1)
+        )
+        state = migrator.state
+        assert (state.earliest, state.legacy_end) == (earliest - interval, legacy_end)
+        ends = migrate.chunk_ends(state.legacy_end, state.earliest, state.chunk)
+        assert state.chunks_total == len(ends)
+        # Its last sample is not taken for a newer one
+        assert state.legacy_last == seconds[-1]
+        await migrator.check_legacy_end(source, state)
+
+        await migrator.seed(source, state)
+
+        # The walk counts markers without waiting (SEARCHABLE_DELAY is 0 here): the test database makes them
+        # searchable about a second after a forced flush. Every chunk averaged has its marker.
+        count = migrate.Migrator.missing_chunks
+
+        async def searchable(self: migrate.Migrator, state: MigrationState) -> list[int]:
+            for _ in range(50):
+                (await db._archive.get('/internal/force_flush')).raise_for_status()
+                marked = await db.archive_timestamps(migrate.marker_selector(state), state.earliest, legacy_end)
+                if len(marked) >= len(self._attempts):
+                    break
+                await asyncio.sleep(0.1)
+            return await count(self, state)
+
+        monkeypatch.setattr(migrate.Migrator, 'missing_chunks', searchable)
+        await migrator.walk(source, state)
+    assert (state.phase, state.lost_chunks, state.missing_series, migrator.chunks_done) == ('done', [], [], len(ends))
+
+    # Raw samples in the dense database, as the legacy database has them
+    await wait_searchable(db._database('dense'), 'migrate', raw)
+    rows = await exported(db._database('dense'), 'migrate')
+    assert rows.keys() == set(names)
+    for name, samples in raw.items():
+        assert rows[name]['timestamps'] == [t for t, _ in samples]
+        assert rows[name]['values'] == [v for _, v in samples]
+
+    # Every interval's average in the long-term database, stamped at its end
+    rows = await exported(db._archive, 'migrate', end=legacy_end)
+    assert rows.keys() == set(names)
+    for i, name in enumerate(names):
+        expected = {}
+        for end in range(state.earliest + interval, legacy_end + 1, interval):
+            window = [value(t, i) for t in seconds if end - interval < t <= end]
+            if window:
+                expected[end * 1000] = sum(window) / len(window)
+        assert rows[name]['timestamps'] == list(expected)
+        assert rows[name]['values'] == pytest.approx(list(expected.values()), abs=1e-9)

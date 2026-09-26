@@ -12,6 +12,9 @@ The cursor is the end of the last interval averaged. Every import carries a mark
 (victoria.MARKER) stamped at the new cursor, and the cursor only advances after the import
 succeeded: a database that fails makes it wait, and the task catches up from the dense
 database later (within its retention). At startup the marker gives the cursor again.
+Once a migration is planned, the task imports nothing at or before where the legacy samples end
+(VictoriaClient.legacy_end): it imports under VictoriaClient.legacy_lock, which the migration takes to set it,
+and skips its cursor ahead to there without an import.
 The long-term database keeps imports in memory for a while (-inmemoryDataFlushInterval) and
 loses them when it crashes: the marker then ends before the cursor, and the task averages
 that time again.
@@ -33,7 +36,7 @@ from contextvars import ContextVar
 
 from . import utils, victoria
 from .models import SEARCHABLE_DELAY
-from .planner import seconds
+from .planner import chunk_seconds, seconds
 
 LOGGER = logging.getLogger(__name__)
 LOGGER.addFilter(utils.DuplicateFilter())
@@ -66,8 +69,16 @@ def import_lines(body: bytes) -> list[str]:
     return lines
 
 
-def marker_line(cursor: int) -> str:
-    return json.dumps({'metric': {'__name__': victoria.MARKER}, 'values': [cursor], 'timestamps': [cursor * 1000]})
+def marker_line(name: str, cursor: int, **labels: str) -> str:
+    """An /api/v1/import JSON line with one sample of a marker series, at the cursor (Unix s)."""
+    return json.dumps({'metric': {'__name__': name, **labels}, 'values': [cursor], 'timestamps': [cursor * 1000]})
+
+
+def legacy_start(interval: int) -> int | None:
+    """Where averaging may start at the earliest: a migration averages everything before where
+    the legacy samples end."""
+    legacy_end = victoria.CV.get().legacy_end
+    return None if legacy_end is None else legacy_end + (-legacy_end % interval)
 
 
 def fmt(timestamp: int) -> str:
@@ -143,9 +154,10 @@ class Downsampler:
         since = math.floor(first)
         return since if since > now - seconds(config.dense_retention) + seconds(config.dense_margin) else None
 
-    async def discover_cursor(self, now: int, dense_since: int | None) -> int:
+    async def discover_cursor(self, now: int, dense_since: int | None) -> int | None:
         """Where the averages in the long-term database end, from the marker,
-        or where the dense database's samples start if that is later."""
+        or where the dense database's samples start if that is later.
+        None while that depends on a migration's state, which is not read yet."""
         config = utils.get_config()
         vic = victoria.CV.get()
         interval = seconds(config.sparse_interval)
@@ -154,8 +166,16 @@ class Downsampler:
         retention_start += -retention_start % interval
         # ... or the one holding the dense database's first sample, if later
         start = retention_start if dense_since is None else max(retention_start, dense_since - dense_since % interval)
+        # The migration averages the legacy samples, and seeds the dense database with days that may be half done
+        legacy = legacy_start(interval)
+        if legacy is not None:
+            start = max(start, legacy)
 
         last = await vic.last_timestamp('archive', MARKER_SELECTOR, seconds(config.dense_retention), now)
+        if last is None and not vic.legacy_end_known:
+            # A migration may be seeding the dense database: its days may be half done
+            LOGGER.info('Waiting for the migration state to start averaging')
+            return None
         if last is None:
             # Older than the dense retention, or none at all: the index knows without reading samples.
             # The database takes start=0 as not set (the last day): 1 is the whole index.
@@ -201,9 +221,7 @@ class Downsampler:
         config = utils.get_config()
         vic = victoria.CV.get()
         interval = seconds(config.sparse_interval)
-        # At least one interval, and whole intervals
-        chunk = max(seconds(config.downsample_chunk), interval)
-        chunk -= chunk % interval
+        chunk = chunk_seconds(config)
         target = now - math.ceil(config.downsample_lag.total_seconds())
         target -= target % interval
 
@@ -216,8 +234,15 @@ class Downsampler:
             # json.loads holds the GIL, but the conversion after it does not block the event loop.
             # downsample_chunk keeps the parse short.
             lines = await asyncio.to_thread(import_lines, body)
-            # Every import carries the marker, also when there was nothing to average
-            await vic.import_archive('\n'.join([*lines, marker_line(end)]))
+            async with vic.legacy_lock:
+                # A migration planned since averages up to where the legacy samples end
+                legacy = legacy_start(interval)
+                if legacy is not None and cursor < legacy:
+                    LOGGER.info(f'A migration averages up to {fmt(legacy)}: averaging from there')
+                    self.cursor = cursor = legacy
+                    continue
+                # Every import carries the marker, also when there was nothing to average
+                await vic.import_archive('\n'.join([*lines, marker_line(victoria.MARKER, end)]))
             self.cursor = cursor = end
             self._publish_cursor(end, SEARCHABLE_DELAY.total_seconds())
 
@@ -249,6 +274,8 @@ class Downsampler:
         await self.check_archive(now)
         if self.cursor is None:
             self.cursor = await self.discover_cursor(now, vic.dense_since)
+            if self.cursor is None:
+                return
             # Found in the database: already searchable
             self._set_read_cursor(self.cursor, force=True)
         await self.downsample(now)

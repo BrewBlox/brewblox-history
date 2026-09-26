@@ -28,11 +28,14 @@ The gate before every commit, as in CI: `pytest`, `ruff format --check`, `ruff c
 Code is clean when it is committed; a deliberate exception gets `# noqa: <rule>` or
 `# pyright: ignore[<rule>]` with the reason.
 
-Tests need Docker: pytest-docker starts the eventbus, redis, victoria and victoria-dense
+Tests need Docker: pytest-docker starts the eventbus, redis, victoria, victoria-dense and
+victoria-legacy (v1.129.1, as ctl ships release 1's database: a migration's source)
 services from test/docker-compose.yml once per session. test/test_database.py runs the
-client against both databases; series names must be unique per test, since the databases
+client against the databases; series names must be unique per test, since the databases
 live for the whole session. Its `now` fixture freezes history's clock: never move it past
-real time, or the database replaces the points it sees within the latency offset. Every test has a 10s timeout (`--timeout`) that
+real time, or the database replaces the points it sees within the latency offset (and,
+below a step of 1m, every point after its own now). An export may hold a series in several
+lines (`exported()` merges them), and stops at the database's now unless given an end. Every test has a 10s timeout (`--timeout`) that
 also covers fixture setup, so on a machine without the images the first test errors while
 `docker compose up` is still pulling: run `docker compose -f test/docker-compose.yml pull`
 first (CI does). `asyncio.sleep` calls over 0.1s print the test name: config intervals in
@@ -42,8 +45,9 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
 
 - Every feature module exposes `setup()`, which builds its singleton and stores it in a
   module-level `CV` ContextVar; consumers call `module.CV.get()`. `app_factory.create_app()`
-  runs the `setup()` calls in dependency order (mqtt, redis, victoria, downsample, relays),
-  and `lifespan()` enters the background features (mqtt, redis, victoria, downsample) in an
+  runs the `setup()` calls in dependency order (mqtt, redis, victoria, downsample, migrate,
+  relays), and `lifespan()` enters the background features (mqtt, redis, victoria, migrate,
+  downsample: migrate first, the downsampler reads where legacy samples end) in an
   AsyncExitStack.
   Config is `utils.get_config()`, an lru-cached `ServiceConfig` read from `BREWBLOX_HISTORY_*`
   env vars and `.appenv` (written by parse_appenv.py from the container's command-line args;
@@ -62,13 +66,31 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   from dense into the long-term database (`/api/v1/import`, stamped at the interval's end),
   in chunks of `downsample_chunk`. Every import carries the marker series `victoria.MARKER`
   at the new cursor (hidden from `fields`); the cursor advances only after a successful
-  import, is found again from the marker at startup, and is rewound when the marker falls
+  import (or, once a migration is planned, skips ahead to where the legacy samples end: see
+  Migration), is found again from the marker at startup, and is rewound when the marker falls
   behind (the long-term database lost imports it held in memory). Reads get the cursor
   (`VictoriaClient.cursor`) `SEARCHABLE_DELAY` later. `VictoriaClient.dense_since` comes
   from the dense database itself, at startup and hourly: the first day with series (per-day
   index, no samples read), then its first hour with a sample. The task logs errors and
   goes on: the service also serves the datastore. `/timeseries/ping` reports
   `downsample_age`.
+- Migration (migrate.py, only with `dense_enabled`): a best-effort background job that moves release 1's
+  database (`victoria-legacy`, renamed by ctl) into the new ones, started by ctl through
+  `POST /timeseries/migrate` (GET status, DELETE cancel or `?discard=true`); once it is done, the user removes the
+  legacy database with ctl, which never waits. The datastore (`brewblox-history`/`migration`) holds only what it
+  started with and its outcome, each change saved before the job acts on it; its progress is in the databases,
+  and it resumes at startup. Phases: seed (the last `dense_days` of raw samples, native export streamed into
+  dense, a day at a time back from where legacy samples end), walk (`sparse_interval` averages of the whole legacy
+  history into the long-term database, in chunks of `downsample_chunk`, newest first, pausing as long as each
+  chunk took; each chunk's import carries its marker, `victoria.MIGRATION_MARKER` labelled with the job's id;
+  repeated until each chunk has its marker or was tried twice, also when that raised: `lost_chunks`), done
+  (`missing_series` lists legacy series without averages). A marker does not prove its chunk is on disk: a crash
+  of the long-term database can keep it while losing rows (accepted: the migrated history is past brews; live
+  capture is what must be reliable). Each run first checks the legacy database has no samples after the last one
+  planning found (`legacy_last`; after a rollback): it stops, the reason in `last_error`. The downsampler never
+  starts before `VictoriaClient.legacy_end`, without a marker waits until the migration state is read
+  (`legacy_end_known`), and imports under `legacy_lock`, which setting `legacy_end` also takes: once a migration
+  is planned it imports nothing at or before it.
 - Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
   which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
   field paths, only finite numbers are kept, and names the line protocol cannot express are

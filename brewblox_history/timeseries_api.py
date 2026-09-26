@@ -8,12 +8,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import cast
 
-from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
-from brewblox_history import downsample, planner, utils, victoria
+from brewblox_history import downsample, migrate, planner, utils, victoria
 from brewblox_history.models import (
+    MigrationArgs,
+    MigrationStatus,
     TimeSeriesCsvQuery,
     TimeSeriesFieldsQuery,
     TimeSeriesMetric,
@@ -80,6 +82,37 @@ async def timeseries_metrics(query: TimeSeriesMetricsQuery) -> list[TimeSeriesMe
     Get individual metrics from the database.
     """
     return await victoria.CV.get().metrics(query)
+
+
+@router.post('/migrate')
+async def timeseries_migrate_start(args: MigrationArgs) -> MigrationStatus:
+    """
+    Start migrating a legacy database into the dense and long-term databases, or resume the migration.
+    It runs in the background; the status tells how far it is.
+    """
+    try:
+        return await migrate.CV.get().start(args)
+    except migrate.MigrationConflictError as ex:
+        raise HTTPException(409, str(ex)) from ex
+
+
+@router.get('/migrate')
+async def timeseries_migrate_status() -> MigrationStatus | None:
+    """
+    Get the status of the migration, if there is one.
+    """
+    return migrate.CV.get().status()
+
+
+@router.delete('/migrate')
+async def timeseries_migrate_cancel(*, discard: bool = False) -> MigrationStatus | None:
+    """
+    Stop the migration until it is started again. With discard, its state is removed.
+    """
+    try:
+        return await migrate.CV.get().cancel(discard=discard)
+    except migrate.MigrationConflictError as ex:
+        raise HTTPException(409, str(ex)) from ex
 
 
 @router.post('/csv')

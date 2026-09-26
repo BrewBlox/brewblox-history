@@ -451,6 +451,50 @@ class TimeSeriesPingResponse(PingResponse):
     downsample_age: float | None = None
 
 
+class MigrationArgs(BaseModel):
+    """Where the legacy history is, and how far back it goes (brewblox-ctl reads its first partition)."""
+
+    source_url: str = Field(examples=['http://victoria-legacy:8428/victoria-legacy'])
+    earliest: datetime = Field(examples=['2020-01-01T00:00:00.000Z'])
+    # Days of raw samples to copy into the dense database
+    dense_days: int = Field(default=30, ge=0)
+
+
+class MigrationState(BaseModel):
+    """What the migration started with, and its outcome: kept in the datastore. Times are Unix seconds.
+    Its progress is in the databases: the long-term database has the marker of every chunk averaged."""
+
+    # seed: raw samples into the dense database; walk: averages into the long-term database, until
+    # every chunk has its marker
+    phase: Literal['seed', 'walk', 'done']
+    cancelled: bool = False
+    # Labels this job's markers: a discarded job's are not its progress
+    job: str
+    source_url: str
+    earliest: int
+    dense_days: int
+    # The long-term database's resolution and the time per chunk at the start, in seconds
+    sparse_interval: int
+    chunk: int
+    # The last legacy sample, and the end of the interval that holds it
+    legacy_last: float | None
+    legacy_end: int
+    chunks_total: int
+    started: int
+    finished: int | None = None
+    # The ends of the chunks still without marker after the last try, and legacy series the long-term database lacks
+    lost_chunks: list[int] = []
+    missing_series: list[str] = []
+
+
+class MigrationStatus(MigrationState):
+    running: bool
+    # Chunks with their marker in the long-term database: as last counted by the running job, plus the chunks
+    # averaged since (a recount may lower it); all but the lost ones when done; None until counted
+    chunks_done: int | None
+    last_error: str | None
+
+
 class ErrorResponse(BaseModel):
     error: str
     details: str

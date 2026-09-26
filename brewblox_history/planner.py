@@ -71,6 +71,14 @@ def set_datetime(value: DatetimeSrc_) -> datetime:
     return cast('datetime', parse_datetime(value))
 
 
+def chunk_seconds(config: ServiceConfig) -> int:
+    """The time per query when averaging into the long-term database: downsample_chunk,
+    at least one sparse_interval and in whole ones."""
+    interval = seconds(config.sparse_interval)
+    chunk = max(seconds(config.downsample_chunk), interval)
+    return chunk - chunk % interval
+
+
 def select_timeframe(
     start: DatetimeSrc_,
     duration: DurationSrc_ | None,

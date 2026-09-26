@@ -32,6 +32,9 @@ TIMESTAMP_TOLERANCE_MS = TIMESTAMP_TOLERANCE // timedelta(milliseconds=1)
 # Series the downsampler imports into the long-term database with every chunk: its cursor.
 # Not a field: fields() leaves it out.
 MARKER = 'brewblox-history/downsampled'
+# Series the migration imports into the long-term database with every chunk, stamped at its end,
+# labelled with the migration's job. Not a field either.
+MIGRATION_MARKER = 'brewblox-history/migrated'
 
 
 # Influx line protocol escapes. The database also unescapes `\\`,
@@ -65,12 +68,62 @@ def named_errors(db: httpx.AsyncClient) -> Iterator[None]:
         raise ConnectionError(f'{db.base_url}: {utils.strex(ex)}') from ex
 
 
-def make_client(protocol: str, host: str, port: int, path: str) -> httpx.AsyncClient:
+def make_client(base_url: str) -> httpx.AsyncClient:
     config = utils.get_config()
-    return httpx.AsyncClient(
-        base_url=f'{protocol}://{host}:{port}{path}',
-        timeout=httpx.Timeout(5, read=config.victoria_timeout.total_seconds()),
+    return httpx.AsyncClient(base_url=base_url, timeout=httpx.Timeout(5, read=config.victoria_timeout.total_seconds()))
+
+
+async def json_query(db: httpx.AsyncClient, url: str, params: dict) -> dict:
+    with named_errors(db):
+        resp = await db.post(url, data=params)
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def query_averages(db: httpx.AsyncClient, start: int, end: int, step: int, latency_offset: float) -> bytes:
+    """The query_range response (JSON) with every series' averages over each step, from start to end.
+    Every point from start + k * step up to end averages the step before it.
+
+    The database replaces points newer than latency_offset with a copy of an older one:
+    the points must be older than that."""
+    with named_errors(db):
+        resp = await db.post(
+            '/api/v1/query_range',
+            data={
+                'query': f'avg_over_time({{__name__!=""}}[{step}s]) keep_metric_names',
+                'start': start,
+                'end': end,
+                'step': f'{step}s',
+                'nocache': 1,
+                'latency_offset': latency_offset,
+            },
+        )
+    resp.raise_for_status()
+    return resp.content
+
+
+async def has_series(db: httpx.AsyncClient, start: int, end: int, selector: str = '{__name__!=""}') -> bool:
+    """Whether any selected series has samples between start and end.
+    The database answers from its index, without reading samples: it rounds to whole days."""
+    resp = await json_query(db, '/api/v1/series', {'match[]': selector, 'start': start, 'end': end, 'limit': 1})
+    return bool(resp['data'])
+
+
+async def last_timestamp(db: httpx.AsyncClient, selector: str, window: int, now: int) -> float | None:
+    """Unix seconds of the newest sample in the window before now, over the selected series."""
+    resp = await json_query(
+        db,
+        '/api/v1/query',
+        {'query': f'max(tlast_over_time({selector}[{window}s]))', 'time': now, 'nocache': 1},
     )
+    result = resp['data']['result']
+    return float(result[0]['value'][1]) if result else None
+
+
+async def series_names(db: httpx.AsyncClient, start: int, end: int) -> set[str]:
+    """The names of the series with samples between start and end."""
+    resp = await json_query(db, '/api/v1/series', {'match[]': '{__name__!=""}', 'start': start, 'end': end})
+    return {v['__name__'] for v in resp['data']}
 
 
 class VictoriaClient:
@@ -84,10 +137,7 @@ class VictoriaClient:
 
         # The long-term database
         self._archive = make_client(
-            config.victoria_protocol,
-            config.victoria_host,
-            config.victoria_port,
-            config.victoria_path,
+            f'{config.victoria_protocol}://{config.victoria_host}:{config.victoria_port}{config.victoria_path}'
         )
         self._dense: httpx.AsyncClient | None = None
         self._databases = [self._archive]
@@ -96,10 +146,7 @@ class VictoriaClient:
 
         if config.dense_enabled:
             self._dense = make_client(
-                config.dense_protocol,
-                config.dense_host,
-                config.dense_port,
-                config.dense_path,
+                f'{config.dense_protocol}://{config.dense_host}:{config.dense_port}{config.dense_path}'
             )
             self._databases.append(self._dense)
             self._raw = self._dense
@@ -110,6 +157,14 @@ class VictoriaClient:
         # Unix seconds from which the dense database has samples, if later than its retention:
         # after it was first enabled or wiped. The long-term database answers before that.
         self.dense_since: int | None = None
+        # Unix seconds where the samples of a migrated legacy database end:
+        # the migration averages everything before it into the long-term database.
+        # Known once the migration's state is read, also when there is none.
+        self.legacy_end: int | None = None
+        self.legacy_end_known = False
+        # Held to set legacy_end, and by the downsampler to import: it imports nothing before a legacy_end it
+        # has not seen
+        self.legacy_lock = asyncio.Lock()
         # Reads from the dense database are failing: warned once per outage
         self._dense_reads_failing = False
 
@@ -140,25 +195,12 @@ class VictoriaClient:
         if errors:
             raise ConnectionError(', '.join(errors))
 
-    async def _json_query(self, db: httpx.AsyncClient, url: str, params: dict) -> dict:
-        with named_errors(db):
-            resp = await db.post(url, data=params)
-        resp.raise_for_status()
-        return resp.json()
-
     async def has_series(self, db: planner.Database, start: int, end: int, selector: str = '{__name__!=""}') -> bool:
-        """Whether any selected series has samples between start and end.
-        The database answers from its index, without reading samples: it rounds to whole days."""
-        resp = await self._json_query(
-            self._database(db),
-            '/api/v1/series',
-            {'match[]': selector, 'start': start, 'end': end, 'limit': 1},
-        )
-        return bool(resp['data'])
+        return await has_series(self._database(db), start, end, selector)
 
     async def first_timestamp(self, db: planner.Database, window: int, now: int) -> float | None:
         """Unix seconds of the oldest sample in the window before now, over all series."""
-        resp = await self._json_query(
+        resp = await json_query(
             self._database(db),
             '/api/v1/query',
             {'query': f'min(tfirst_over_time({{__name__!=""}}[{window}s]))', 'time': now, 'nocache': 1},
@@ -167,14 +209,7 @@ class VictoriaClient:
         return float(result[0]['value'][1]) if result else None
 
     async def last_timestamp(self, db: planner.Database, selector: str, window: int, now: int) -> float | None:
-        """Unix seconds of the newest sample in the window before now, over the selected series."""
-        resp = await self._json_query(
-            self._database(db),
-            '/api/v1/query',
-            {'query': f'max(tlast_over_time({selector}[{window}s]))', 'time': now, 'nocache': 1},
-        )
-        result = resp['data']['result']
-        return float(result[0]['value'][1]) if result else None
+        return await last_timestamp(self._database(db), selector, window, now)
 
     async def averages(self, start: int, end: int, step: int) -> bytes:
         """The query_range response (JSON) with every dense series' averages over each step, from start to end.
@@ -183,21 +218,7 @@ class VictoriaClient:
         The points are all at least downsample_lag old: a latency offset that long
         keeps the database from replacing any with an older one."""
         config = utils.get_config()
-        dense = self._database('dense')
-        with named_errors(dense):
-            resp = await dense.post(
-                '/api/v1/query_range',
-                data={
-                    'query': f'avg_over_time({{__name__!=""}}[{step}s]) keep_metric_names',
-                    'start': start,
-                    'end': end,
-                    'step': f'{step}s',
-                    'nocache': 1,
-                    'latency_offset': config.downsample_lag.total_seconds(),
-                },
-            )
-        resp.raise_for_status()
-        return resp.content
+        return await query_averages(self._database('dense'), start, end, step, config.downsample_lag.total_seconds())
 
     async def import_archive(self, lines: str) -> None:
         """Writes /api/v1/import JSON lines to the long-term database."""
@@ -205,11 +226,31 @@ class VictoriaClient:
             resp = await self._archive.post('/api/v1/import', content=lines)
         resp.raise_for_status()
 
+    async def import_dense_native(self, content: AsyncIterator[bytes]) -> None:
+        """Streams samples in the native format of /api/v1/export/native into the dense database."""
+        dense = self._database('dense')
+        with named_errors(dense):
+            resp = await dense.post('/api/v1/import/native', content=content)
+        resp.raise_for_status()
+
+    async def archive_series(self, start: int, end: int) -> set[str]:
+        """The names of the series in the long-term database with samples between start and end."""
+        return await series_names(self._archive, start, end)
+
+    async def archive_timestamps(self, selector: str, start: int, end: int) -> set[int]:
+        """The timestamps (Unix s) of the selected series' samples in the long-term database,
+        start and end included."""
+        params = {'match[]': selector, 'start': start, 'end': end}
+        with named_errors(self._archive):
+            resp = await self._archive.post('/api/v1/export', data=params)
+        resp.raise_for_status()
+        return {t // 1000 for line in resp.text.splitlines() for t in ujson.loads(line)['timestamps']}
+
     async def fields(self, args: TimeSeriesFieldsQuery) -> list[str]:
         query = {'match[]': '{__name__!=""}', 'start': f'{args.duration.total_seconds()}s'}
         LOGGER.debug(query)
         results = await asyncio.gather(
-            *[self._json_query(db, '/api/v1/series', query) for db in self._databases],
+            *[json_query(db, '/api/v1/series', query) for db in self._databases],
             return_exceptions=True,
         )
         names = set()
@@ -221,7 +262,7 @@ class VictoriaClient:
                 LOGGER.warning(f'Fields from the long-term database only: {utils.strex(result)}')
             else:
                 names.update(v['__name__'] for v in result['data'])
-        names.discard(MARKER)
+        names -= {MARKER, MIGRATION_MARKER}
         return sorted(names)
 
     async def metrics(self, args: TimeSeriesMetricsQuery) -> list[TimeSeriesMetric]:
@@ -250,7 +291,7 @@ class VictoriaClient:
         requests = [
             (
                 idx,
-                self._json_query(
+                json_query(
                     self._database(query.db),
                     '/api/v1/query_range',
                     {
