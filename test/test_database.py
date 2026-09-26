@@ -20,6 +20,7 @@ from brewblox_history.models import (
     MigrationState,
     ServiceConfig,
     TimeSeriesCsvQuery,
+    TimeSeriesFieldsQuery,
     TimeSeriesRangesQuery,
 )
 from test.conftest import FakeDatastore
@@ -300,6 +301,44 @@ async def test_downsample_database(db: victoria.VictoriaClient, now: int, monkey
     for name, series in points.items():
         assert rows[name]['timestamps'] == list(series)
         assert rows[name]['values'] == pytest.approx(list(series.values()), abs=1e-9)
+
+
+async def test_write_downsample_database(db: victoria.VictoriaClient, monkeypatch: pytest.MonkeyPatch):
+    # Names as the line protocol escapes them on the way into the dense database reach the long-term database
+    # unchanged through the downsampler's import, and are listed once
+    monkeypatch.setattr(downsample, 'SEARCHABLE_DELAY', timedelta(0))
+    real = int(utils.now().timestamp())
+    # Half an hour ago, so the databases replace no point: history's clock follows the samples,
+    # so each one is written with its own timestamp
+    minute = real - 1800 - real % 60
+    clock = [minute]
+    monkeypatch.setattr(utils, 'now', lambda: utils.from_millis(clock[0] * 1000))
+    key = 'wdtest "spark",1\\'
+    seconds = range(minute - 59, minute + 1)
+    for t in seconds:
+        clock[0] = t
+        data = {'block, one': {'value=x': t % 7}, 'back\\slash\\': 2.5, 'temp[°C]': t / 4}
+        await db.write(HistoryEvent(key=key, data=data, timestamp=t * 1000))
+    averages = {
+        f'{key}/block, one/value=x': sum(t % 7 for t in seconds) / 60,
+        f'{key}/back\\slash\\': 2.5,
+        f'{key}/temp[°C]': sum(t / 4 for t in seconds) / 60,
+    }
+    await wait_searchable(db._database('dense'), 'wdtest', {name: list(seconds) for name in averages})
+
+    downsample.setup()
+    ds = downsample.CV.get()
+    ds.cursor = minute - 60
+    await ds.downsample(minute + 60)
+    assert ds.cursor == minute
+    await wait_searchable(db._archive, 'wdtest', {name: [minute] for name in averages})
+    rows = await exported(db._archive, 'wdtest')
+    assert rows.keys() == averages.keys()
+    for name, average in averages.items():
+        assert rows[name] == {'timestamps': [minute * 1000], 'values': [pytest.approx(average)]}
+
+    fields = await db.fields(TimeSeriesFieldsQuery(duration=timedelta(hours=1)))
+    assert [f for f in fields if f.startswith('wdtest')] == sorted(averages)
 
 
 async def test_find_dense_since_database(db: victoria.VictoriaClient, now: int):
