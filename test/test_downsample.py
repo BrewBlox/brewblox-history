@@ -182,9 +182,9 @@ async def test_find_dense_since(
 async def test_discover_cursor(
     ds: downsample.Downsampler, url: str, httpx_mock: HTTPXMock, caplog: pytest.LogCaptureFixture
 ):
-    # From the marker: the end of the last averages
+    # From the marker, the end of the last averages: the hour before it is averaged again
     httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 120))
-    assert await ds.discover_cursor(NOW, None) == NOW - 120
+    assert await ds.discover_cursor(NOW, None) == NOW - 120 - HOUR
     assert ds.marked == NOW - 120
     p = params(httpx_mock.get_requests()[-1])
     assert p['query'] == f'{MARKER_QUERY}[{RETENTION}s]))'
@@ -206,12 +206,54 @@ async def test_discover_cursor(
     assert p == {'match[]': f'{{__name__="{victoria.MARKER}"}}', 'start': '1', 'end': str(NOW), 'limit': '1'}
 
 
+@pytest.mark.parametrize(
+    ('interval', 'marker', 'dense_since', 'expected'),
+    [
+        # In whole intervals: 52 of 70 s, from the marker on the grid
+        (70, NOW - 700, None, NOW - 710 - 52 * 70),
+        # Not before the first interval whole inside the dense retention...
+        (60, NOW - RETENTION + 1800, None, NOW - RETENTION),
+        # ... or the one holding the dense database's first sample
+        (60, NOW - 1800, NOW - 3570, NOW - 3600),
+    ],
+)
+async def test_discover_cursor_rewind(
+    ds: downsample.Downsampler,
+    config: ServiceConfig,
+    url: str,
+    httpx_mock: HTTPXMock,
+    interval: int,
+    marker: int,
+    dense_since: int | None,
+    expected: int,
+):
+    config.sparse_interval = timedelta(seconds=interval)
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(marker))
+    assert await ds.discover_cursor(NOW, dense_since) == expected
+    # What the marker must reach stays where it was found
+    assert ds.marked == marker - marker % interval
+
+
 async def test_discover_cursor_before_state(ds: downsample.Downsampler, url: str, httpx_mock: HTTPXMock):
-    # With a marker, averaging goes on from it before the migration state is read:
-    # a restart while the datastore does not answer yet
-    victoria.CV.get().legacy_end_known = False
-    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 120))
-    assert await ds.discover_cursor(NOW, None) == NOW - 120
+    # Nothing is averaged before the migration state is read, also with a marker (a restart while the datastore
+    # does not answer yet): the hour before it may be before where the legacy samples end
+    vic = victoria.CV.get()
+    vic.legacy_end_known = False
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(None))
+    assert await ds.discover_cursor(NOW, None) is None
+    assert (vic.cursor, ds.marked) == (None, None)
+    # Reads and the lag count on the averages up to the marker meanwhile, also when it fell back (lost imports)
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 1800))
+    assert await ds.discover_cursor(NOW, None) is None
+    assert (vic.cursor, ds.marked, ds.age(NOW)) == (NOW - 1800, NOW - 1800, 1800)
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 2400))
+    assert await ds.discover_cursor(NOW, None) is None
+    assert (vic.cursor, ds.marked) == (NOW - 2400, NOW - 2400)
+
+    # Read: the hour averaged again ends where the legacy samples end
+    vic.legacy_end, vic.legacy_end_known = NOW - 2400, True
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 1800))
+    assert await ds.discover_cursor(NOW, None) == NOW - 2400
 
 
 async def test_discover_cursor_old_marker(
@@ -472,15 +514,30 @@ async def test_tick_waits(
     dense_url: str,
     httpx_mock: HTTPXMock,
 ):
-    # No averages yet, and the migration state is not read: nothing is averaged until it is
+    # The migration state is not read: nothing is averaged until it is, also with a marker,
+    # and reads count on the averages up to the marker meanwhile
     dense = FakeDense((NOW - DAY, NOW + 2 * HOUR))
     httpx_mock.add_callback(url=f'{dense_url}/api/v1/series', method='POST', callback=dense.series, is_reusable=True)
     httpx_mock.add_callback(url=f'{dense_url}/api/v1/query', method='POST', callback=dense.query, is_reusable=True)
-    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(None))
-    victoria.CV.get().legacy_end_known = False
+    httpx_mock.add_callback(
+        url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 600), is_reusable=True
+    )
+    vic = victoria.CV.get()
+    vic.legacy_end_known = False
     await ds.tick()
-    assert ds.cursor is None
+    assert (ds.cursor, vic.cursor) == (None, NOW - 600)
+    assert not httpx_mock.get_requests(url=f'{dense_url}/api/v1/query_range')
     assert not httpx_mock.get_requests(url=f'{url}/api/v1/import')
+
+    # Read: the hour before the marker is averaged again, and reads count on the long-term database
+    # only up to where that starts, until the new averages are searchable
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=averages_handler, is_reusable=True
+    )
+    httpx_mock.add_response(url=f'{url}/api/v1/import', method='POST', status_code=204, is_reusable=True)
+    vic.legacy_end_known = True
+    await ds.tick()
+    assert (ds.cursor, ds.marked, vic.cursor) == (NOW - 60, NOW - 600, NOW - 4200)
 
 
 async def test_tick_rewind(
@@ -490,7 +547,8 @@ async def test_tick_rewind(
     httpx_mock: HTTPXMock,
     caplog: pytest.LogCaptureFixture,
 ):
-    # The long-term database lost the imports after NOW - 600: the same tick finds the marker and averages again
+    # The long-term database lost the imports after NOW - 600: the same tick finds the marker,
+    # and averages again from an hour before it
     ds._dense_since_at = NOW
     ds.cursor = ds.marked = NOW - 60
     vic = victoria.CV.get()
@@ -498,16 +556,53 @@ async def test_tick_rewind(
     httpx_mock.add_callback(
         url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 600), is_reusable=True
     )
-    httpx_mock.add_callback(url=f'{dense_url}/api/v1/query_range', method='POST', callback=averages_handler)
-    httpx_mock.add_response(url=f'{url}/api/v1/import', method='POST', status_code=204)
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=averages_handler, is_reusable=True
+    )
+    httpx_mock.add_response(url=f'{url}/api/v1/import', method='POST', status_code=204, is_reusable=True)
 
     await ds.tick()
     assert 'The long-term database lost averages' in caplog.text
-    [query] = httpx_mock.get_requests(url=f'{dense_url}/api/v1/query_range')
-    assert (params(query)['start'], params(query)['end']) == (str(NOW - 540), str(NOW - 60))
-    assert ds.cursor == NOW - 60
-    # Reads only count on the marker until the new averages are searchable
-    assert vic.cursor == NOW - 600
+    queries = [params(q) for q in httpx_mock.get_requests(url=f'{dense_url}/api/v1/query_range')]
+    assert [(int(p['start']), int(p['end'])) for p in queries] == [(NOW - 4140, NOW - 600), (NOW - 540, NOW - 60)]
+    assert (ds.cursor, ds.marked) == (NOW - 60, NOW - 600)
+    # Reads count on the long-term database only up to the hour averaged again, until the new averages are
+    # searchable: test_tick_replay_fails waits for that
+    assert vic.cursor == NOW - 4200
+    assert len(ds._pending) == 2
+
+
+async def test_tick_replay_fails(
+    ds: downsample.Downsampler,
+    config: ServiceConfig,
+    url: str,
+    dense_url: str,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # The hour before the marker is averaged again in 10-minute chunks, and the second import fails:
+    # the averages still end at the marker, which stays what the long-term database must reach
+    monkeypatch.setattr(downsample, 'SEARCHABLE_DELAY', timedelta(milliseconds=10))
+    config.downsample_chunk = timedelta(minutes=10)
+    ds._dense_since_at = NOW
+    httpx_mock.add_callback(url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(NOW - 600))
+    httpx_mock.add_callback(
+        url=f'{dense_url}/api/v1/query_range', method='POST', callback=averages_handler, is_reusable=True
+    )
+    httpx_mock.add_response(url=f'{url}/api/v1/import', method='POST', status_code=204)
+    httpx_mock.add_response(url=f'{url}/api/v1/import', method='POST', status_code=500)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await ds.tick()
+    assert (ds.cursor, ds.marked) == (NOW - 3600, NOW - 600)
+    assert ds.age(NOW) == 600
+    ds.check_lag(NOW)
+    assert 'Downsampling is behind' not in caplog.text
+
+    # The first chunk's averages are searchable: reads count on them, and the marker is not lowered
+    await asyncio.sleep(0.05)
+    assert (victoria.CV.get().cursor, ds.marked) == (NOW - 3600, NOW - 600)
 
 
 async def test_run(

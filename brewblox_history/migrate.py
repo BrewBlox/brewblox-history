@@ -147,7 +147,13 @@ class Migrator:
             vic.legacy_end_known = True
 
     async def load(self) -> None:
-        doc = await redis.CV.get().get(NAMESPACE, DOC_ID)
+        try:
+            doc = await redis.CV.get().get(NAMESPACE, DOC_ID)
+        except ValidationError:
+            # Not a datastore document: where the legacy samples end is not known, and the downsampler
+            # must not wait for it
+            await self._set_legacy_end(None)
+            raise
         if doc is None:
             self.state = None
         else:

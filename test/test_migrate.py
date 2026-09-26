@@ -941,6 +941,19 @@ async def test_resume_refused(
         await migrator.cancel()
     assert await migrator.cancel(discard=True) is None
 
+    # Not a datastore document at all: where the legacy samples end is not known, and not waited for
+    datastore.docs[(migrate.NAMESPACE, migrate.DOC_ID)] = 'not json'
+    victoria.setup()
+    migrate.setup()
+    migrator = migrate.CV.get()
+    await asyncio.wait_for(migrator.resume(), 1)
+    vic = victoria.CV.get()
+    assert (vic.legacy_end, vic.legacy_end_known) == (None, True)
+    with pytest.raises(migrate.MigrationConflictError, match='not valid, discard it'):
+        await migrator.start(args())
+    assert await migrator.cancel(discard=True) is None
+    assert migrator.status() is None
+
 
 async def test_lifespan(
     migrator: migrate.Migrator,

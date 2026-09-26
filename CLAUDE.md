@@ -67,9 +67,12 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   in chunks of `downsample_chunk`. Every import carries the marker series `victoria.MARKER`
   at the new cursor (hidden from `fields`); the cursor advances only after a successful
   import (or, once a migration is planned, skips ahead to where the legacy samples end: see
-  Migration), is found again from the marker at startup, and is rewound when the marker falls
-  behind (the long-term database lost imports it held in memory). Reads get the cursor
-  (`VictoriaClient.cursor`) `SEARCHABLE_DELAY` later. `VictoriaClient.dense_since` comes
+  Migration), and is found again from the marker at startup and when the marker falls behind
+  (the long-term database lost imports it held in memory): an hour before it, in whole intervals,
+  since the marker can reach disk before rows of its own import (the same samples give the same
+  averages; where dense lost samples, an average can come out partial, and after a `sparse_interval`
+  change that hour holds both grids). Reads get the cursor (`VictoriaClient.cursor`)
+  `SEARCHABLE_DELAY` later; `age` counts from the marker while that hour is averaged again. `VictoriaClient.dense_since` comes
   from the dense database itself, at startup and hourly: the first day with series (per-day
   index, no samples read), then its first hour with a sample. The task logs errors and
   goes on: the service also serves the datastore. `/timeseries/ping` reports
@@ -88,9 +91,10 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   of the long-term database can keep it while losing rows (accepted: the migrated history is past brews; live
   capture is what must be reliable). Each run first checks the legacy database has no samples after the last one
   planning found (`legacy_last`; after a rollback): it stops, the reason in `last_error`. The downsampler never
-  starts before `VictoriaClient.legacy_end`, without a marker waits until the migration state is read
-  (`legacy_end_known`), and imports under `legacy_lock`, which setting `legacy_end` also takes: once a migration
-  is planned it imports nothing at or before it.
+  starts before `VictoriaClient.legacy_end`, waits until the migration state is read (`legacy_end_known`;
+  also with a marker, for the hour before it, while reads count on the averages up to the marker; a document
+  that is not a datastore value, or holds no integer `legacy_end`, counts as no boundary), and imports under `legacy_lock`, which setting `legacy_end` also
+  takes: once a migration is planned it imports nothing at or before it.
 - Write path: MQTT `brewcast/history/#` -> relays.on_history_message -> `HistoryEvent`,
   which sanitizes at ingest: models.flatten turns the nested `data` dict into `/`-separated
   field paths, only finite numbers are kept, and names the line protocol cannot express are

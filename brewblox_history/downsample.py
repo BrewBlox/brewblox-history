@@ -17,7 +17,12 @@ Once a migration is planned, the task imports nothing at or before where the leg
 and skips its cursor ahead to there without an import.
 The long-term database keeps imports in memory for a while (-inmemoryDataFlushInterval) and
 loses them when it crashes: the marker then ends before the cursor, and the task averages
-that time again.
+that time again. It may also have written the marker to disk before rows of its own import
+(an import reaches disk in parts): so wherever the task finds its cursor from the marker, it
+averages the hour before it again. The same samples give the same averages. Where the dense
+database lost samples (in the same power loss, or in a crash of its own within the hour), an
+average can come out partial, or be missing. After a change of sparse_interval, that hour holds
+averages on both grids, and where they share a timestamp the larger one.
 
 Reads use the cursor too (VictoriaClient.cursor), once the averages up to it are searchable.
 The task also looks, at startup and every hour, where the dense database's samples start
@@ -50,6 +55,9 @@ MARKER_SELECTOR = f'{{__name__="{victoria.MARKER}"}}'
 
 # How often to look again where the dense database's samples start
 DENSE_SINCE_REFRESH = HOUR
+
+# How much is averaged again before the marker, when the cursor is found from it
+REWIND = HOUR
 
 
 def import_lines(body: bytes) -> list[str]:
@@ -98,8 +106,10 @@ class Downsampler:
         self._pending: set[asyncio.TimerHandle] = set()
 
     def age(self, now: int) -> int | None:
-        """Seconds since the end of the last averages, or since the task started if not known yet."""
-        since = self.cursor if self.cursor is not None else self.started
+        """Seconds since the end of the last averages, or since the task started if not known yet.
+        While the hour before the marker is averaged again, they still end at the marker."""
+        ends = [t for t in (self.cursor, self.marked) if t is not None]
+        since = max(ends) if ends else self.started
         return None if since is None else now - since
 
     def _set_read_cursor(self, cursor: int, *, force: bool = False) -> None:
@@ -155,12 +165,24 @@ class Downsampler:
         return since if since > now - seconds(config.dense_retention) + seconds(config.dense_margin) else None
 
     async def discover_cursor(self, now: int, dense_since: int | None) -> int | None:
-        """Where the averages in the long-term database end, from the marker,
+        """Where to average from: REWIND before where the averages in the long-term database end (the marker),
         or where the dense database's samples start if that is later.
-        None while that depends on a migration's state, which is not read yet."""
+        None until a migration's state is read: meanwhile reads and the lag count on the averages up to the marker."""
         config = utils.get_config()
         vic = victoria.CV.get()
         interval = seconds(config.sparse_interval)
+        last = await vic.last_timestamp('archive', MARKER_SELECTOR, seconds(config.dense_retention), now)
+        # Markers are on the grid of the interval, unless it was changed
+        marker = None if last is None else math.floor(last) - math.floor(last) % interval
+        if not vic.legacy_end_known:
+            # A migration may be seeding the dense database with days that are half done, up to where the
+            # legacy samples end: nothing before there may be averaged, also not in the hour before a marker
+            if marker is not None:
+                # check_archive() watches it meanwhile
+                self.marked = marker
+                self._set_read_cursor(marker, force=True)
+            LOGGER.info('Waiting for the migration state to start averaging')
+            return None
         # The first interval that is whole inside the dense retention...
         retention_start = now - seconds(config.dense_retention)
         retention_start += -retention_start % interval
@@ -171,12 +193,7 @@ class Downsampler:
         if legacy is not None:
             start = max(start, legacy)
 
-        last = await vic.last_timestamp('archive', MARKER_SELECTOR, seconds(config.dense_retention), now)
-        if last is None and not vic.legacy_end_known:
-            # A migration may be seeding the dense database: its days may be half done
-            LOGGER.info('Waiting for the migration state to start averaging')
-            return None
-        if last is None:
+        if marker is None:
             # Older than the dense retention, or none at all: the index knows without reading samples.
             # The database takes start=0 as not set (the last day): 1 is the whole index.
             if await vic.has_series('archive', 1, now, MARKER_SELECTOR):
@@ -188,13 +205,14 @@ class Downsampler:
                 LOGGER.info(f'No averages in the long-term database: averaging from {fmt(start)}')
             return start
 
-        # Markers are on the grid of the interval, unless it was changed
-        cursor = math.floor(last)
-        cursor -= cursor % interval
-        self.marked = cursor
-        if cursor < start:
+        self.marked = marker
+        if marker < start:
             LOGGER.info(f'The dense database has samples from {fmt(start)}: averaging from there')
             return start
+        # The marker may be on disk without all rows of its import: the time before it is averaged again,
+        # in whole intervals
+        cursor = max(marker - math.ceil(REWIND / interval) * interval, start)
+        LOGGER.info(f'The long-term database has averages up to {fmt(marker)}: averaging from {fmt(cursor)}')
         return cursor
 
     async def check_archive(self, now: int) -> None:

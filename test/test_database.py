@@ -278,12 +278,13 @@ async def test_downsample_database(db: victoria.VictoriaClient, now: int, monkey
     assert ds.cursor == target
     await wait_searchable(db._archive, 'down', {n: list(p) for n, p in expected(target).items()})
 
-    # A new downsampler finds the cursor from the marker, and has nothing to do
+    # A new downsampler finds the cursor from the marker, and averages the hour before it again
     downsample.setup()
     ds = downsample.CV.get()
+    db.legacy_end_known = True
     await wait_searchable(db._archive, victoria.MARKER, {victoria.MARKER: [0]})
-    assert await ds.discover_cursor(now, None) == target
-    ds.cursor = target
+    ds.cursor = await ds.discover_cursor(now, None)
+    assert ds.cursor == target - 3600
     await ds.downsample(now - 60)
     assert ds.cursor == target
 
