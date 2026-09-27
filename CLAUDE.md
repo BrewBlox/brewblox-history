@@ -171,5 +171,6 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   `ruff format --check`, `ruff check` and `pyright` (the locked versions), then builds the
   image for amd64, arm/v7 and arm64. Python stays on 3.11 and arm/v7 stays supported
   because of wheel availability on the Pi.
-- Design work in progress is in docs/ (untracked until agreed); in-flight plans and review
-  records go under sessions/ (gitignored).
+- docs/ is the repository's documentation (tracked): docs/design.md is the design reference, updated in
+  the same change as the code it describes. In-flight plans (the working design log is
+  sessions/plan/plan-dense-sparse-history.md), review records and handoffs go under sessions/ (gitignored).
