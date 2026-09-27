@@ -4,7 +4,7 @@ Query planning: which database answers which part of a time range.
 These are pure functions of the request, the clock, the downsampler's cursor and the config.
 Times are integer Unix seconds.
 
-With dense_enabled, the dense database holds every raw sample for dense_retention
+The dense database holds every raw sample for dense_retention
 (or since dense_since, if it started later), and the long-term database holds averages
 of sparse_interval up to the downsampler's cursor.
 A query with a step below sparse_interval that starts where the dense database has samples goes to it.
@@ -12,10 +12,8 @@ Otherwise its step is rounded up to a multiple of sparse_interval, on the epoch 
 averaging the long-term averages at any other step would alias.
 The long-term database then answers up to the cursor, and the dense database the rest.
 
-Without dense_enabled, the long-term database holds the raw samples and answers everything.
-
 A live stream sends the initial ranges once, then follow-ups: the points after the last one it sent,
-at a step capped at follow_up_step_max, from the database that receives the raw samples.
+at a step capped at follow_up_step_max, from the dense database.
 """
 
 import math
@@ -167,9 +165,6 @@ def plan_ranges(
     if start > end:
         return []
 
-    if not config.dense_enabled:
-        return [RangeQuery('archive', start - start % step, end, step)]
-
     interval = seconds(config.sparse_interval)
     if cursor is None:
         cursor = steady_cursor(now, config)
@@ -234,7 +229,7 @@ def plan_follow_up(follow: FollowUp, now: datetime, config: ServiceConfig) -> Ra
     at most FOLLOW_UP_MAX_POINTS of them. None while the next point is not due,
     also while the clock catches up after it went back a little: the points stay in order.
 
-    It reads the database that receives the raw samples, which has them first.
+    It reads the dense database, which has the raw samples first.
     It ends on its last point, where the next follow-up continues."""
     end = live_end(now, config)
     start = follow.last + follow.step
@@ -242,7 +237,7 @@ def plan_follow_up(follow: FollowUp, now: datetime, config: ServiceConfig) -> Ra
         return None
     end -= (end - start) % follow.step
     start = max(start, end - (FOLLOW_UP_MAX_POINTS - 1) * follow.step)
-    return RangeQuery('dense' if config.dense_enabled else 'archive', start, end, follow.step)
+    return RangeQuery('dense', start, end, follow.step)
 
 
 def plan_export(
@@ -263,10 +258,6 @@ def plan_export(
         return []
 
     dense_chunk = max(seconds(config.csv_chunk_dense), 1)
-    if not config.dense_enabled:
-        # The long-term database holds the raw samples
-        return [ExportQuery('archive', start, end, dense_chunk)]
-
     sparse_chunk = max(seconds(config.csv_chunk_sparse), 1)
     horizon = dense_horizon(now, config, dense_since)
     switch = horizon + (-horizon % seconds(config.sparse_interval))

@@ -50,6 +50,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = """
     --ignore=victoria/
+    --ignore=victoria-dense/
     --timeout=10
     --timeout_method=signal
     --cov=brewblox_history

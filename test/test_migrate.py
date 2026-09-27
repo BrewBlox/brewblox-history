@@ -195,7 +195,6 @@ def migrator(
     datastore: FakeDatastore,
     monkeypatch: pytest.MonkeyPatch,
 ) -> migrate.Migrator:
-    config.dense_enabled = True
     config.sparse_interval = timedelta(seconds=60)
     config.downsample_chunk = timedelta(hours=1)
     # No real pauses
@@ -391,10 +390,6 @@ async def test_start_refused(
     with pytest.raises(migrate.MigrationConflictError, match='after now'):
         await migrator.start(args(earliest=NOW + 1))
 
-    config.dense_enabled = False
-    with pytest.raises(migrate.MigrationConflictError, match='dense database'):
-        await migrator.start(args())
-
 
 async def test_start_done(migrator: migrate.Migrator, legacy, archive, seeded):
     await migrator.start(args())
@@ -478,7 +473,7 @@ async def test_legacy_grew(
     archive,
     seeded,
 ):
-    # After a rollback, release 1 wrote to the legacy database again: the migration stops, and says why
+    # After a rollback, history wrote to the legacy database again: the migration stops, and says why
     await datastore.set(state_doc(new_state(phase='walk')))
     legacy.last = NOW - 10
     status = await migrator.start(args())
@@ -963,14 +958,7 @@ async def test_lifespan(
     archive,
     seeded,
 ):
-    # Without the dense database: nothing
-    config.dense_enabled = False
-    async with migrate.lifespan():
-        assert not migrator.running
-    assert not victoria.CV.get().legacy_end_known
-
     # No migration: nothing to resume
-    config.dense_enabled = True
     async with migrate.lifespan():
         assert victoria.CV.get().legacy_end_known
     assert migrator.state is None
@@ -997,7 +985,6 @@ def m_migrator(mocker: MockerFixture) -> Mock:
 
 @pytest.fixture
 def app(config: ServiceConfig, m_migrator: Mock) -> FastAPI:
-    config.dense_enabled = True
     downsample.setup()
     app = FastAPI()
     app.include_router(timeseries_api.router)

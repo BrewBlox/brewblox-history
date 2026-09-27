@@ -135,27 +135,21 @@ class VictoriaClient:
         # Event keys warned about for timestamps out of tolerance (once per key)
         self._skewed_keys: set[str] = set()
 
-        # The long-term database
+        # The long-term database: averages
         self._archive = make_client(
             f'{config.victoria_protocol}://{config.victoria_host}:{config.victoria_port}{config.victoria_path}'
         )
-        self._dense: httpx.AsyncClient | None = None
-        self._databases = [self._archive]
-        # Receives the raw samples
-        self._raw = self._archive
-
-        if config.dense_enabled:
-            self._dense = make_client(
-                f'{config.dense_protocol}://{config.dense_host}:{config.dense_port}{config.dense_path}'
-            )
-            self._databases.append(self._dense)
-            self._raw = self._dense
+        # The dense database: the raw samples
+        self._dense = make_client(
+            f'{config.dense_protocol}://{config.dense_host}:{config.dense_port}{config.dense_path}'
+        )
+        self._databases = [self._archive, self._dense]
 
         # Unix seconds up to which the long-term database holds averages,
         # once the downsampler knows. Until then, reads assume it keeps up.
         self.cursor: int | None = None
         # Unix seconds from which the dense database has samples, if later than its retention:
-        # after it was first enabled or wiped. The long-term database answers before that.
+        # after it was created or wiped. The long-term database answers before that.
         self.dense_since: int | None = None
         # Unix seconds where the samples of a migrated legacy database end:
         # the migration averages everything before it into the long-term database.
@@ -167,13 +161,11 @@ class VictoriaClient:
         self.legacy_lock = asyncio.Lock()
         # Reads from the dense database are failing: warned once per outage
         self._dense_reads_failing = False
+        # Writes to the dense database are failing: logged when they work again
+        self._dense_writes_failing = False
 
     def _database(self, db: planner.Database) -> httpx.AsyncClient:
-        if db == 'archive':
-            return self._archive
-        if self._dense is None:
-            raise RuntimeError('The dense database is not enabled')
-        return self._dense
+        return self._archive if db == 'archive' else self._dense
 
     async def close(self) -> None:
         # Close every client, also if one fails
@@ -499,16 +491,26 @@ class VictoriaClient:
             if timestamp is not None:
                 line = f'{line} {timestamp}'
             LOGGER.debug(f'Write: {evt.key}, {len(line_items)} fields')
-            resp = await self._raw.post('/write', params={'precision': 'ms'}, content=line)
+            resp = await self._dense.post('/write', params={'precision': 'ms'}, content=line)
             # The database rejects the whole line on a parse error
             resp.raise_for_status()
 
         except httpx.HTTPStatusError as ex:
-            LOGGER.warning(f'{self._raw.base_url}: write failed: {utils.strex(ex)}: {ex.response.text}')
+            # A rejected line is a problem with its data; an error of the database itself is an outage
+            if ex.response.is_server_error:
+                self._dense_writes_failing = True
+            LOGGER.warning(f'{self._dense.base_url}: write failed: {utils.strex(ex)}: {ex.response.text}')
 
         # Logged and dropped: the next event is written anyway
         except Exception as ex:  # noqa: BLE001
-            LOGGER.warning(f'{self._raw.base_url}: write failed: {utils.strex(ex)}')
+            self._dense_writes_failing = True
+            LOGGER.warning(f'{self._dense.base_url}: write failed: {utils.strex(ex)}')
+
+        else:
+            # A later failure with the same message is logged again
+            if self._dense_writes_failing:
+                self._dense_writes_failing = False
+                LOGGER.info(f'{self._dense.base_url}: writes work again')
 
 
 def setup() -> None:

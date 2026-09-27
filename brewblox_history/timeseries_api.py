@@ -39,8 +39,7 @@ router = APIRouter(prefix='/timeseries', tags=['TimeSeries'])
 @router.get('/ping')
 async def timeseries_ping(response: Response) -> TimeSeriesPingResponse:
     """
-    Ping the Victoria Metrics databases.
-    With the dense database, also report how old the long-term database's averages are.
+    Ping the Victoria Metrics databases, and report how old the long-term database's averages are.
     """
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'

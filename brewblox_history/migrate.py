@@ -1,8 +1,8 @@
 """
 Migrates the history of a legacy database into the dense and long-term databases.
 
-When brewblox-ctl updates to the dense setup, it renames the single database of release 1 to
-victoria-legacy and starts this job. The job runs in the background, and resumes at startup.
+The legacy database is the single database brewblox-ctl ran before 0.12.0. When ctl updates to the dense
+setup, it renames it to victoria-legacy and starts this job. The job runs in the background, and resumes at startup.
 The datastore (`brewblox-history`/`migration`) holds what it started with and its outcome;
 its progress is in the databases.
 
@@ -235,10 +235,7 @@ class Migrator:
     async def start(self, args: MigrationArgs) -> MigrationStatus:
         """Starts a migration, or resumes one that is not done.
         It keeps the earliest it started with: brewblox-ctl may ask for a later one each time."""
-        config = utils.get_config()
         async with self._lock:
-            if not config.dense_enabled:
-                raise MigrationConflictError('The migration needs the dense database')
             if self.running:
                 raise MigrationConflictError('The migration is running')
             if args.earliest.timestamp() > utils.now().timestamp():
@@ -330,7 +327,7 @@ class Migrator:
 
     async def check_legacy_end(self, source: httpx.AsyncClient, state: MigrationState) -> None:
         """The legacy database must not have samples after the last one the migration found:
-        after a rollback, release 1 writes to it again."""
+        after a rollback to the legacy setup, history writes to it again."""
         found = state.legacy_last
         since = state.earliest if found is None else math.floor(found)
         last = await legacy_last(source, int(utils.now().timestamp()), since)
@@ -464,10 +461,6 @@ def setup() -> None:
 @asynccontextmanager
 async def lifespan() -> AsyncIterator[None]:
     migrator = CV.get()
-    if not utils.get_config().dense_enabled:
-        yield
-        return
-
     # Before the downsampler starts: it must not average before where the legacy samples end.
     # If the datastore is not there yet, resume() waits for it.
     with suppress(Exception):

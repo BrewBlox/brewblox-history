@@ -101,7 +101,6 @@ def test_config_intervals():
 
     # The smallest values the checks allow
     settings(
-        dense_enabled=True,
         minimum_step=1,
         sparse_interval=10,
         follow_up_step_max=10,
@@ -119,17 +118,6 @@ def test_config_intervals():
         ({'csv_chunk_dense': 0}, 'csv_chunk_dense must be positive'),
         ({'csv_chunk_sparse': -1}, 'csv_chunk_sparse must be positive'),
         ({'follow_up_step_max': 0}, 'follow_up_step_max must be positive'),
-    ],
-)
-def test_config_invalid(values: dict, match: str):
-    # Used with or without the dense database
-    with pytest.raises(ValidationError, match=match):
-        settings(**values)
-
-
-@pytest.mark.parametrize(
-    ('values', 'match'),
-    [
         ({'minimum_step': 0}, 'minimum_step must be positive'),
         ({'sparse_interval': 0}, 'sparse_interval must be positive'),
         ({'downsample_interval': 0}, 'downsample_interval must be positive'),
@@ -146,25 +134,23 @@ def test_config_invalid(values: dict, match: str):
         ({'downsample_max_lag': 0}, 'downsample_max_lag must be positive'),
     ],
 )
-def test_config_dense_invalid(values: dict, match: str):
-    # Only the dense setup uses these: without it, the service starts whatever they are
-    settings(**values)
-
+def test_config_invalid(values: dict, match: str):
     with pytest.raises(ValidationError, match=match):
-        settings(dense_enabled=True, **values)
+        settings(**values)
 
 
 @pytest.mark.parametrize('sparse_interval', ['10m', '1h', '6h'])
 def test_config_dense_sparse_interval(sparse_interval: str):
     # brewblox-ctl renders sparse_interval: settings it does not render adapt to it instead of refusing it
-    config = settings(dense_enabled=True, minimum_step='1s', sparse_interval=sparse_interval)
+    config = settings(minimum_step='1s', sparse_interval=sparse_interval)
     assert config.sparse_interval == models.parse_duration(sparse_interval)
 
 
 def test_config_ignores_unknown_settings():
-    # Unknown settings must not prevent startup
-    config = settings(unknown_setting='value')
+    # Unknown settings must not prevent startup, also dense_enabled, which the dense database replaced
+    config = settings(unknown_setting='value', dense_enabled=False)
     assert not hasattr(config, 'unknown_setting')
+    assert not hasattr(config, 'dense_enabled')
 
 
 def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):

@@ -47,7 +47,6 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 
 @pytest.fixture
 def ds(config: ServiceConfig, clock: list[int]) -> downsample.Downsampler:
-    config.dense_enabled = True
     victoria.setup()
     # No migration state to wait for
     victoria.CV.get().legacy_end_known = True
@@ -540,6 +539,61 @@ async def test_tick_waits(
     assert (ds.cursor, ds.marked, vic.cursor) == (NOW - 60, NOW - 600, NOW - 4200)
 
 
+@pytest.mark.parametrize('marker', [NOW - 600, None])
+async def test_tick_dense_down(
+    ds: downsample.Downsampler,
+    config: ServiceConfig,
+    url: str,
+    dense_url: str,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+    marker: int | None,
+):
+    # A restart while the dense database is down: nothing is averaged, and every tick fails alike, so it is logged
+    # once. Meanwhile reads and the lag count on the averages up to the marker, if there is one; the last known
+    # dense_since is kept, and asked again every tick.
+    config.downsample_interval = timedelta(milliseconds=1)
+    vic = victoria.CV.get()
+    vic.dense_since = NOW - DAY
+    httpx_mock.add_exception(
+        url=f'{dense_url}/api/v1/series', method='POST', exception=httpx.ConnectError('refused'), is_reusable=True
+    )
+    httpx_mock.add_callback(
+        url=f'{url}/api/v1/query', method='POST', callback=lambda _: vector(marker), is_reusable=True
+    )
+
+    task = asyncio.create_task(ds.run())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert (ds.cursor, ds.marked, vic.cursor, vic.dense_since) == (None, marker, marker, NOW - DAY)
+    assert ds.age(NOW) == (0 if marker is None else 600)
+    assert ds._dense_since_at is None
+    assert len(httpx_mock.get_requests(url=f'{dense_url}/api/v1/series')) > 1
+    messages = [r.getMessage() for r in caplog.records if r.name == TESTED]
+    assert len(messages) == 1
+    assert messages[0].startswith(f'Downsampling failed: ConnectionError({dense_url}/: ConnectError(refused))')
+
+
+async def test_tick_dense_down_running(
+    ds: downsample.Downsampler, url: str, dense_url: str, clock: list[int], httpx_mock: HTTPXMock
+):
+    # The hourly look at where the dense database starts fails while averaging runs: the tick fails, the last known
+    # dense_since is kept and asked again next tick, and the cursor stays: the marker is not read again
+    vic = victoria.CV.get()
+    ds.cursor = NOW - 60
+    ds._dense_since_at = NOW
+    vic.dense_since = NOW - DAY
+    clock[0] = NOW + HOUR
+    httpx_mock.add_exception(url=f'{dense_url}/api/v1/series', method='POST', exception=httpx.ConnectError('refused'))
+
+    with pytest.raises(ConnectionError):
+        await ds.tick()
+    assert (ds.cursor, ds._dense_since_at, vic.dense_since) == (NOW - 60, NOW, NOW - DAY)
+    assert not httpx_mock.get_requests(url=f'{url}/api/v1/query')
+
+
 async def test_tick_rewind(
     ds: downsample.Downsampler,
     url: str,
@@ -644,14 +698,7 @@ async def test_lifespan(ds: downsample.Downsampler, config: ServiceConfig, mocke
     mocker.patch.object(ds, 'run', side_effect=run)
     m_stop = mocker.patch.object(ds, 'stop', autospec=True)
 
-    # Without the dense database, no task
-    config.dense_enabled = False
-    async with downsample.lifespan():
-        pass
-    assert runs == []
-
     # The task runs until the service stops, and is then cancelled
-    config.dense_enabled = True
     async with asyncio.timeout(1):
         async with downsample.lifespan():
             await asyncio.sleep(0)

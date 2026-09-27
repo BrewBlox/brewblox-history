@@ -1,7 +1,7 @@
 """
 Averages the dense database's raw samples into the long-term database.
 
-One task, only with dense_enabled. Every downsample_interval it averages each sparse_interval
+One task. Every downsample_interval it averages each sparse_interval
 that ended at least downsample_lag ago, from its cursor on, in chunks of downsample_chunk,
 and imports the averages into the long-term database, stamped at the end of their interval:
 where ranges() puts its points at a step of sparse_interval.
@@ -164,6 +164,22 @@ class Downsampler:
         since = math.floor(first)
         return since if since > now - seconds(config.dense_retention) + seconds(config.dense_margin) else None
 
+    async def find_marker(self, now: int) -> int | None:
+        """Where the averages in the long-term database end: the marker, within the dense retention."""
+        config = utils.get_config()
+        interval = seconds(config.sparse_interval)
+        last = await victoria.CV.get().last_timestamp('archive', MARKER_SELECTOR, seconds(config.dense_retention), now)
+        # Markers are on the grid of the interval, unless it was changed
+        return None if last is None else math.floor(last) - math.floor(last) % interval
+
+    async def hold_at_marker(self, now: int) -> None:
+        """While averaging cannot start: reads and the lag count on the averages up to the marker,
+        and check_archive() watches it."""
+        marker = await self.find_marker(now)
+        if marker is not None:
+            self.marked = marker
+            self._set_read_cursor(marker, force=True)
+
     async def discover_cursor(self, now: int, dense_since: int | None) -> int | None:
         """Where to average from: REWIND before where the averages in the long-term database end (the marker),
         or where the dense database's samples start if that is later.
@@ -171,18 +187,13 @@ class Downsampler:
         config = utils.get_config()
         vic = victoria.CV.get()
         interval = seconds(config.sparse_interval)
-        last = await vic.last_timestamp('archive', MARKER_SELECTOR, seconds(config.dense_retention), now)
-        # Markers are on the grid of the interval, unless it was changed
-        marker = None if last is None else math.floor(last) - math.floor(last) % interval
         if not vic.legacy_end_known:
             # A migration may be seeding the dense database with days that are half done, up to where the
             # legacy samples end: nothing before there may be averaged, also not in the hour before a marker
-            if marker is not None:
-                # check_archive() watches it meanwhile
-                self.marked = marker
-                self._set_read_cursor(marker, force=True)
+            await self.hold_at_marker(now)
             LOGGER.info('Waiting for the migration state to start averaging')
             return None
+        marker = await self.find_marker(now)
         # The first interval that is whole inside the dense retention...
         retention_start = now - seconds(config.dense_retention)
         retention_start += -retention_start % interval
@@ -287,7 +298,14 @@ class Downsampler:
         now = int(utils.now().timestamp())
         vic = victoria.CV.get()
         if self._dense_since_at is None or now - self._dense_since_at >= DENSE_SINCE_REFRESH:
-            vic.dense_since = await self.find_dense_since(now)
+            try:
+                vic.dense_since = await self.find_dense_since(now)
+            except Exception:
+                # Nothing is averaged until the dense database answers, and this tick fails as every other one:
+                # logged once. Meanwhile, after a restart, reads and the lag count on the averages up to the marker.
+                if self.cursor is None:
+                    await self.hold_at_marker(now)
+                raise
             self._dense_since_at = now
         await self.check_archive(now)
         if self.cursor is None:
@@ -317,12 +335,7 @@ def setup() -> None:
 
 @asynccontextmanager
 async def lifespan() -> AsyncIterator[None]:
-    config = utils.get_config()
     downsampler = CV.get()
-    if not config.dense_enabled:
-        yield
-        return
-
     task = asyncio.create_task(downsampler.run())
     try:
         yield

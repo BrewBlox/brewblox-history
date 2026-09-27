@@ -19,7 +19,6 @@ DAY = 24 * HOUR
 
 @pytest.fixture
 def dense(config: ServiceConfig) -> ServiceConfig:
-    config.dense_enabled = True
     config.minimum_step = timedelta(seconds=1)
     return config
 
@@ -143,15 +142,9 @@ def test_plan_ranges_dense_since(dense: ServiceConfig):
     ]
 
 
-def test_plan_ranges_single(config: ServiceConfig):
-    # Without the dense database, everything comes from the long-term database, at the requested step
-    assert planner.plan_ranges(Timeframe(NOW - DAY + 5, NOW - 3, 90), NOW, config) == [
-        RangeQuery('archive', NOW - DAY, NOW - 3, 90),
-    ]
-    assert planner.plan_ranges(Timeframe(NOW - 600, NOW - 3, 10), NOW, config) == [
-        RangeQuery('archive', NOW - 600, NOW - 3, 10),
-    ]
-    assert planner.plan_ranges(Timeframe(NOW, NOW - 3, 10), NOW, config) == []
+def test_plan_ranges_empty(dense: ServiceConfig):
+    # A timeframe that ends before it starts has no queries
+    assert planner.plan_ranges(Timeframe(NOW, NOW - 3, 10), NOW, dense) == []
 
 
 def test_plan_fallback(dense: ServiceConfig):
@@ -187,21 +180,19 @@ def at(offset: float) -> datetime:
 
 
 def test_plan_follow_up(config: ServiceConfig):
+    # From the dense database, which has the raw samples first
     follow = planner.FollowUp(NOW - 14, 10, NOW - 14)
     # Due once the next point is query_latency (5 s) old
     assert planner.plan_follow_up(follow, at(0.9), config) is None
-    assert planner.plan_follow_up(follow, at(1), config) == ('archive', NOW - 4, NOW - 4, 10)
+    assert planner.plan_follow_up(follow, at(1), config) == ('dense', NOW - 4, NOW - 4, 10)
     # Every point up to then, ending on the last one
-    assert planner.plan_follow_up(follow, at(30.5), config) == ('archive', NOW - 4, NOW + 16, 10)
+    assert planner.plan_follow_up(follow, at(30.5), config) == ('dense', NOW - 4, NOW + 16, 10)
     # At most FOLLOW_UP_MAX_POINTS (1000), on the same grid: the older ones are skipped
-    assert planner.plan_follow_up(follow, at(DAY), config) == ('archive', NOW + DAY - 10004, NOW + DAY - 14, 10)
+    assert planner.plan_follow_up(follow, at(DAY), config) == ('dense', NOW + DAY - 10004, NOW + DAY - 14, 10)
     # A latency in fractions of seconds
     config.query_latency = timedelta(seconds=2.5)
     assert planner.plan_follow_up(follow, at(-1.6), config) is None
-    assert planner.plan_follow_up(follow, at(-1.5), config) == ('archive', NOW - 4, NOW - 4, 10)
-    # With the dense database, from it
-    config.dense_enabled = True
-    assert planner.plan_follow_up(follow, at(0), config) == ('dense', NOW - 4, NOW - 4, 10)
+    assert planner.plan_follow_up(follow, at(-1.5), config) == ('dense', NOW - 4, NOW - 4, 10)
 
 
 def test_clock_went_back(config: ServiceConfig):
@@ -244,7 +235,6 @@ def test_follow_up_properties(config: ServiceConfig, seed: int):
 def test_plan_ranges_properties(config: ServiceConfig, seed: int):
     rand = random.Random(seed)
     for _ in range(500):
-        config.dense_enabled = rand.random() < 0.8
         config.minimum_step = timedelta(seconds=rand.choice([1, 2, 5, 10]))
         config.sparse_interval = config.minimum_step * rand.choice([1, 6, 30, 60])
         config.dense_retention = timedelta(days=rand.choice([1, 30]))
@@ -276,10 +266,6 @@ def test_plan_ranges_properties(config: ServiceConfig, seed: int):
         assert points[-1] <= end < points[-1] + qstep
         # Strictly increasing, with no gap where one query ends and the next starts
         assert points == list(range(points[0], points[-1] + 1, qstep))
-
-        if not config.dense_enabled:
-            assert [q.db for q in queries] == ['archive']
-            continue
 
         interval = planner.seconds(config.sparse_interval)
         for q in queries:
@@ -323,14 +309,10 @@ def test_plan_export_dense_since(dense: ServiceConfig):
     ]
 
 
-def test_plan_export_single(config: ServiceConfig):
-    # The long-term database holds the raw samples: raw-sized chunks
-    assert planner.plan_export(Timeframe(NOW - 40 * DAY, NOW, 1), NOW, config) == [
-        ExportQuery('archive', NOW - 40 * DAY, NOW, 6 * HOUR),
-    ]
+def test_plan_export_chunk_minimum(dense: ServiceConfig):
     # Chunks are at least a second
-    config.csv_chunk_dense = timedelta(milliseconds=10)
-    assert planner.plan_export(Timeframe(NOW - 10, NOW, 1), NOW, config) == [ExportQuery('archive', NOW - 10, NOW, 1)]
+    dense.csv_chunk_dense = timedelta(milliseconds=10)
+    assert planner.plan_export(Timeframe(NOW - 10, NOW, 1), NOW, dense) == [ExportQuery('dense', NOW - 10, NOW, 1)]
 
 
 @pytest.mark.parametrize(

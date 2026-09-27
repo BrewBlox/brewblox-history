@@ -21,7 +21,7 @@ ruff check                                # lint: all rules, minus the ignores i
 pyright                                   # type check, standard mode ([tool.pyright]); what CI runs
 invoke testclean                          # remove containers left by a killed pytest
 invoke image                              # build the service image locally (tag `local`)
-docker compose up                         # the service with hot reload, plus eventbus, redis and victoria
+docker compose up                         # the service with hot reload, plus eventbus, redis and both databases
 ```
 
 The gate before every commit, as in CI: `pytest`, `ruff format --check`, `ruff check`, `pyright`.
@@ -29,7 +29,7 @@ Code is clean when it is committed; a deliberate exception gets `# noqa: <rule>`
 `# pyright: ignore[<rule>]` with the reason.
 
 Tests need Docker: pytest-docker starts the eventbus, redis, victoria, victoria-dense and
-victoria-legacy (v1.129.1, as ctl ships release 1's database: a migration's source)
+victoria-legacy (v1.129.1: the legacy database, the single one ctl ran before 0.12.0, a migration's source)
 services from test/docker-compose.yml once per session. test/test_database.py runs the
 client against the databases; series names must be unique per test, since the databases
 live for the whole session. Its `now` fixture freezes history's clock: never move it past
@@ -54,14 +54,13 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   test/test_parse_appenv.py keeps the two in sync: every field has an argument).
   `dense_retention` is read in VictoriaMetrics' `-retentionPeriod` format
   (models.parse_retention: a bare number counts months), since ctl gives both the same value.
-- Databases: `victoria` (`victoria_*` settings) is the long-term one. With `dense_enabled`
-  (off by default; ctl turns it on) `victoria-dense` (`dense_*`) receives the raw samples,
-  and the long-term one is meant to hold `sparse_interval` averages. VictoriaClient keeps
-  one httpx client per database: raw writes go to dense when enabled, `ping` checks every
-  database, `fields` returns the union (the long-term one alone if dense fails). Settings only the dense setup uses (and `minimum_step`,
-  which predates it) are validated only with `dense_enabled`: without it the service, which
-  also serves the datastore, must start whatever they are (ctl renders some either way).
-- Downsampler (downsample.py, only with `dense_enabled`): one task that every
+- Databases: `victoria-dense` (`dense_*` settings) receives the raw samples, and `victoria`
+  (`victoria_*`), the long-term one, holds only `sparse_interval` averages. There is no single-database
+  mode: a stack without ctl adds the dense service as this repository's `docker-compose.yml` does. VictoriaClient
+  keeps one httpx client per database: raw writes go to dense, `ping` checks both, `fields` returns the
+  union (the long-term one alone if dense fails). The settings are validated as ctl validates what it renders;
+  an unknown one (such as a leftover `dense_enabled`) is ignored.
+- Downsampler (downsample.py): one task that every
   `downsample_interval` averages each `sparse_interval` ended at least `downsample_lag` ago
   from dense into the long-term database (`/api/v1/import`, stamped at the interval's end),
   in chunks of `downsample_chunk`. Every import carries the marker series `victoria.MARKER`
@@ -77,8 +76,8 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   index, no samples read), then its first hour with a sample. The task logs errors and
   goes on: the service also serves the datastore. `/timeseries/ping` reports
   `downsample_age`.
-- Migration (migrate.py, only with `dense_enabled`): a best-effort background job that moves release 1's
-  database (`victoria-legacy`, renamed by ctl) into the new ones, started by ctl through
+- Migration (migrate.py): a best-effort background job that moves the legacy database
+  (`victoria-legacy`: the single database ctl ran before 0.12.0, renamed by ctl) into the new ones, started by ctl through
   `POST /timeseries/migrate` (GET status, DELETE cancel or `?discard=true`); once it is done, the user removes the
   legacy database with ctl, which never waits. The datastore (`brewblox-history`/`migration`) holds only what it
   started with and its outcome, each change saved before the job acts on it; its progress is in the databases,
@@ -113,7 +112,7 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   `select_timeframe` gives start, end (`now - query_latency` when open-ended, and at the
   latest: VM replaces points within its latency offset with copies) and
   `step = max(duration / query_desired_points, minimum_step, 1s)`; `plan_ranges` splits it
-  into queries per database: with dense, a step below `sparse_interval` where dense has
+  into queries per database: a step below `sparse_interval` where dense has
   samples (its retention, or from `dense_since` if later) reads dense; otherwise the step
   rounds up to a multiple of `sparse_interval` on the epoch grid, the long-term database
   answers up to the downsampler's `cursor` (until known: `steady_cursor`, which lags by

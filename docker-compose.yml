@@ -6,6 +6,8 @@ services:
     ports:
       - "1883:1883"
 
+  # The long-term database (averages) and the dense one (raw samples), as brewblox-ctl renders them,
+  # without its flush intervals: those only trade writes for what a power cut loses
   victoria:
     image: victoriametrics/victoria-metrics:v1.152.0
     labels:
@@ -15,10 +17,27 @@ services:
       - VM_retentionPeriod=100y
       - VM_influxMeasurementFieldSeparator=/
       - VM_http_pathPrefix=/victoria
-      - VM_search_latencyOffset=10s
+      - VM_dedup_minScrapeInterval=1ms
+      - VM_search_latencyOffset=1s
     volumes:
       - type: bind
         source: ./victoria
+        target: /victoria-metrics-data
+
+  victoria-dense:
+    image: victoriametrics/victoria-metrics:v1.152.0
+    labels:
+      - traefik.http.services.victoria-dense.loadbalancer.server.port=8428
+    command: --envflag.enable=true --envflag.prefix=VM_
+    environment:
+      - VM_retentionPeriod=30d
+      - VM_influxMeasurementFieldSeparator=/
+      - VM_http_pathPrefix=/victoria-dense
+      - VM_dedup_minScrapeInterval=1ms
+      - VM_search_latencyOffset=1s
+    volumes:
+      - type: bind
+        source: ./victoria-dense
         target: /victoria-metrics-data
 
   redis:

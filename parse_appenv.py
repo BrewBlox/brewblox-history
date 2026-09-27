@@ -23,7 +23,6 @@ def parse_cmd_args(raw_args: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument('--victoria-path')
     parser.add_argument('--victoria-timeout')
 
-    parser.add_argument('--dense-enabled', action='store_true')
     parser.add_argument('--dense-protocol')
     parser.add_argument('--dense-host')
     parser.add_argument('--dense-port')

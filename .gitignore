@@ -72,6 +72,8 @@ target/
 # local test
 victoria/*
 !victoria/.gitkeep
+victoria-dense/*
+!victoria-dense/.gitkeep
 
 redis/*
 !redis/.gitkeep

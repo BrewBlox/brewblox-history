@@ -24,7 +24,6 @@ def test_parse_values():
             '--victoria-timeout',
             '2m',
             '--debug',
-            '--dense-enabled',
             '--dense-retention',
             '2M',
             '--bogus',
@@ -35,10 +34,8 @@ def test_parse_values():
     assert args.victoria_timeout == '2m'
     assert args.debug is True
     assert args.debugger is False
-    assert args.dense_enabled is True
 
     config = TestConfig.model_validate({k: v for k, v in vars(args).items() if v is not None and v is not False})
     assert config.victoria_host == 'db'
     assert config.victoria_timeout.total_seconds() == 120
-    assert config.dense_enabled is True
     assert config.dense_retention.days == 62

@@ -166,7 +166,7 @@ class ServiceConfig(BaseSettings):
     redis_host: str = 'redis'
     redis_port: int = 6379
 
-    # The long-term database. With dense_enabled, it holds `sparse_interval` averages.
+    # The long-term database: averages of every `sparse_interval`
     victoria_protocol: Literal['http', 'https'] = 'http'
     victoria_host: str = 'victoria'
     victoria_port: int = 8428
@@ -176,9 +176,7 @@ class ServiceConfig(BaseSettings):
     # error is reported instead of a client timeout.
     victoria_timeout: loose_timedelta = timedelta(seconds=60)
 
-    # The dense database: every raw sample, kept for `dense_retention`.
-    # Without it, raw samples go to the long-term database.
-    dense_enabled: bool = False
+    # The dense database: every raw sample, kept for `dense_retention`
     dense_protocol: Literal['http', 'https'] = 'http'
     dense_host: str = 'victoria-dense'
     dense_port: int = 8428
@@ -222,24 +220,14 @@ class ServiceConfig(BaseSettings):
 
     @model_validator(mode='after')
     def check_intervals(self) -> Self:
-        zero = timedelta()
-
-        # Used with or without the dense database
-        for name in ['query_latency', 'csv_chunk_dense', 'csv_chunk_sparse', 'follow_up_step_max']:
-            if getattr(self, name) <= zero:
-                raise ValueError(f'{name} must be positive')
-
-        # Only the dense setup uses the others, and minimum_step predates it.
-        # Without it, the service must start whatever they are:
-        # brewblox-ctl renders sparse_interval and dense_retention either way.
-        if self.dense_enabled:
-            self._check_dense_intervals()
-        return self
-
-    def _check_dense_intervals(self) -> None:
+        # brewblox-ctl checks the values it renders the same way
         zero = timedelta()
         second = timedelta(seconds=1)
         for name in [
+            'query_latency',
+            'csv_chunk_dense',
+            'csv_chunk_sparse',
+            'follow_up_step_max',
             'minimum_step',
             'sparse_interval',
             'downsample_interval',
@@ -261,6 +249,7 @@ class ServiceConfig(BaseSettings):
         if self.downsample_lag < TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY:
             # A sample accepted with the oldest allowed timestamp must be searchable by then
             raise ValueError(f'downsample_lag must be at least {TIMESTAMP_TOLERANCE + SEARCHABLE_DELAY}')
+        return self
 
 
 class HistoryEvent(BaseModel):
@@ -446,8 +435,8 @@ class PingResponse(BaseModel):
 
 
 class TimeSeriesPingResponse(PingResponse):
-    # Seconds since the end of the last averages in the long-term database.
-    # None without the dense database, or before the downsampler found them.
+    # Seconds since the end of the last averages in the long-term database,
+    # or since the downsampler started while it has not found them. None before it started.
     downsample_age: float | None = None
 
 

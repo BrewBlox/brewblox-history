@@ -71,7 +71,7 @@ async def test_ping(client: AsyncClient, m_victoria: Mock, mocker: MockerFixture
     assert resp.status_code == 200
     assert resp.json() == {'ping': 'pong', 'downsample_age': None}
 
-    # With the dense database: how old the long-term database's averages are
+    # How old the long-term database's averages are
     now = datetime(2021, 7, 15, 19, tzinfo=UTC)
     mocker.patch(TESTED + '.utils.now').return_value = now
     downsample.CV.get().cursor = int(now.timestamp()) - 90

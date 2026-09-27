@@ -27,7 +27,7 @@ services:
     ports:
       - "8428"
   victoria-legacy:
-    # The single database of release 1, as brewblox-ctl ships it: the migration's source
+    # The legacy database: the single database brewblox-ctl ran before 0.12.0, the migration's source
     image: victoriametrics/victoria-metrics:v1.129.1
     command: >-
       --influxMeasurementFieldSeparator=/

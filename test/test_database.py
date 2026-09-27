@@ -40,7 +40,6 @@ def now(monkeypatch: pytest.MonkeyPatch) -> int:
 
 @pytest.fixture
 def db(config: ServiceConfig) -> victoria.VictoriaClient:
-    config.dense_enabled = True
     victoria.setup()
     return victoria.CV.get()
 
@@ -83,9 +82,10 @@ async def wait_searchable(client: httpx.AsyncClient, prefix: str, series: dict[s
 
 
 async def test_write_database(config: ServiceConfig):
-    # Names as stored, and timestamps
+    # Names as stored in the dense database, and timestamps
     victoria.setup()
     vic = victoria.CV.get()
+    dense = vic._database('dense')
     key = 'itest "spark",1\\'
     data = {'block, one': {'value=x': 1}, 'back\\slash\\': 2, 'temp[°C]': 3}
     timestamp = utils.to_millis(utils.now()) - 2000
@@ -97,8 +97,8 @@ async def test_write_database(config: ServiceConfig):
     expected = stamped | {f'{key}/arrival'}
     rows = {}
     for _ in range(50):  # New samples become searchable about a second after a forced flush
-        (await vic._archive.get('/internal/force_flush')).raise_for_status()
-        rows = await exported(vic._archive, 'itest')
+        (await dense.get('/internal/force_flush')).raise_for_status()
+        rows = await exported(dense, 'itest')
         if expected <= rows.keys():
             break
         await asyncio.sleep(0.1)
@@ -373,7 +373,7 @@ async def test_migrate_database(
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ):
-    # A legacy database as release 1 left it (v1.129.1): its history averaged into the long-term database,
+    # A legacy database, as ctl ran it before 0.12.0 (v1.129.1): its history averaged into the long-term database,
     # its last day of raw samples copied into the dense database, with names intact
     monkeypatch.setattr(migrate, 'PAUSE_FACTOR', 0)
     monkeypatch.setattr(migrate, 'SEARCHABLE_DELAY', timedelta())
