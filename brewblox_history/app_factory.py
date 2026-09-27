@@ -1,33 +1,35 @@
+import faulthandler
 import logging
+from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from pprint import pformat
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import datastore_api, mqtt, redis, relays, timeseries_api, utils, victoria
+from . import datastore_api, downsample, migrate, mqtt, redis, relays, timeseries_api, utils, victoria
 from .models import ErrorResponse
 
 LOGGER = logging.getLogger(__name__)
 
 
-def setup_logging(debug: bool):
+def setup_logging(*, debug: bool) -> None:
     level = logging.DEBUG if debug else logging.INFO
-    unimportant_level = logging.INFO if debug else logging.WARN
-    format = '%(asctime)s.%(msecs)03d [%(levelname).1s:%(name)s:%(lineno)d] %(message)s'
+    unimportant_level = logging.INFO if debug else logging.WARNING
+    log_format = '%(asctime)s.%(msecs)03d [%(levelname).1s:%(name)s:%(lineno)d] %(message)s'
     datefmt = '%Y/%m/%d %H:%M:%S'
 
-    logging.basicConfig(level=level, format=format, datefmt=datefmt)
-    logging.captureWarnings(True)
+    logging.basicConfig(level=level, format=log_format, datefmt=datefmt)
+    logging.captureWarnings(True)  # noqa: FBT003 (the standard library's signature)
 
     logging.getLogger('gmqtt').setLevel(unimportant_level)
     logging.getLogger('httpx').setLevel(unimportant_level)
-    logging.getLogger('httpcore').setLevel(logging.WARN)
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
     logging.getLogger('uvicorn.access').setLevel(unimportant_level)
     logging.getLogger('uvicorn.error').disabled = True
 
 
-def add_exception_handlers(app: FastAPI):
+def add_exception_handlers(app: FastAPI) -> None:
     config = utils.get_config()
     logger = logging.getLogger('history.error')
 
@@ -43,7 +45,7 @@ def add_exception_handlers(app: FastAPI):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     LOGGER.info(utils.get_config())
     LOGGER.debug('ROUTES:\n' + pformat(app.routes))
     LOGGER.debug('LOGGERS:\n' + pformat(logging.root.manager.loggerDict))
@@ -52,27 +54,32 @@ async def lifespan(app: FastAPI):
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
         await stack.enter_async_context(victoria.lifespan())
+        # Before the downsampler: it reads where a migration's legacy samples end
+        await stack.enter_async_context(migrate.lifespan())
+        await stack.enter_async_context(downsample.lifespan())
         yield
 
 
 def create_app() -> FastAPI:
     config = utils.get_config()
-    setup_logging(config.debug)
+    setup_logging(debug=config.debug)
 
     if config.debugger:  # pragma: no cover
-        import faulthandler
-
         faulthandler.enable()
 
-        import debugpy
+        # Imported only when the debugger is enabled
+        import debugpy  # noqa: PLC0415, T100
 
-        debugpy.listen(('0.0.0.0', 5678))
+        # All interfaces: the container publishes the port
+        debugpy.listen(('0.0.0.0', 5678))  # noqa: S104, T100
         LOGGER.info('Debugger is enabled and listening on 5678')
 
     # Call setup functions for modules
     mqtt.setup()
     redis.setup()
     victoria.setup()
+    downsample.setup()
+    migrate.setup()
     relays.setup()
 
     # Create app

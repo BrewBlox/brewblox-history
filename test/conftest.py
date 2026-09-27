@@ -5,8 +5,8 @@ Any fixtures declared here are available to all test functions in this directory
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator, Generator
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 from pytest_docker.plugin import Services as DockerServices
 
 from brewblox_history import app_factory, utils
-from brewblox_history.models import ServiceConfig
+from brewblox_history.models import DatastoreValue, ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,6 +30,9 @@ class TestConfig(ServiceConfig):
     and the content of .appenv
     """
 
+    # Not a test class, although test modules import it
+    __test__ = False
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -42,6 +45,36 @@ class TestConfig(ServiceConfig):
         return (init_settings,)
 
 
+class FakeDatastore:
+    """The datastore (brewblox_history.redis), with the documents as JSON, as Redis holds them.
+    The next `failures` calls raise."""
+
+    def __init__(self) -> None:
+        self.docs: dict[tuple[str, str], str] = {}
+        self.failures = 0
+
+    async def _call(self) -> None:
+        # Other tasks run while Redis answers
+        await asyncio.sleep(0)
+        if self.failures:
+            self.failures -= 1
+            raise ConnectionError('datastore down')
+
+    async def get(self, namespace: str, doc_id: str) -> DatastoreValue | None:
+        await self._call()
+        raw = self.docs.get((namespace, doc_id))
+        return None if raw is None else DatastoreValue.model_validate_json(raw)
+
+    async def set(self, value: DatastoreValue) -> DatastoreValue:
+        await self._call()
+        self.docs[(value.namespace, value.id)] = value.model_dump_json()
+        return value
+
+    async def delete(self, namespace: str, doc_id: str) -> int:
+        await self._call()
+        return 1 if self.docs.pop((namespace, doc_id), None) else 0
+
+
 @pytest.fixture(scope='session')
 def docker_compose_file():
     return Path('./test/docker-compose.yml').resolve()
@@ -51,7 +84,7 @@ def docker_compose_file():
 def config(
     monkeypatch: pytest.MonkeyPatch,
     docker_services: DockerServices,
-) -> Generator[ServiceConfig, None, None]:
+) -> ServiceConfig:
     cfg = TestConfig(
         debug=True,
         mqtt_host='localhost',
@@ -60,13 +93,21 @@ def config(
         redis_port=docker_services.port_for('redis', 6379),
         victoria_host='localhost',
         victoria_port=docker_services.port_for('victoria', 8428),
+        dense_host='localhost',
+        dense_port=docker_services.port_for('victoria-dense', 8428),
     )
     monkeypatch.setattr(utils, 'get_config', lambda: cfg)
-    yield cfg
+    return cfg
+
+
+@pytest.fixture
+def legacy_url(docker_services: DockerServices) -> str:
+    """The legacy database: a migration's source."""
+    return f'http://localhost:{docker_services.port_for("victoria-legacy", 8428)}/victoria-legacy'
 
 
 @pytest.fixture(autouse=True)
-def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
+def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
     """
     Allows keeping track of calls to asyncio sleep.
     For tests, we want to reduce all sleep durations.
@@ -74,18 +115,27 @@ def m_sleep(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest):
     """
     real_func = asyncio.sleep
 
-    async def wrapper(delay: float, *args, **kwargs):
+    async def wrapper(delay: float, *args: object, **kwargs: object) -> object:
         if delay > 0.1:
-            print(f'asyncio.sleep({delay}) in {request.node.name}')
+            # Shown in the test output: a long sleep means a real delay slipped into a test
+            print(f'asyncio.sleep({delay}) in {request.node.name}')  # noqa: T201
         return await real_func(delay, *args, **kwargs)
 
     monkeypatch.setattr('asyncio.sleep', wrapper)
-    yield
 
 
 @pytest.fixture(autouse=True)
 def setup_logging(config):
-    app_factory.setup_logging(True)
+    app_factory.setup_logging(debug=True)
+
+
+@pytest.fixture(autouse=True)
+def reset_duplicate_filters():
+    """DuplicateFilter remembers the last message: without a reset,
+    a test's first message is dropped if the previous test ended with it."""
+    loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+    for flt in [f for logger in loggers for f in logger.filters if isinstance(f, utils.DuplicateFilter)]:
+        flt.__dict__.pop('last_log', None)
 
 
 @pytest.fixture
@@ -96,8 +146,7 @@ def app() -> FastAPI:
     IMPORTANT: This must NOT be an async fixture.
     Contextvars assigned in async fixtures are invisible to test functions.
     """
-    app = FastAPI()
-    return app
+    return FastAPI()
 
 
 @pytest.fixture

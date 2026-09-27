@@ -1,9 +1,15 @@
 import logging
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 
-from .models import DatetimeSrc_, DurationSrc_, ServiceConfig, parse_datetime, parse_duration
+from .models import (  # noqa: F401 (re-exported)
+    DatetimeSrc_,
+    DurationSrc_,
+    ServiceConfig,
+    parse_datetime,
+    parse_duration,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -15,7 +21,7 @@ class DuplicateFilter(logging.Filter):
     This will not block alternating messages, and is module-specific.
     """
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         current_log = (record.module, record.levelno, record.msg)
         if current_log != getattr(self, 'last_log', None):
             self.last_log = current_log
@@ -28,17 +34,16 @@ def get_config() -> ServiceConfig:  # pragma: no cover
     return ServiceConfig()
 
 
-def strex(ex: Exception, tb=False):
+def strex(ex: BaseException, *, tb: bool = False) -> str:
     """
     Generic formatter for exceptions.
     A formatted traceback is included if `tb=True`.
     """
-    msg = f'{type(ex).__name__}({str(ex)})'
+    msg = f'{type(ex).__name__}({ex!s})'
     if tb:
         trace = ''.join(traceback.format_exception(None, ex, ex.__traceback__))
         return f'{msg}\n\n{trace}'
-    else:
-        return msg
+    return msg
 
 
 def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
@@ -54,19 +59,22 @@ def format_datetime(value: DatetimeSrc_, precision: str = 's') -> str:
 
     if dt is None:
         return ''
-    elif precision == 'ns':
+    if precision == 'ns':
         return str(int(dt.timestamp() * 1e9))
-    elif precision == 'ms':
+    if precision == 'ms':
         return str(int(dt.timestamp() * 1e3))
-    elif precision == 's':
+    if precision == 's':
         return str(int(dt.timestamp()))
-    elif precision == 'ISO8601':
+    if precision == 'ISO8601':
         return dt.isoformat(timespec='auto').replace('+00:00', 'Z')
-    else:
-        raise ValueError(f'Invalid precision: {precision}')
+    raise ValueError(f'Invalid precision: {precision}')
 
 
-def is_open_ended(start=None, duration=None, end=None) -> bool:
+def is_open_ended(
+    start: DatetimeSrc_ = None,
+    duration: DurationSrc_ | None = None,
+    end: DatetimeSrc_ = None,
+) -> bool:
     """Checks whether given parameters should yield a live response.
 
     Parameters are considered open-ended if no end date is set:
@@ -82,64 +90,14 @@ def is_open_ended(start=None, duration=None, end=None) -> bool:
 def now() -> datetime:  # pragma: no cover
     # You can't mock C extension functions
     # Add a wrapper here so we can mock it
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-def select_timeframe(
-    start: DatetimeSrc_,
-    duration: DurationSrc_,
-    end: DatetimeSrc_,
-) -> tuple[str, str, str]:
-    """Calculate start, end, and step for given start, duration, and end
+def to_millis(dt: datetime) -> int:
+    """Milliseconds since the Unix epoch"""
+    return round(dt.timestamp() * 1000)
 
-    The returned `start` and `end` strings are either empty,
-    or contain Unix seconds.
 
-    `duration` is formatted as `{value}s`.
-    """
-    config = get_config()
-    dt_start: datetime | None = None
-    dt_end: datetime | None = None
-
-    if all([start, duration, end]):
-        raise ValueError('At most two out of three timeframe arguments can be provided')
-
-    elif not any([start, duration, end]):
-        dt_start = now() - config.query_duration_default
-        dt_end = None
-
-    elif start and duration:
-        dt_start = parse_datetime(start)
-        dt_end = dt_start + parse_duration(duration)
-
-    elif start and end:
-        dt_start = parse_datetime(start)
-        dt_end = parse_datetime(end)
-
-    elif duration and end:
-        dt_end = parse_datetime(end)
-        dt_start = dt_end - parse_duration(duration)
-
-    elif start:
-        dt_start = parse_datetime(start)
-        dt_end = None
-
-    elif duration:
-        dt_start = now() - parse_duration(duration)
-        dt_end = None
-
-    elif end:
-        dt_end = parse_datetime(end)
-        dt_start = dt_end - config.query_duration_default
-
-    # This path should never be reached
-    else:  # pragma: no cover
-        raise RuntimeError('Unexpected code path while determining time frame!')
-
-    # Calculate optimal step interval
-    # We want a decent resolution without flooding the front-end with data
-    actual_duration: timedelta = (dt_end or now()) - dt_start
-    desired_step = actual_duration.total_seconds() // config.query_desired_points
-    step = int(max(desired_step, config.minimum_step.total_seconds()))
-
-    return (format_datetime(dt_start, 's'), format_datetime(dt_end, 's'), f'{step}s')
+def from_millis(value: int) -> datetime:
+    """UTC datetime for milliseconds since the Unix epoch"""
+    return datetime.fromtimestamp(value / 1000, UTC)

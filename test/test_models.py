@@ -2,7 +2,16 @@
 Tests brewblox_history.models
 """
 
+import logging
+import math
+from datetime import timedelta
+from types import MappingProxyType
+
+import pytest
+from pydantic import ValidationError
+
 from brewblox_history import models
+from test.conftest import TestConfig
 
 
 def test_flatten():
@@ -42,8 +51,225 @@ def test_flatten():
     assert models.flatten(flat_data) == flat_data
     assert models.flatten(flat_value) == flat_value
 
+    # Sorted by full path, across nesting levels
+    assert list(models.flatten({'b': 1, 'a': {'d': 2, 'c': [3, 4]}, 'a/b': 5})) == [
+        'a/b',
+        'a/c/0',
+        'a/c/1',
+        'a/d',
+        'b',
+    ]
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        ('30d', timedelta(days=30)),
+        ('30D', timedelta(days=30)),
+        ('4w', timedelta(weeks=4)),
+        ('100y', timedelta(days=36500)),
+        ('1d12h', timedelta(hours=36)),
+        ('2d-5h', timedelta(hours=43)),  # parts after a negative one are negative too
+        ('10ms', timedelta(milliseconds=10)),
+        # Months of 31 days, as a bare number or with `M`
+        ('1', timedelta(days=31)),
+        ('1.5M', timedelta(days=46.5)),
+        (3, timedelta(days=93)),
+        (timedelta(days=2), timedelta(days=2)),
+    ],
+)
+def test_parse_retention(value, expected: timedelta):
+    # Read as VictoriaMetrics reads -retentionPeriod
+    assert models.parse_retention(value) == expected
+
+
+@pytest.mark.parametrize('value', ['30m', '1h30m', '1i', 'x', '', 'inf', 'nan', '1e400', '99999999999999999999y'])
+def test_parse_retention_invalid(value):
+    with pytest.raises(ValueError, match='Invalid retention period'):
+        models.parse_retention(value)
+
+
+def settings(**values: object) -> models.ServiceConfig:
+    """The settings given, and the defaults: TestConfig reads neither the environment nor .appenv."""
+    return TestConfig.model_validate(values)
+
+
+def test_config_intervals():
+    config = settings(minimum_step='1s', sparse_interval='60s', dense_retention='30d')
+    assert config.sparse_interval == timedelta(seconds=60)
+    assert config.dense_retention == timedelta(days=30)
+
+    # The smallest values the checks allow
+    settings(
+        minimum_step=1,
+        sparse_interval=10,
+        follow_up_step_max=10,
+        downsample_chunk=10,
+        dense_retention='1d',
+        dense_margin=0,
+        downsample_lag=16,
+    )
+
+
+@pytest.mark.parametrize(
+    ('values', 'match'),
+    [
+        ({'query_latency': 0}, 'query_latency must be positive'),
+        ({'csv_chunk_dense': 0}, 'csv_chunk_dense must be positive'),
+        ({'csv_chunk_sparse': -1}, 'csv_chunk_sparse must be positive'),
+        ({'follow_up_step_max': 0}, 'follow_up_step_max must be positive'),
+        ({'minimum_step': 0}, 'minimum_step must be positive'),
+        ({'sparse_interval': 0}, 'sparse_interval must be positive'),
+        ({'downsample_interval': 0}, 'downsample_interval must be positive'),
+        ({'downsample_chunk': -1}, 'downsample_chunk must be positive'),
+        ({'minimum_step': 1.5}, 'minimum_step and sparse_interval must be whole seconds'),
+        ({'sparse_interval': 60.5}, 'minimum_step and sparse_interval must be whole seconds'),
+        ({'minimum_step': 45}, 'sparse_interval must be a multiple of minimum_step'),
+        ({'minimum_step': 120}, 'sparse_interval must be a multiple of minimum_step'),
+        ({'sparse_interval': 5, 'minimum_step': 1}, 'follow_up_step_max must not exceed sparse_interval'),
+        ({'dense_retention': '23h'}, 'dense_retention must be at least 1d'),
+        ({'dense_margin': -1}, 'dense_margin must be at least 0'),
+        ({'dense_margin': '30d'}, 'dense_margin must be at least 0 and less than dense_retention'),
+        ({'downsample_lag': 15}, 'downsample_lag must be at least 0:00:16'),
+        ({'downsample_max_lag': 0}, 'downsample_max_lag must be positive'),
+    ],
+)
+def test_config_invalid(values: dict, match: str):
+    with pytest.raises(ValidationError, match=match):
+        settings(**values)
+
+
+@pytest.mark.parametrize('sparse_interval', ['10m', '1h', '6h'])
+def test_config_dense_sparse_interval(sparse_interval: str):
+    # brewblox-ctl renders sparse_interval: settings it does not render adapt to it instead of refusing it
+    config = settings(minimum_step='1s', sparse_interval=sparse_interval)
+    assert config.sparse_interval == models.parse_duration(sparse_interval)
+
 
 def test_config_ignores_unknown_settings():
-    # Unknown settings must not prevent startup
-    config = models.ServiceConfig(_env_file=None, unknown_setting='value')
+    # Unknown settings must not prevent startup, also dense_enabled, which the dense database replaced
+    config = settings(unknown_setting='value', dense_enabled=False)
     assert not hasattr(config, 'unknown_setting')
+    assert not hasattr(config, 'dense_enabled')
+
+
+def test_history_event_data(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    monkeypatch.setattr(models, '_refused_fields', set())
+    data = {
+        'nest': {'ed': {'values': ['val', 1, True, False, '8', None]}},
+        'ok,=\\ ': 4,  # escaped when written
+        # Only finite numbers are kept
+        'nan': 'nan',
+        'inf': float('inf'),
+        'ninf': '-inf',
+        'huge': 10**400,
+        # Names the line protocol cannot express are refused
+        '': 1,
+        'new\nline': 2,
+        'q"uote': 3,
+        'q"text': 'text',  # not a number: ignored before its name matters
+        # Names up to MAX_NAME_BYTES (UTF-8) with the key: 'k/' is 2 bytes, 'é' is 2 bytes
+        'x' * 1022: 5,
+        'y' * 1023: 6,
+        'é' * 511: 7,
+        'é' * 512: 8,
+        '😀' * 255 + 'xx': 9,  # 4 bytes per character
+        '😀' * 256: 10,
+    }
+
+    evt = models.HistoryEvent(key='k', data=data)
+    assert evt.data == {
+        'nest/ed/values/1': 1.0,
+        'nest/ed/values/2': 1.0,
+        'nest/ed/values/3': 0.0,
+        'nest/ed/values/4': 8.0,
+        'ok,=\\ ': 4.0,
+        'x' * 1022: 5.0,
+        'é' * 511: 7.0,
+        '😀' * 255 + 'xx': 9.0,
+    }
+
+    # Each refused name is logged once
+    models.HistoryEvent(key='k', data=data)
+    # Long names are shortened in the log
+    assert [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING] == [
+        f'Refused history field {name!r}: its name cannot be stored or queried'
+        for name in [
+            'k/',
+            'k/new\nline',
+            'k/q"uote',
+            'k/' + 'y' * 198 + '...',
+            'k/' + 'é' * 198 + '...',
+            'k/' + '😀' * 198 + '...',
+        ]
+    ]
+
+
+def test_history_event_data_not_object():
+    with pytest.raises(ValidationError, match='Input should be an object'):
+        models.HistoryEvent.model_validate({'key': 'k', 'data': [1]})
+    with pytest.raises(ValidationError, match='Input should be an object'):
+        models.HistoryEvent.model_validate({'key': 'k', 'data': MappingProxyType({'a\nb': math.inf})})
+
+
+def test_history_event_data_json():
+    # Values only JSON carries, on the path relays uses
+    huge = '1' + '0' * 400
+    evt = models.HistoryEvent.model_validate_json(
+        '{"key": "k", "data": {"nan": NaN, "inf": Infinity, "ninf": -Infinity, '
+        f'"exp": 1e400, "huge": {huge}, "text": "8", "ok": 1.5, "flag": false}}}}'
+    )
+    assert evt.data == {'flag': 0.0, 'ok': 1.5, 'text': 8.0}
+
+
+@pytest.mark.parametrize('key', ['', '#comment', 'new\nline', 'k' * 1025])
+def test_history_event_key_refused(key: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    monkeypatch.setattr(models, '_refused_fields', set())
+    with pytest.raises(ValidationError):
+        models.HistoryEvent(key=key, data={'a': 1, 'q"uote': 2})
+
+    # The event is refused as a whole: no separate refusal of its fields
+    assert models._refused_fields == set()
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_history_event_key():
+    # Escaped when written
+    evt = models.HistoryEvent(key='my "spark",1\\ =#', data={})
+    assert evt.key == 'my "spark",1\\ =#'
+
+
+@pytest.mark.parametrize(
+    ('value', 'expected'),
+    [
+        (None, None),
+        (1_700_000_000_000, 1_700_000_000_000),
+        (1_700_000_000_000.6, 1_700_000_000_001),
+        (-5, -5),  # left to the tolerance check
+        ('1700000000000', None),
+        ('2023-11-14T22:13:20Z', None),
+        (True, None),
+        (float('nan'), None),
+        (float('inf'), None),
+        (10**400, None),
+        ({}, None),
+    ],
+)
+def test_history_event_timestamp(value, expected):
+    # An unusable timestamp is ignored: it must not cost the publisher its event
+    evt = models.HistoryEvent(key='k', data={}, timestamp=value)
+    assert evt.timestamp == expected
+
+
+@pytest.mark.parametrize(
+    ('field', 'expected'),
+    [
+        ('', None),
+        (', "timestamp": 12', 12),
+        (', "timestamp": "now"', None),
+        (', "timestamp": 1' + '0' * 400, None),
+    ],
+)
+def test_history_event_timestamp_json(field: str, expected):
+    evt = models.HistoryEvent.model_validate_json(f'{{"key": "k", "data": {{}}{field}}}')
+    assert evt.timestamp == expected

@@ -38,6 +38,7 @@ dev = [
     "ciso8601>=2.3,<3",
     "invoke>=2.2,<4",
     "ruff",
+    "pyright>=1.1.414,<1.2",
 ]
 
 [build-system]
@@ -49,6 +50,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = """
     --ignore=victoria/
+    --ignore=victoria-dense/
     --timeout=10
     --timeout_method=signal
     --cov=brewblox_history
@@ -72,6 +74,14 @@ exclude_lines = [
     "except asyncio.CancelledError:",
 ]
 
+[tool.pyright]
+# Pylance reads this too, with its own pyright version: `uv run pyright` is what CI runs
+include = ["brewblox_history", "test", "tasks.py", "parse_appenv.py"]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+
 [tool.ruff]
 line-length = 120
 
@@ -86,6 +96,20 @@ ignore = [
     "ISC001",
     "Q000",
     "Q003",
+    "G003",   # logging with string concatenation, and
+    "G004",   # with f-strings: DuplicateFilter compares the formatted message (record.msg)
+    "CPY001", # copyright notice in every file
+    "D1",     # docstrings where they help, not on every public name
+    "D200",   # docstring layout: the summary may continue on the next line,
+    "D205",
+    "D209",
+    "D400",
+    "D401",
+    "D415",
+    "TRY400", # errors are logged on one line (utils.strex): tracebacks every stream tick would flood the log
+    "TRY003", # exception messages inline
+    "EM101",
+    "EM102",
 ]
 
 [tool.ruff.format]
@@ -94,6 +118,12 @@ line-ending = "lf"
 quote-style = "single"
 
 [tool.ruff.lint.extend-per-file-ignores]
+"parse_appenv.py" = [
+    "T201", # its output is the .appenv file
+]
+"tasks.py" = [
+    "FBT", # invoke turns task parameters into command-line flags
+]
 "test/**/*.py" = [
     "S101",    # asserts allowed in tests
     "ARG",     # unused function args: fixtures are functionally relevant
@@ -103,4 +133,8 @@ quote-style = "single"
     "D103",    # missing docstring in public function
     "ANN201",  # missing return type annotation
     "SLF001",  # private member accessed
+    "ANN001",  # fixture arguments: their types are the fixtures'
+    "ANN202",  # nested helpers and callbacks
+    "PLR0913", # many fixtures
+    "PLR0917",
 ]

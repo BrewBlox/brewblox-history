@@ -22,4 +22,8 @@ async def test_endpoints(client: AsyncClient, app):
 
     resp = await client.get('/history/timeseries/ping')
     assert resp.status_code == 200
-    assert resp.json() == {'ping': 'pong'}
+    # The downsampler has not found where the averages end yet: its age counts from its start,
+    # in whole seconds, so a second boundary may have passed
+    body = resp.json()
+    assert body['ping'] == 'pong'
+    assert body['downsample_age'] in (0, 1)

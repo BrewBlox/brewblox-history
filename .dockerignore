@@ -5,4 +5,5 @@ test
 docs
 bench
 victoria
+victoria-dense
 redis

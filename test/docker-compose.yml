@@ -13,5 +13,25 @@ services:
     command: >-
       --influxMeasurementFieldSeparator=/
       --http.pathPrefix=/victoria
+      --dedup.minScrapeInterval=1ms
+      --retentionPeriod=100y
+    ports:
+      - "8428"
+  victoria-dense:
+    image: victoriametrics/victoria-metrics:v1.152.0
+    command: >-
+      --influxMeasurementFieldSeparator=/
+      --http.pathPrefix=/victoria-dense
+      --dedup.minScrapeInterval=1ms
+      --retentionPeriod=30d
+    ports:
+      - "8428"
+  victoria-legacy:
+    # The legacy database: the single database brewblox-ctl ran before 0.12.0, the migration's source
+    image: victoriametrics/victoria-metrics:v1.129.1
+    command: >-
+      --influxMeasurementFieldSeparator=/
+      --http.pathPrefix=/victoria-legacy
+      --retentionPeriod=100y
     ports:
       - "8428"

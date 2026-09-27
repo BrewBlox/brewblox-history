@@ -53,7 +53,7 @@ async def datastore_mget(args: DatastoreMultiQuery) -> DatastoreMultiValueBox:
 
 
 @router.post('/set')
-async def datastore_set(args: DatastoreOptSingleValueBox) -> DatastoreSingleValueBox:
+async def datastore_set(args: DatastoreSingleValueBox) -> DatastoreSingleValueBox:
     """
     Create or update an object in the datastore.
     """

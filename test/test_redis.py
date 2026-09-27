@@ -16,6 +16,11 @@ from brewblox_history.models import DatastoreValue
 TESTED = redis.__name__
 
 
+def doc(**fields: object) -> DatastoreValue:
+    """A document, with fields of its own."""
+    return DatastoreValue.model_validate(fields)
+
+
 def sort_pyvalues(values: list[DatastoreValue]):
     return sorted(values, key=lambda v: v.id)
 
@@ -30,7 +35,7 @@ async def lifespan(app: FastAPI):
         await stack.enter_async_context(mqtt.lifespan())
         await stack.enter_async_context(redis.lifespan())
         # Cleanup of data inserted by previous tests
-        await redis.CV.get().mdelete('', filter='*')
+        await redis.CV.get().mdelete('', pattern='*')
         yield
 
 
@@ -45,8 +50,7 @@ def app():
 
 @pytest.fixture
 def m_publish(app, mocker: MockerFixture):
-    m = mocker.spy(mqtt.CV.get(), 'publish')
-    return m
+    return mocker.spy(mqtt.CV.get(), 'publish')
 
 
 async def test_ping(client: AsyncClient):
@@ -59,7 +63,7 @@ async def test_ping(client: AsyncClient):
 
 async def test_get(client: AsyncClient):
     c = redis.CV.get()
-    obj = DatastoreValue(
+    obj = doc(
         namespace='ns1',
         id='id1',
         hello='world',
@@ -87,29 +91,29 @@ async def test_get_none(client: AsyncClient):
 
 async def test_mget(client: AsyncClient):
     c = redis.CV.get()
-    await c.mset([DatastoreValue(namespace='ns1', id=f'{idx}', idx=idx) for idx in range(2)])
-    await c.mset([DatastoreValue(namespace='ns2', id=f'{idx}', idx=idx) for idx in range(3)])
-    await c.mset([DatastoreValue(namespace='ns2', id=f'k{idx}', idx=idx) for idx in range(3)])
+    await c.mset([doc(namespace='ns1', id=f'{idx}', idx=idx) for idx in range(2)])
+    await c.mset([doc(namespace='ns2', id=f'{idx}', idx=idx) for idx in range(3)])
+    await c.mset([doc(namespace='ns2', id=f'k{idx}', idx=idx) for idx in range(3)])
 
     assert sort_pyvalues(await c.mget('ns1')) == sort_pyvalues(
         [
-            DatastoreValue(namespace='ns1', id='0', idx=0),
-            DatastoreValue(namespace='ns1', id='1', idx=1),
+            doc(namespace='ns1', id='0', idx=0),
+            doc(namespace='ns1', id='1', idx=1),
         ]
     )
     assert sort_pyvalues(await c.mget('ns2', ['0'])) == sort_pyvalues(
         [
-            DatastoreValue(namespace='ns2', id='0', idx=0),
+            doc(namespace='ns2', id='0', idx=0),
         ]
     )
-    assert sort_pyvalues(await c.mget('ns2', filter='*')) == sort_pyvalues(
+    assert sort_pyvalues(await c.mget('ns2', pattern='*')) == sort_pyvalues(
         [
-            DatastoreValue(namespace='ns2', id='0', idx=0),
-            DatastoreValue(namespace='ns2', id='1', idx=1),
-            DatastoreValue(namespace='ns2', id='2', idx=2),
-            DatastoreValue(namespace='ns2', id='k0', idx=0),
-            DatastoreValue(namespace='ns2', id='k1', idx=1),
-            DatastoreValue(namespace='ns2', id='k2', idx=2),
+            doc(namespace='ns2', id='0', idx=0),
+            doc(namespace='ns2', id='1', idx=1),
+            doc(namespace='ns2', id='2', idx=2),
+            doc(namespace='ns2', id='k0', idx=0),
+            doc(namespace='ns2', id='k1', idx=1),
+            doc(namespace='ns2', id='k2', idx=2),
         ]
     )
 
@@ -138,7 +142,7 @@ async def test_mget(client: AsyncClient):
 
 
 async def test_set(client: AsyncClient):
-    value = DatastoreValue(namespace='n:m', id='x', happy=True)
+    value = doc(namespace='n:m', id='x', happy=True)
 
     resp = await client.post('/datastore/set', json={'value': value.model_dump()})
     assert resp.json() == {'value': value.model_dump()}
@@ -162,12 +166,21 @@ async def test_set(client: AsyncClient):
     )
     assert resp.status_code == 422
 
+    # no value
+    resp = await client.post('/datastore/set', json={'value': None})
+    assert resp.status_code == 422
+
+
+async def test_not_connected():
+    with pytest.raises(ConnectionError, match='Not connected'):
+        await redis.RedisClient().ping()
+
 
 async def test_mset(client: AsyncClient, m_publish: Mock):
     c = redis.CV.get()
     values = [
-        DatastoreValue(namespace='n', id='x', happy=True),
-        DatastoreValue(namespace='n2', id='x2', jolly=False),
+        doc(namespace='n', id='x', happy=True),
+        doc(namespace='n2', id='x2', jolly=False),
     ]
     dict_values = sort_dictvalues([v.model_dump() for v in values])
 
@@ -185,7 +198,7 @@ async def test_mset(client: AsyncClient, m_publish: Mock):
     resp = await client.post('/datastore/mset', json={'values': dict_values})
     assert resp.json() == {'values': dict_values}
 
-    resp = await client.post('/datastore/mset', json={'values': dict_values + [{'id': 'y'}]})
+    resp = await client.post('/datastore/mset', json={'values': [*dict_values, {'id': 'y'}]})
     assert resp.status_code == 422
 
 
@@ -193,10 +206,10 @@ async def test_delete(client: AsyncClient, m_publish: Mock):
     c = redis.CV.get()
     await c.mset(
         [
-            DatastoreValue(namespace='ns1', id='id1'),
-            DatastoreValue(namespace='ns1', id='id2'),
-            DatastoreValue(namespace='ns2', id='id1'),
-            DatastoreValue(namespace='ns2', id='id2'),
+            doc(namespace='ns1', id='id1'),
+            doc(namespace='ns1', id='id2'),
+            doc(namespace='ns2', id='id1'),
+            doc(namespace='ns2', id='id2'),
         ]
     )
 
@@ -230,13 +243,13 @@ async def test_mdelete(client: AsyncClient, m_publish: Mock):
     c = redis.CV.get()
     await c.mset(
         [
-            DatastoreValue(namespace='ns1', id='id1'),
-            DatastoreValue(namespace='ns1', id='id2'),
-            DatastoreValue(namespace='ns2', id='id1'),
-            DatastoreValue(namespace='ns2', id='id2'),
-            DatastoreValue(namespace='ns3', id='id1'),
-            DatastoreValue(namespace='ns3', id='id2'),
-            DatastoreValue(namespace='ns3', id='id3'),
+            doc(namespace='ns1', id='id1'),
+            doc(namespace='ns1', id='id2'),
+            doc(namespace='ns2', id='id1'),
+            doc(namespace='ns2', id='id2'),
+            doc(namespace='ns3', id='id1'),
+            doc(namespace='ns3', id='id2'),
+            doc(namespace='ns3', id='id3'),
         ]
     )
 

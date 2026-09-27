@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
@@ -9,7 +10,7 @@ from . import utils
 CV: ContextVar[FastMQTT] = ContextVar('mqtt.client')
 
 
-def setup():
+def setup() -> None:
     config = utils.get_config()
     mqtt_config = MQTTConfig(
         host=config.mqtt_host, port=config.mqtt_port, ssl=(config.mqtt_protocol == 'mqtts'), reconnect_retries=-1
@@ -19,7 +20,7 @@ def setup():
 
 
 @asynccontextmanager
-async def lifespan():
+async def lifespan() -> AsyncIterator[None]:
     fmqtt = CV.get()
     await fmqtt.connection()
     yield

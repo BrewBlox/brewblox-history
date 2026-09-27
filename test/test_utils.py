@@ -3,7 +3,7 @@ Tests brewblox_history.utils
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -33,14 +33,14 @@ def test_duplicate_filter(caplog: pytest.LogCaptureFixture):
 
 
 def test_strex():
-    try:
+    with pytest.raises(RuntimeError) as info:
         raise RuntimeError('oops')
-    except RuntimeError as ex:
-        assert utils.strex(ex) == 'RuntimeError(oops)'
+    ex = info.value
+    assert utils.strex(ex) == 'RuntimeError(oops)'
 
-        with_tb = utils.strex(ex, tb=True)
-        assert with_tb.startswith('RuntimeError(oops)')
-        assert 'test_utils.py' in with_tb
+    with_tb = utils.strex(ex, tb=True)
+    assert with_tb.startswith('RuntimeError(oops)')
+    assert 'test_utils.py' in with_tb
 
 
 def test_parse_duration():
@@ -48,19 +48,22 @@ def test_parse_duration():
     assert utils.parse_duration('10') == timedelta(seconds=10)
     assert utils.parse_duration(timedelta(hours=1)) == timedelta(minutes=60)
     assert utils.parse_duration('P1DT10M5S') == timedelta(days=1, minutes=10, seconds=5)
+    # Zero with a unit parses to zero
+    assert utils.parse_duration('0s') == timedelta()
+    assert utils.parse_duration('0m') == timedelta()
 
     with pytest.raises(ValidationError):
         utils.parse_duration('')
 
     with pytest.raises(ValidationError):
-        utils.parse_duration(None)
+        utils.parse_duration(None)  # pyright: ignore[reportArgumentType]: a wrong type on purpose
 
 
 def test_parse_datetime():
     time_s = 1626359370
     iso_str = '2021-07-15T14:29:30.000Z'
     time_ms = time_s * 1000
-    dt = datetime.fromtimestamp(time_s, tz=timezone.utc)
+    dt = datetime.fromtimestamp(time_s, tz=UTC)
 
     assert utils.parse_datetime(time_s) == dt
     assert utils.parse_datetime(time_ms) == dt
@@ -68,15 +71,15 @@ def test_parse_datetime():
     assert utils.parse_datetime('') is None
     assert utils.parse_datetime(None) is None
 
-    with pytest.raises(ValueError):
-        utils.parse_datetime({})
+    with pytest.raises(ValueError, match='valid datetime'):
+        utils.parse_datetime({})  # pyright: ignore[reportArgumentType]: a wrong type on purpose
 
 
 def test_format_datetime():
     time_s = 1626359370
     iso_str = '2021-07-15T14:29:30Z'
     time_ms = time_s * 1000
-    dt = datetime.fromtimestamp(time_s, tz=timezone.utc)
+    dt = datetime.fromtimestamp(time_s, tz=UTC)
 
     assert utils.format_datetime(time_s, 's') == str(time_s)
     assert utils.format_datetime(iso_str, 'ns') == str(int(time_s * 1e9))
@@ -86,56 +89,12 @@ def test_format_datetime():
     assert utils.format_datetime(None) == ''
     assert utils.format_datetime('') == ''
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='Invalid precision'):
         utils.format_datetime(time_s, 'jiffies')
 
 
-def test_select_timeframe(mocker):
-    def now() -> datetime:
-        return datetime(2021, 7, 15, 19)
-
-    def fmt(dt: datetime) -> str:
-        return str(int(dt.timestamp()))
-
-    mocker.patch(TESTED + '.now').side_effect = now
-
-    with pytest.raises(ValueError):
-        utils.select_timeframe(start='yesterday', duration='2d', end='tomorrow')
-
-    assert utils.select_timeframe(None, None, None) == (fmt(datetime(2021, 7, 14, 19)), '', '86s')
-
-    assert utils.select_timeframe(start=now(), duration='1h', end=None) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=now(), duration=None, end=datetime(2021, 7, 15, 20)) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration='1h', end=datetime(2021, 7, 15, 20)) == (
-        fmt(now()),
-        fmt(datetime(2021, 7, 15, 20)),
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=datetime(2021, 7, 15, 18), duration=None, end=None) == (
-        fmt(datetime(2021, 7, 15, 18)),
-        '',
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration='1h', end=None) == (
-        fmt(datetime(2021, 7, 15, 18)),
-        '',
-        '10s',
-    )
-
-    assert utils.select_timeframe(start=None, duration=None, end=now()) == (
-        fmt(datetime(2021, 7, 14, 19)),
-        fmt(now()),
-        '86s',
-    )
+def test_millis():
+    dt = datetime(2021, 7, 15, 19, 0, 0, 123000, tzinfo=UTC)
+    assert utils.to_millis(dt) == 1626375600123
+    assert utils.from_millis(1626375600123) == dt
+    assert utils.from_millis(utils.to_millis(dt)) == dt
