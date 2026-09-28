@@ -2,6 +2,7 @@
 Tests brewblox_history.planner
 """
 
+import itertools
 import random
 from datetime import UTC, datetime, timedelta
 
@@ -155,6 +156,210 @@ def test_plan_fallback(dense: ServiceConfig):
     assert planner.plan_fallback(Timeframe(NOW - DAY, NOW - 3, 86), dense) == [
         RangeQuery('archive', NOW - DAY, NOW - 120, 120),
     ]
+
+
+def answer(queries: list[RangeQuery], *stretches: tuple[int, int]) -> dict[str, list]:
+    """The database's answer to the queries for a series with samples in the stretches (from, to):
+    every point whose step holds some."""
+    points = [
+        t
+        for q in queries
+        for t in range(q.start, q.end + 1, q.step)
+        if any(since <= t and t - q.step < until for since, until in stretches)
+    ]
+    return {'a': [[t, '1'] for t in points]} if points else {}
+
+
+@pytest.mark.parametrize(
+    ('frame', 'stretches', 'expected'),
+    [
+        # Two years with three days of samples a year ago: 5 points at 63120 s, again at 315.6 s (rounded up to
+        # 360 s), from a step before the first point to a step after the last
+        (
+            (NOW - 730 * DAY, NOW - 3, 63071),
+            [(NOW - 365 * DAY, NOW - 362 * DAY)],
+            [('archive', NOW - 31_551_480, NOW - 31_172_640, 360)],
+        ),
+        # Twelve hours with one of samples: 85 points at 43 s, again at 3.7 s, rounded up to 4 s
+        (
+            (NOW - 12 * HOUR, NOW - 3, 43),
+            [(NOW - 3 * HOUR, NOW - 2 * HOUR)],
+            [('dense', NOW - 10_816, NOW - 7_116, 4)],
+        ),
+        # A week with four hours: 23 points at 660 s from the long-term database, below its interval from the dense one
+        (
+            (NOW - 7 * DAY, NOW - 3, 604),
+            [(NOW - DAY - 4 * HOUR, NOW - DAY)],
+            [('dense', NOW - 100_992, NOW - 85_140, 16)],
+        ),
+        # Before dense retention, at the long-term database's interval: nothing finer
+        ((NOW - 40 * DAY, NOW - 40 * DAY + 600, 1), [(NOW - 40 * DAY + 100, NOW - 40 * DAY + 200)], []),
+        # Samples throughout: not mostly empty
+        ((NOW - DAY, NOW - 3, 86), [(NOW - 2 * DAY, NOW)], []),
+        # A sample every 15 minutes: 96 points at 120 s, without a hole: a finer step would bring the same ones
+        ((NOW - DAY, NOW - 3, 86), [(t, t) for t in range(NOW - DAY, NOW, 900)], []),
+        # No samples: nothing to refine
+        ((NOW - DAY, NOW - 3, 86), [(NOW - 3 * DAY, NOW - 2 * DAY)], []),
+    ],
+)
+def test_plan_refinement(dense: ServiceConfig, frame: tuple, stretches: list[tuple[int, int]], expected: list):
+    answered = planner.plan_ranges(Timeframe(*frame), NOW, dense, NOW - 600)
+    values = answer(answered, *stretches)
+    assert planner.plan_refinement(Timeframe(*frame), answered, values, NOW, dense, NOW - 600) == [
+        RangeQuery(*q) for q in expected
+    ]
+
+
+@pytest.mark.parametrize(
+    ('timestamps', 'expected'),
+    [
+        # Every 10 s throughout, or with a gap of 10 times that: samples that come less often than the step
+        (list(range(0, 1001, 10)), False),
+        ([*range(0, 501, 10), *range(600, 1001, 10)], False),
+        # A gap of more than 10 times the median spacing, also at the timeframe's start or end
+        ([*range(0, 501, 10), *range(610, 1001, 10)], True),
+        (list(range(200, 1001, 10)), True),
+        (list(range(0, 801, 10)), True),
+        # The median spacing is within the samples: a stretch, and a point far from it
+        ([0, 1, 2, 1000], True),
+        ([0, 1, 1000], True),
+        # The spacing is the median gap, not the narrowest
+        ([0, 5, *range(100, 1001, 100)], False),
+        # One point: its step is the spacing
+        ([500], True),
+    ],
+)
+def test_has_hole(timestamps: list[int], expected: bool):
+    assert planner.has_hole(timestamps, Timeframe(0, 1000, 1), 1) == expected
+
+
+def test_plan_refinement_limits(dense: ServiceConfig):
+    frame = Timeframe(NOW - 7 * DAY, NOW - 3, 604)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600)
+
+    def refine(values: dict[str, list], queries: list[RangeQuery] = answered) -> list[RangeQuery]:
+        return planner.plan_refinement(frame, queries, values, NOW, dense, NOW - 600)
+
+    # Mostly empty: fewer than half of query_desired_points, in the series with the most
+    grid = range(NOW - 6 * DAY, NOW, 660)
+    assert refine({'a': [[t, '1'] for t in grid[:499]], 'b': [[grid[0], '1']]})
+    assert not refine({'a': [[t, '1'] for t in grid[:500]], 'b': [[grid[0], '1']]})
+    # The first and last point of any series
+    [query] = refine({'a': [[grid[10], '1']], 'b': [[grid[20], '1']]})
+    assert (query.start, query.end) == (grid[9] - grid[9] % query.step, grid[21])
+    # Nothing answered
+    assert not refine({}, [])
+
+    # Samples at both ends of two years: at most REFINE_MAX_POINTS points
+    frame = Timeframe(NOW - 730 * DAY, NOW - 3, 63071)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600)
+    queries = refine(answer(answered, (NOW - 730 * DAY, NOW - 729 * DAY), (NOW - DAY, NOW)), answered)
+    assert [q.step for q in queries] == [2580]
+    assert sum((q.end - q.start) // q.step + 1 for q in queries) <= planner.REFINE_MAX_POINTS
+    # An extent of exactly 25000 steps of 55 s, off their grid: the start rounds down, so 56 s
+    frame = Timeframe(NOW - 1_375_003, NOW - 3, 1375)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600)
+    queries = refine(answer(answered, (frame.start, frame.start + HOUR), (NOW - HOUR, NOW)), answered)
+    assert [(q.db, q.step) for q in queries] == [('dense', 56)]
+    assert sum((q.end - q.start) // q.step + 1 for q in queries) <= planner.REFINE_MAX_POINTS
+
+    # Finer than the answered step, which may be coarser than the frame's: before dense_since, an hour is
+    # at the long-term database's interval, and its last 40 minutes are finer from the dense database
+    frame = Timeframe(NOW - HOUR, NOW - 5, 3)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600, NOW - 3360)
+    assert [q.step for q in answered] == [60, 60]
+    values = answer(answered, (NOW - 2400, NOW))
+    queries = planner.plan_refinement(frame, answered, values, NOW, dense, NOW - 600, NOW - 3360)
+    assert [(q.db, q.step) for q in queries] == [('dense', 3)]
+
+    # Some series has a hole: a hydrometer throughout three days, and a field logged for the last one
+    frame = Timeframe(NOW - 3 * DAY, NOW - 3, 259)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600)
+    hydrometer = answer(answered, *[(t, t) for t in range(NOW - 3 * DAY, NOW, 900)])['a']
+    field = answer(answered, (NOW - DAY, NOW))['a']
+    assert not refine({'hydrometer': hydrometer}, answered)
+    assert [q.step for q in refine({'hydrometer': hydrometer, 'field': field}, answered)] == [120, 120]
+
+    # With twice the desired points: mostly empty below 1000, and the step scaled to 2000
+    dense.query_desired_points = 2000
+    frame = Timeframe(NOW - 7 * DAY, NOW - 3, 302)
+    answered = planner.plan_ranges(frame, NOW, dense, NOW - 600)
+    grid = range(NOW - 6 * DAY, NOW, 360)
+    assert [q.step for q in refine({'a': [[t, '1'] for t in grid[:999]]}, answered)] == [180]
+    assert not refine({'a': [[t, '1'] for t in grid[:1000]]}, answered)
+    dense.query_desired_points = 1000
+
+    # At minimum_step at least
+    dense.minimum_step = timedelta(seconds=10)
+    frame = Timeframe(NOW - 12 * HOUR, NOW - 3, 43)
+    answered = planner.plan_ranges(frame, NOW, dense)
+    assert [q.step for q in refine(answer(answered, (NOW - 3 * HOUR, NOW - 2 * HOUR)), answered)] == [10]
+    frame = Timeframe(NOW - 600, NOW - 3, 10)
+    answered = planner.plan_ranges(frame, NOW, dense)
+    assert not refine(answer(answered, (NOW - 300, NOW - 290)), answered)
+
+
+@pytest.mark.parametrize('seed', range(20))
+def test_plan_refinement_properties(config: ServiceConfig, seed: int):
+    # Mostly empty timeframes: the refined plan is finer, asks for at most REFINE_MAX_POINTS points per series,
+    # and covers every sample of the timeframe, as the answered one did
+    rand = random.Random(seed)
+    refined_count = 0
+    for _ in range(200):
+        config.minimum_step = timedelta(seconds=rand.choice([1, 2, 5, 10]))
+        config.sparse_interval = config.minimum_step * rand.choice([1, 6, 30, 60])
+        config.dense_retention = timedelta(days=rand.choice([1, 30]))
+        config.dense_margin = timedelta(hours=1)
+        interval = planner.seconds(config.sparse_interval)
+
+        now = NOW + rand.randrange(DAY)
+        end = now - rand.choice([3, rand.randrange(40 * DAY)])
+        start = end - rand.choice([HOUR, DAY, 7 * DAY, 730 * DAY, rand.randrange(1, 800 * DAY)])
+        frame = Timeframe(start, end, max((end - start) // 1000, planner.seconds(config.minimum_step)))
+        horizon = now - planner.seconds(config.dense_retention) + planner.seconds(config.dense_margin)
+        cursor = rand.randrange(horizon, now + 1)
+        dense_since = rand.choice([None, rand.randrange(horizon, cursor + 1)])
+        # A few stretches of samples, each up to a tenth of the timeframe, some past its ends
+        stretches = []
+        for _ in range(rand.randrange(1, 4)):
+            since = rand.randrange(start - frame.step, end + 1)
+            stretches.append((since, since + rand.randrange((end - start) // 10 + 2)))
+
+        answered = planner.plan_ranges(frame, now, config, cursor, dense_since)
+        values = answer(answered, *stretches)
+        queries = planner.plan_refinement(frame, answered, values, now, config, cursor, dense_since)
+        if not queries:
+            continue
+        refined_count += 1
+
+        # Finer, one step for all, on its grid, from minimum_step
+        step = queries[0].step
+        assert all(q.step == step for q in queries)
+        assert planner.seconds(config.minimum_step) <= step < answered[0].step
+        assert all(q.start % step == 0 and q.start <= q.end for q in queries)
+        assert all(step % interval == 0 for q in queries if q.db == 'archive')
+        # At most REFINE_MAX_POINTS points per series, with no gap where one query ends and the next starts
+        assert sum((q.end - q.start) // step + 1 for q in queries) <= planner.REFINE_MAX_POINTS
+        assert all(b.start == a.start + ((a.end - a.start) // step + 1) * step for a, b in itertools.pairwise(queries))
+        # Within the timeframe, and holding every sample the answered points held
+        first_point = queries[0].start
+        last_point = queries[-1].start + (queries[-1].end - queries[-1].start) // step * step
+        assert start - step < first_point
+        assert last_point <= end
+        first, last = values['a'][0][0], values['a'][-1][0]
+        assert first_point <= max(start, first - answered[0].step)
+        assert min(end, last + answered[0].step) < last_point + step
+
+    # Most timeframes are refined
+    assert refined_count > 100
+
+
+def test_merge_refined():
+    # The refined values, and the first ones of a series they lack, up to the refined plan's last point (240)
+    queries = [RangeQuery('archive', 0, 120, 60), RangeQuery('dense', 180, 250, 60)]
+    values = {'a': [[0, '1'], [240, '1']], 'b': [[60, '2'], [240, '2'], [300, '2']], 'c': [[245, '3']]}
+    refined = {'a': [[0, 'x'], [60, 'x'], [180, 'x'], [240, 'x']]}
+    assert planner.merge_refined(values, refined, queries) == {'b': [[60, '2'], [240, '2']], 'a': refined['a']}
 
 
 def test_follow_up_after(dense: ServiceConfig):

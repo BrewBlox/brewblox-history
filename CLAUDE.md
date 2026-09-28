@@ -122,7 +122,13 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   and `latency_offset=query_latency`. When dense fails, a plan with a long-term part answers
   with that part; a dense-only plan that fails or finds none of the fields is answered by the
   long-term database at `sparse_interval` (plan_fallback). A dense read outage is warned once,
-  and its end logged. `csv` exports raw samples
+  and its end logged. An answer that is mostly empty (the series with the most points got fewer than
+  half of `query_desired_points`, and some series has a hole: planner.has_hole) is asked once more
+  (plan_refinement): at the step scaled by that share, rounded up, over only where it has points and a step
+  either side, at most `REFINE_MAX_POINTS` per series (VM refuses over 30000 requested, empty ones included),
+  and only when that is finer; not after the fallback, nor from dense while dense reads fail. A series gets
+  the finer points, or keeps its first ones up to the finer plan's last point (merge_refined); any failure of
+  the finer query keeps the first answer. `csv` exports raw samples
   (dense from the first `sparse_interval` grid point where it has them, averages before) in
   windows of `csv_chunk_*`, drops rows at or before the last one, and fails if dense does.
   `fields` lists series. The WebSocket `/timeseries/stream` runs one task per command id:
@@ -143,7 +149,8 @@ tests are milliseconds, so a long sleep in a test means a real delay slipped thr
   rejected database query raises `httpx.HTTPStatusError`, a transport error (unreachable,
   timeout) raises `ConnectionError` naming the database (victoria.named_errors), and a failed
   write is logged with the database and its reason, and swallowed. Dense failures in `ranges`
-  and `fields` degrade to the long-term database instead of raising (see Read path).
+  and `fields` degrade to the long-term database instead of raising (see Read path), and a failing
+  refinement keeps the first answer.
 
 ## Testing rules
 
