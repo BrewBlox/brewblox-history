@@ -4,6 +4,7 @@ Tests brewblox_history.victoria
 
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
@@ -27,6 +28,8 @@ from brewblox_history.models import (
 )
 
 TESTED = victoria.__name__
+HOUR = 3600
+DAY = 24 * HOUR
 
 
 @pytest.fixture
@@ -59,6 +62,13 @@ def dense_url(config: ServiceConfig) -> str:
 def vic() -> victoria.VictoriaClient:
     victoria.setup()
     return victoria.CV.get()
+
+
+@pytest.fixture
+def unrefined(monkeypatch: pytest.MonkeyPatch):
+    """The first answer only. The mocks of these tests answer a point or two per query:
+    mostly empty, which the refinement would ask again for (test_ranges_refined)."""
+    monkeypatch.setattr(planner, 'plan_refinement', lambda *_, **__: [])
 
 
 @pytest.fixture
@@ -283,6 +293,7 @@ def matrix_handler(request: Request) -> Response:
     return Response(200, json={'status': 'success', 'data': {'resultType': 'matrix', 'result': result}})
 
 
+@pytest.mark.usefixtures('unrefined')
 async def test_ranges_seam(
     vic: victoria.VictoriaClient,
     url: str,
@@ -423,6 +434,7 @@ async def test_ranges_dense_since(
     assert result == [series('a', [[ts - 600, 'A-a'], [ts - 60, 'D-a']])]
 
 
+@pytest.mark.usefixtures('unrefined')
 async def test_initial_ranges_follow_up(
     vic: victoria.VictoriaClient,
     url: str,
@@ -499,6 +511,189 @@ async def test_initial_ranges_follow_up(
         [series(n, []) for n in ['a', 'b']],
         (ts - 600, 1, ts - 5),
     )
+
+
+def stretch(
+    first: int,
+    last: int,
+    *,
+    missing: frozenset[tuple[str, str]] = frozenset(),
+    fails: Callable[[str, int], bool] = lambda _db, _step: False,
+    refused: Callable[[str, int], bool] = lambda _db, _step: False,
+) -> Callable[[Request], Response]:
+    """A query_range handler for series with samples from first to last: every point whose step holds some,
+    valued by database ('A' or 'D') and step. The series of the (database, name) pairs in missing have none;
+    a query for which fails(database, step) is true fails, and one for which refused(database, step) is true
+    is refused (as the database refuses one that asks for too many points)."""
+
+    def handler(request: Request) -> Response:
+        params = parse_qs(request.read().decode())
+        db = 'D' if '/victoria-dense/' in str(request.url) else 'A'
+        start, end, step = int(params['start'][0]), int(params['end'][0]), int(params['step'][0][:-1])
+        if fails(db, step):
+            raise httpx.ConnectError('refused')
+        if refused(db, step):
+            return Response(422, json={'status': 'error', 'errorType': '422', 'error': 'too many points'})
+        points = [t for t in range(start, end + 1, step) if first <= t and t - step < last]
+        result = [
+            {'metric': {'__name__': name}, 'values': [[t, f'{db}{step}'] for t in points]}
+            for name in re.findall(r'__name__="(\w+)"', params['query'][0])
+            if points and (db, name) not in missing
+        ]
+        return Response(200, json={'status': 'success', 'data': {'resultType': 'matrix', 'result': result}})
+
+    return handler
+
+
+# Both databases' query_range
+QUERY_RANGE = re.compile(r'.*/api/v1/query_range')
+
+
+def asked(httpx_mock: HTTPXMock) -> list[tuple[str, int]]:
+    """The database and step of each query_range request."""
+    return [
+        (str(r.url).split('/')[3], int(parse_qs(r.read().decode())['step'][0][:-1])) for r in httpx_mock.get_requests()
+    ]
+
+
+@pytest.mark.parametrize(
+    ('duration', 'since', 'until', 'expected'),
+    [
+        # A week at 660 s with a day of samples, in the long-term database: again at 120 s, where they are
+        (7 * DAY, 3 * DAY, 2 * DAY, [('victoria', 660), ('victoria-dense', 660), ('victoria', 120)]),
+        # Twelve hours at 43 s with one of samples: again at 4 s
+        (12 * HOUR, 3 * HOUR, 2 * HOUR, [('victoria-dense', 43), ('victoria-dense', 4)]),
+        # A week with four hours of samples: below 60 s, again from the dense database
+        (7 * DAY, DAY + 4 * HOUR, DAY, [('victoria', 660), ('victoria-dense', 660), ('victoria-dense', 16)]),
+        # Two years with three days of samples, a year ago
+        (730 * DAY, 365 * DAY, 362 * DAY, [('victoria', 63120), ('victoria', 360)]),
+        # Samples up to now: again from both
+        (
+            7 * DAY,
+            36 * HOUR,
+            0,
+            [('victoria', 660), ('victoria-dense', 660), ('victoria', 180), ('victoria-dense', 180)],
+        ),
+        # A day full of samples: once
+        (DAY, 2 * DAY, 0, [('victoria', 120), ('victoria-dense', 120)]),
+    ],
+)
+async def test_ranges_refined(
+    vic: victoria.VictoriaClient,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    duration: int,
+    since: int,
+    until: int,
+    expected: list[tuple[str, int]],
+):
+    # A mostly empty answer is asked again, finer, where it has points
+    ts = int(now.timestamp())
+    vic.cursor = ts - 600
+    httpx_mock.add_callback(url=QUERY_RANGE, method='POST', callback=stretch(ts - since, ts - until), is_reusable=True)
+
+    query = TimeSeriesRangesQuery(fields=['a', 'b'], duration=timedelta(seconds=duration))
+    result, follow = await vic.initial_ranges(query)
+    assert asked(httpx_mock) == expected
+
+    # The last answer: every point whose step holds samples, from the first one or the start
+    # up to the last one or the end (query_latency before now)
+    step = expected[-1][1]
+    for r in result:
+        timestamps = [int(v.timestamp) for v in r.values]
+        first, last = timestamps[0], timestamps[-1]
+        assert timestamps == list(range(first, last + 1, step))
+        assert first - step < ts - since <= first or first <= ts - duration < first + step
+        assert last - step < ts - until <= last or last <= ts - 5 < last + step
+        assert {v.value[1:] for v in r.values} == {str(step)}
+    # Follow-ups continue after it
+    assert follow == (max(int(r.values[-1].timestamp) for r in result), 10, ts - 5)
+
+
+async def test_ranges_refined_fails(
+    vic: victoria.VictoriaClient,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+    caplog: pytest.LogCaptureFixture,
+):
+    # The first answer stands when the finer one fails, also in part
+    ts = int(now.timestamp())
+    vic.cursor = ts - 600
+    handler = stretch(ts - DAY, ts)
+
+    def answer(request: Request) -> Response:
+        return handler(request)
+
+    httpx_mock.add_callback(url=QUERY_RANGE, method='POST', callback=answer, is_reusable=True)
+
+    def values(result: list[TimeSeriesRange]) -> set[str]:
+        return {v.value for r in result for v in r.values}
+
+    def query(duration: str) -> TimeSeriesRangesQuery:
+        return TimeSeriesRangesQuery.model_validate({'fields': ['a', 'b'], 'duration': duration})
+
+    # The dense part of a finer plan fails: the first answer, from both
+    handler = stretch(ts - 36 * HOUR, ts, fails=lambda db, step: db == 'D' and step == 180)
+    assert values(await vic.ranges(query('7d'))) == {'A660', 'D660'}
+    assert 'Ranges without the dense database until it answers: ConnectionError' in caplog.text
+
+    # The long-term database fails the finer plan, or refuses it
+    handler = stretch(ts - 3 * DAY, ts - 2 * DAY, fails=lambda db, step: db == 'A' and step == 120)
+    assert values(await vic.ranges(query('7d'))) == {'A660'}
+    assert 'Ranges at the first step, the finer query failed: ConnectionError' in caplog.text
+    handler = stretch(ts - 3 * DAY, ts - 2 * DAY, refused=lambda db, step: db == 'A' and step == 120)
+    assert values(await vic.ranges(query('7d'))) == {'A660'}
+    assert 'Ranges at the first step, the finer query failed: HTTPStatusError' in caplog.text
+
+    # The dense database lacks a series: it keeps the long-term database's points
+    handler = stretch(ts - DAY - 4 * HOUR, ts - DAY, missing=frozenset({('D', 'b')}))
+    result = await vic.ranges(query('7d'))
+    assert [values([r]) for r in result] == [{'D16'}, {'A660'}]
+
+
+async def test_ranges_refined_degraded(
+    vic: victoria.VictoriaClient,
+    now: datetime,
+    httpx_mock: HTTPXMock,
+):
+    ts = int(now.timestamp())
+    vic.cursor = ts - 600
+    handler = stretch(ts - DAY, ts)
+
+    def answer(request: Request) -> Response:
+        return handler(request)
+
+    httpx_mock.add_callback(url=QUERY_RANGE, method='POST', callback=answer, is_reusable=True)
+
+    async def ranges(duration: timedelta) -> tuple[set[str], list[tuple[str, int]]]:
+        """The values of the answer, and the queries it took."""
+        before = len(httpx_mock.get_requests())
+        result = await vic.ranges(TimeSeriesRangesQuery(fields=['a'], duration=duration))
+        return {v.value for r in result for v in r.values}, asked(httpx_mock)[before:]
+
+    # The dense database has none of the fields: the fallback, at the long-term database's interval, not asked again
+    handler = stretch(ts - 3 * HOUR, ts - 2 * HOUR, missing=frozenset({('D', 'a')}))
+    assert await ranges(timedelta(hours=12)) == ({'A60'}, [('victoria-dense', 43), ('victoria', 60)])
+
+    # The dense database fails: the long-term part of the plan, not asked again from dense, also in part
+    handler = stretch(ts - 36 * HOUR, ts, fails=lambda db, _step: db == 'D')
+    assert not vic._dense_reads_failing
+    assert await ranges(timedelta(days=7)) == ({'A660'}, [('victoria', 660), ('victoria-dense', 660)])
+    # Asked again when the finer plan does not read dense
+    handler = stretch(ts - 3 * DAY, ts - 2 * DAY, fails=lambda db, _step: db == 'D')
+    assert await ranges(timedelta(days=7)) == (
+        {'A120'},
+        [('victoria', 660), ('victoria-dense', 660), ('victoria', 120)],
+    )
+    handler = stretch(ts - DAY - 4 * HOUR, ts - DAY, fails=lambda db, _step: db == 'D')
+    assert await ranges(timedelta(days=7)) == ({'A660'}, [('victoria', 660), ('victoria-dense', 660)])
+
+    # Dense reads failed before: a first plan without dense is not asked again from dense either, until they work
+    handler = stretch(ts - 7 * DAY - 4 * HOUR, ts - 7 * DAY)
+    assert vic._dense_reads_failing
+    assert await ranges(timedelta(days=180)) == ({'A15600'}, [('victoria', 15600)])
+    vic._dense_reads_failing = False
+    assert await ranges(timedelta(days=180)) == ({'D32'}, [('victoria', 15600), ('victoria-dense', 32)])
 
 
 async def test_follow_up_ranges(

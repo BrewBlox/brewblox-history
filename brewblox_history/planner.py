@@ -11,12 +11,15 @@ A query with a step below sparse_interval that starts where the dense database h
 Otherwise its step is rounded up to a multiple of sparse_interval, on the epoch grid:
 averaging the long-term averages at any other step would alias.
 The long-term database then answers up to the cursor, and the dense database the rest.
+When the answer is mostly empty, a finer plan asks again where it has points.
 
 A live stream sends the initial ranges once, then follow-ups: the points after the last one it sent,
 at a step capped at follow_up_step_max, from the dense database.
 """
 
+import itertools
 import math
+import statistics
 from datetime import datetime, timedelta
 from typing import Literal, NamedTuple, cast
 
@@ -33,6 +36,15 @@ SELECTOR_MAX_BYTES = 8 * 1024
 # the clock jumped forward) or for the first follow-up of a very long graph, it skips the older ones.
 # The database refuses more than 30000 points per series (-search.maxPointsPerTimeseries).
 FOLLOW_UP_MAX_POINTS = 1000
+
+# A refined plan asks for at most this many points per series. The database refuses more than 30000
+# (-search.maxPointsPerTimeseries), counting the points it is asked for, also where it has no samples;
+# the margin below that holds until the cost of the refined query is measured on a Pi.
+REFINE_MAX_POINTS = 25000
+
+# A stretch without points longer than this many times a series' median spacing is a hole:
+# the series has no samples there, rather than samples that come less often than the step.
+HOLE_FACTOR = 10
 
 # A live stream starts over when the clock went back further than this (seconds), and otherwise waits
 # for the clock to catch up: an NTP correction goes unnoticed, a wrong time zone set right does not freeze it.
@@ -191,6 +203,72 @@ def plan_fallback(frame: Timeframe, config: ServiceConfig) -> list[RangeQuery]:
     interval = seconds(config.sparse_interval)
     step = max(frame.step, interval)
     return plan_ranges(frame._replace(step=step), frame.end, config, cursor=frame.end)
+
+
+def has_hole(timestamps: list[int], frame: Timeframe, step: int) -> bool:
+    """Whether a series' points (in order) leave a hole in the timeframe: a gap between two of them, or between
+    the timeframe's start or end and them, of more than HOLE_FACTOR times their median spacing (the lower one
+    of two middle gaps, so that a hole does not count as spacing; the step, for one point).
+    A series without one has samples throughout the timeframe, which may come less often than the step:
+    a finer step would bring the same ones. The points alone do not tell short bursts from single samples."""
+    gaps = [b - a for a, b in itertools.pairwise(timestamps)]
+    spacing = statistics.median_low(gaps) if gaps else step
+    return max(timestamps[0] - frame.start, frame.end - timestamps[-1], *gaps) > HOLE_FACTOR * spacing
+
+
+def plan_refinement(  # noqa: PLR0913, PLR0917 -- the inputs of plan_ranges, and the answer to refine
+    frame: Timeframe,
+    answered: list[RangeQuery],
+    values: dict[str, list],
+    now: int,
+    config: ServiceConfig,
+    cursor: int | None = None,
+    dense_since: int | None = None,
+) -> list[RangeQuery]:
+    """A finer plan for the timeframe when the answer to the answered plan is mostly empty, or none.
+
+    The frame's step gives query_desired_points points when samples fill the timeframe, and holes without
+    samples give no points. The answer is mostly empty when the series with the most points got fewer than
+    half of query_desired_points, and some series has a hole (has_hole).
+
+    The densest series' samples span about as many steps as it has points: the step is scaled down to spread
+    query_desired_points over them, rounded up. The finer plan covers only where the answer has points, and a
+    step either side (the first point averages the step before it; after the last one, samples may follow up
+    to the end). Its step is at least that extent / (REFINE_MAX_POINTS - 1), so that it asks for at most
+    REFINE_MAX_POINTS points per series once its start is rounded down to the grid. It is planned like the
+    first one: at minimum_step at least, and at a multiple of sparse_interval where the long-term database
+    answers.
+
+    Values are [timestamp, value] pairs per series, as the database answers them.
+    No queries when the answer is not mostly empty, or the plan would not be finer than the answered one."""
+    series = [[math.floor(v[0]) for v in points] for points in values.values() if points]
+    most = max(map(len, series), default=0)
+    if not answered or not most or 2 * most >= config.query_desired_points:
+        return []
+    step = answered[0].step
+    if not any(has_hole(timestamps, frame, step) for timestamps in series):
+        return []
+    first = min(timestamps[0] for timestamps in series)
+    last = max(timestamps[-1] for timestamps in series)
+    start = max(frame.start, first - step)
+    end = min(frame.end, last + step)
+    finer = max(
+        math.ceil(most * step / config.query_desired_points),
+        math.ceil((end - start) / (REFINE_MAX_POINTS - 1)),
+        seconds(config.minimum_step),
+        1,
+    )
+    queries = plan_ranges(Timeframe(start, end, finer), now, config, cursor, dense_since)
+    return queries if queries and queries[0].step < step else []
+
+
+def merge_refined(values: dict[str, list], refined: dict[str, list], queries: list[RangeQuery]) -> dict[str, list]:
+    """The values of the refined answer to the queries, and those of the first answer for a series it lacks (the
+    dense database may lack one the long-term database has), up to the refined plan's last point. Live follow-ups
+    continue after the newest point sent: they would pass the samples the refined answer left to them."""
+    last = queries[-1].end - (queries[-1].end - queries[-1].start) % queries[-1].step
+    kept = {name: [v for v in points if v[0] <= last] for name, points in values.items() if name not in refined}
+    return {name: points for name, points in kept.items() if points} | refined
 
 
 class FollowUp(NamedTuple):

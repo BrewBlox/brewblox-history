@@ -206,6 +206,60 @@ async def test_ranges_fallback(db: victoria.VictoriaClient, now: int):
     assert {v.value for v in r.values} == {'7'}
 
 
+async def test_ranges_refined_database(db: victoria.VictoriaClient, now: int, caplog: pytest.LogCaptureFixture):
+    # Two years with little in them: asked again, finer, where the samples are, and never refused
+    # (the database refuses queries for more than 30000 points per series)
+    minute = now - now % 60
+    db.cursor = minute - 600
+    query_ranges = db._query_ranges
+    # The step of the plans asked (whether one has a dense part after the cursor depends on the clock),
+    # and how many points they asked for per series
+    asked: list[set[int]] = []
+    points: list[int] = []
+
+    async def spy(queries: list[planner.RangeQuery], names: list[str]) -> tuple[dict[str, list], bool]:
+        asked.append({q.step for q in queries})
+        points.append(sum((q.end - q.start) // q.step + 1 for q in queries))
+        return await query_ranges(queries, names)
+
+    db._query_ranges = spy  # type: ignore[method-assign]
+
+    # Three days of averages a year ago, from a minute into a step of the first query (63120 s, on the epoch's
+    # grid): its answer has 5 points, wherever the clock is
+    names = [f'refined/{n}' for n in NAMES[:2]]
+    since = minute - 365 * 86400
+    since -= since % 63120 - 60
+    averages = {n: [(t * 1000, 1.0) for t in range(since, since + 3 * 86400, 60)] for n in names}
+    await import_samples(db._archive, averages)
+    await wait_searchable(db._archive, 'refined', averages)
+
+    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(days=730)))
+    assert asked == [{63120}, {360}]
+    for r in result:
+        timestamps = [v.timestamp for v in r.values]
+        assert timestamps == list(range(int(timestamps[0]), int(timestamps[-1]) + 1, 360))
+        assert len(timestamps) >= 720
+        assert {v.value for v in r.values} == {'1'}
+
+    # A day at either end: the step spreads at most REFINE_MAX_POINTS over two years
+    names = [f'ends/{n}' for n in NAMES[:2]]
+    ends = [*range(minute - 730 * 86400, minute - 729 * 86400, 60), *range(minute - 86400, minute - 600 + 1, 60)]
+    averages = {n: [(t * 1000, 2.0) for t in ends] for n in names}
+    await import_samples(db._archive, averages)
+    await wait_searchable(db._archive, 'ends', averages)
+
+    asked.clear()
+    points.clear()
+    result = await db.ranges(TimeSeriesRangesQuery(fields=names, duration=timedelta(days=730)))
+    assert asked == [{63120}, {2580}]
+    assert 24000 < points[1] <= planner.REFINE_MAX_POINTS
+    for r in result:
+        timestamps = [v.timestamp for v in r.values]
+        assert all((b - a) % 2580 == 0 for a, b in itertools.pairwise(timestamps))
+        assert len(timestamps) > 60
+    assert 'the finer query failed' not in caplog.text
+
+
 async def test_csv_seam(db: victoria.VictoriaClient, config: ServiceConfig, now: int):
     # Raw samples where the dense database has them, averages before that; exported in windows
     config.dense_retention = timedelta(hours=2)

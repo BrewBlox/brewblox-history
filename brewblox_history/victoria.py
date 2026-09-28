@@ -331,6 +331,21 @@ class VictoriaClient:
 
         return planner.merge_values(parts), dense_error is not None
 
+    async def _refine(
+        self,
+        queries: list[planner.RangeQuery],
+        names: list[str],
+        values: dict[str, list],
+    ) -> dict[str, list]:
+        """The answer to a refined plan, merged with the first one (planner.merge_refined).
+        The first answer stands when the finer one fails, also in part: it is right, only coarse."""
+        try:
+            refined, dense_failed = await self._query_ranges(queries, names)
+        except Exception as ex:  # noqa: BLE001
+            LOGGER.warning(f'Ranges at the first step, the finer query failed: {utils.strex(ex)}')
+            return values
+        return values if dense_failed else planner.merge_refined(values, refined, queries)
+
     async def initial_ranges(
         self,
         args: TimeSeriesRangesQuery,
@@ -343,8 +358,9 @@ class VictoriaClient:
         now = utils.now()
         frame = planner.select_timeframe(args.start, args.duration, args.end, now, config)
         names = list(dict.fromkeys(args.fields))
+        ts = int(now.timestamp())
 
-        queries = planner.plan_ranges(frame, int(now.timestamp()), config, self.cursor, self.dense_since)
+        queries = planner.plan_ranges(frame, ts, config, self.cursor, self.dense_since)
         values, dense_failed = await self._query_ranges(queries, names)
 
         # The long-term database answers when the dense database has none of the fields, or fails.
@@ -352,6 +368,14 @@ class VictoriaClient:
         if queries and all(q.db == 'dense' for q in queries) and (dense_failed or not values):
             queries = planner.plan_fallback(frame, config)
             values, _ = await self._query_ranges(queries, names)
+        # A mostly empty answer is asked again, finer, where it has points. Not after the fallback: it answers
+        # at sparse_interval a timeframe whose step was finer, and the long-term database has nothing finer.
+        # While dense reads fail, only a finer plan that does not read dense: a dense database that hangs
+        # would hold up the graph until its timeout.
+        else:
+            refined = planner.plan_refinement(frame, queries, values, ts, config, self.cursor, self.dense_since)
+            if refined and not (self._dense_reads_failing and any(q.db == 'dense' for q in refined)):
+                values = await self._refine(refined, names, values)
 
         ranges = ranges_of(values, names, every_name=every_field)
         sent = max((int(r.values[-1].timestamp) for r in ranges if r.values), default=None)
